@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -7,6 +8,8 @@ import {
   within,
 } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import type { DecisionItem } from '../../lib/decisionFeed';
@@ -15,8 +18,15 @@ import { NeedsYouBlock } from './NeedsYouBlock';
 
 const ME = 'human:wyat';
 
+// Every dismiss or undo a test clicked, as `[id, undo]`.
+const dismissCalls: [string, boolean][] = [];
+
 // No client: the gate query stays off, so rows fall back to their Open button.
 const data = {
+  handleDismissDecision: (id: string, undo = false) => {
+    dismissCalls.push([id, undo]);
+    return Promise.resolve();
+  },
   client: null,
   port: undefined,
   me: ME,
@@ -74,6 +84,18 @@ describe('NeedsYouBlock', () => {
     );
   });
 
+  // Issues always mounts the block: with nothing waiting it is the header
+  // line alone, no padded strip under it.
+  test('with nothing waiting the body stays out of the box', () => {
+    mount([]);
+    const fold = screen.getByRole('button', { name: 'Nothing needs you' });
+    const body = document.getElementById(
+      fold.getAttribute('aria-controls') ?? ''
+    );
+    expect(body?.hidden).toBe(true);
+    expect(body?.childElementCount).toBe(0);
+  });
+
   test('the header number is the number of rows', () => {
     const { needs } = mount([
       item({ id: 'a', kind: 'fix-loop-capped', taskId: 't-1' }),
@@ -103,6 +125,46 @@ describe('NeedsYouBlock', () => {
     ]);
     fireEvent.click(screen.getByRole('button', { name: 'Open' }));
     expect(opened).toEqual(['stall']);
+    // Not answered here, so not "this machine only".
+    expect(screen.getByTestId('needs-you-row').hasAttribute('title')).toBe(
+      false
+    );
+  });
+
+  test('only a derived ask offers Dismiss, and a dismissed one offers Undo', async () => {
+    dismissCalls.length = 0;
+    mount([
+      item({
+        id: 'run-stalled:r-1',
+        kind: 'run-stalled',
+        reason: 'not-on-origin',
+        fingerprint: 'r-1:not-on-origin:abc',
+      }),
+      // A capped loop is a floor hold: no fingerprint, so no Dismiss.
+      item({ id: 'loop', kind: 'fix-loop-capped', floor: 'finding-ruling' }),
+      item({
+        id: 'run-stalled:r-2',
+        kind: 'run-stalled',
+        reason: 'interrupted-dirty',
+        fingerprint: 'r-2:interrupted-dirty',
+        dismissedAt: '2026-10-06T10:00:00.000Z',
+        summary: 'Old dirty run',
+      }),
+    ]);
+    expect(screen.getByTestId('needs-you-count').textContent).toBe(
+      'Needs you · 2'
+    );
+    expect(screen.getAllByTestId('needs-you-dismiss')).toHaveLength(1);
+    // Settles the row's busy state inside act.
+    await act(() =>
+      Promise.resolve(fireEvent.click(screen.getByTestId('needs-you-dismiss')))
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Dismissed · 1/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(dismissCalls).toEqual([
+      ['run-stalled:r-1', false],
+      ['run-stalled:r-2', true],
+    ]);
   });
 
   test('a teammate’s ask is shown muted and never counted', () => {
@@ -132,6 +194,33 @@ describe('NeedsYouBlock', () => {
     expect(screen.getByTestId('needs-you-count').textContent).toBe(
       'Needs you · 1'
     );
+  });
+
+  test('the fold button says whether the block is open', () => {
+    mount([item({ id: 'a', kind: 'scope-request' })]);
+    const fold = screen.getByRole('button', { name: /Needs you · 1/ });
+    expect(fold.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(fold);
+    expect(fold.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByTestId('needs-you-preview').textContent).toBe('ask a');
+  });
+
+  test('a long group shows eight rows, then "+N more" shows the rest', () => {
+    mount(
+      Array.from({ length: 10 }, (_, i) =>
+        item({ id: `s-${i}`, kind: 'scope-request' })
+      )
+    );
+    expect(screen.getAllByTestId('needs-you-row')).toHaveLength(8);
+    const more = screen.getByRole('button', { name: '+2 more' });
+    expect(more.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(more);
+    expect(screen.getAllByTestId('needs-you-row')).toHaveLength(10);
+    expect(
+      screen
+        .getByRole('button', { name: 'Show fewer' })
+        .getAttribute('aria-expanded')
+    ).toBe('true');
   });
 });
 
@@ -198,6 +287,35 @@ describe('receipts and batches', () => {
     expect(screen.getByText('Review 3 restored lessons')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Approve all' })).toBeTruthy();
   });
+
+  test('the actions one overseer turn queued are one card with Approve all', () => {
+    const action = (id: string, batch: string) =>
+      item({
+        id,
+        kind: 'approval',
+        reason: 'overseer-action',
+        conversation: 'c-1',
+        messageId: id,
+        batch,
+        summary: `Dispatch ${id}`,
+      });
+    mount([
+      action('a-1', 'tb-1'),
+      action('a-2', 'tb-1'),
+      action('a-3', 'tb-2'),
+    ]);
+    const batch = screen.getByTestId('needs-you-overseer-batch');
+    expect(batch.textContent).toContain(
+      '2 actions the overseer queued together'
+    );
+    expect(batch.textContent).toContain('Dispatch a-1');
+    expect(batch.textContent).toContain('Dispatch a-2');
+    expect(
+      within(batch).getByRole('button', { name: 'Approve all' })
+    ).toBeTruthy();
+    // The lone action from another turn keeps its own row.
+    expect(screen.getAllByTestId('needs-you-row')).toHaveLength(1);
+  });
 });
 
 // DIS-128: a free-text question in Needs you has no card to draw, so the row
@@ -252,13 +370,114 @@ describe('answering a question from its row', () => {
     );
     // An outside agent's question sits under Outside (DIS-129).
     expect(screen.getByTestId('needs-you-group-outside')).toBeDefined();
-    fireEvent.click(await screen.findByRole('button', { name: 'Answer…' }));
+    const answer = await screen.findByRole('button', { name: 'Answer…' });
+    // A row answered in place says "this machine only" over the whole row
+    // (the legacy <li>'s hint), not on one cell.
+    const row = screen.getByTestId('needs-you-row');
+    expect(row.getAttribute('title')).toBe('this machine only');
+    expect(
+      Array.from(row.querySelectorAll('[title]'), (n) =>
+        n.getAttribute('title')
+      )
+    ).not.toContain('this machine only');
+    fireEvent.click(answer);
     fireEvent.change(screen.getByPlaceholderText('Type your answer'), {
       target: { value: 'Yes, tonight' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send answer' }));
     await waitFor(() =>
       expect(replies).toEqual([{ id: 'q-1', body: 'Yes, tonight' }])
+    );
+  });
+});
+
+// A scope grant goes out as the choice 'grant'; its receipt names the act
+// ("Granted"), never the raw choice ("Answered “grant”").
+describe('a scope request answered from its row', () => {
+  const RUN = 'r-000001';
+  const gate = {
+    id: 'm-scope',
+    thread: 'm-scope',
+    replyTo: null,
+    from: `run:${RUN}`,
+    to: [ME],
+    kind: 'question',
+    body: 'May I edit a.ts?',
+    refs: [],
+    urgent: false,
+    blocking: true,
+    wake: 'none',
+    choices: ['grant', 'deny'],
+    data: { type: 'scope', paths: ['a.ts'], reason: 'needed for the fix' },
+    createdAt: '2026-10-06T09:00:00.000Z',
+  };
+  const ask = item({
+    id: 'scope:m-scope',
+    kind: 'scope-request',
+    messageId: 'm-scope',
+    summary: 'agent asked to edit outside its scope: a.ts',
+  });
+
+  test('Grant decides the request and leaves a "Granted" receipt', async () => {
+    const decided: { runId: string; granted: boolean }[] = [];
+    const scoped = {
+      ...data,
+      client: { openDecisions: () => Promise.resolve({ items: [gate] }) },
+      handleDecideScopeRequest: (
+        runId: string,
+        _id: string,
+        granted: boolean
+      ) => {
+        decided.push({ runId, granted });
+        return Promise.resolve();
+      },
+    } as unknown as DispatchProjectData;
+    const block = (asks: DecisionItem[]) => (
+      <NeedsYouBlock
+        data={scoped}
+        needs={needsYou(asks, ME)}
+        onOpenRef={() => {}}
+        onOpenDecision={() => {}}
+      />
+    );
+    const queries = new QueryClient();
+    const { rerender } = render(
+      <QueryClientProvider client={queries}>{block([ask])}</QueryClientProvider>
+    );
+    fireEvent.click(
+      await screen.findByRole('radio', { name: /^Grant Recommended/ })
+    );
+    await waitFor(() =>
+      expect(decided).toEqual([{ runId: RUN, granted: true }])
+    );
+    // The ask leaves the open list once decided; its receipt stays in place.
+    rerender(
+      <QueryClientProvider client={queries}>{block([])}</QueryClientProvider>
+    );
+    const receipt = await screen.findByTestId('needs-you-receipt');
+    expect(receipt.textContent).toContain(
+      '✓ Granted · agent asked to edit outside its scope: a.ts'
+    );
+    expect(receipt.textContent).not.toContain('Answered');
+  });
+});
+
+// Layout is not measured here (happy-dom), so the narrow-column rules are
+// read from the module: in the Overseer's inflow (the register stacked
+// under 480px) a long summary wraps onto its own line, two lines at most,
+// as the legacy row's line clamp did; the full text stays its title.
+describe('the narrow column', () => {
+  test('clamps a stacked summary to two lines', () => {
+    const css = readFileSync(
+      join(import.meta.dir, 'NeedsYouBlock.module.css'),
+      'utf8'
+    ).replace(/\/\*[\s\S]*?\*\//g, '');
+    const narrow = css.slice(
+      css.indexOf('@container register (width < 480px)')
+    );
+    const summary = narrow.slice(narrow.indexOf('.summary'));
+    expect(summary.slice(0, summary.indexOf('}'))).toMatch(
+      /display: -webkit-box;[\s\S]*-webkit-line-clamp: 2;[\s\S]*white-space: normal;/
     );
   });
 });

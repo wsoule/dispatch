@@ -1,17 +1,17 @@
 import type { ConfigPatch } from '@dispatch-foo/core/browser';
+import { EmptyState } from '@dispatch/ui';
 import type { LucideIcon } from 'lucide-react';
 import {
   Bell,
   Bot,
   BotMessageSquare,
-  Brain,
+  CalendarRange,
   Cpu,
   FileDiff,
   FolderSearch,
   Gauge,
+  Globe,
   KeyRound,
-  LockIcon,
-  MonitorPlay,
   Network,
   Plug,
   RefreshCw,
@@ -19,9 +19,9 @@ import {
   Server,
   Settings2,
   ShieldCheck,
+  Smartphone,
   Users,
   Wrench,
-  XIcon,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import {
@@ -38,7 +38,11 @@ import {
   SettingsAccessProvider,
 } from '../components/settings/access';
 import { AgentRosterSection } from '../components/settings/AgentRosterSection';
-import { AgentsSection } from '../components/settings/AgentsSection';
+import {
+  AgentsSection,
+  AgentStreamingGroup,
+} from '../components/settings/AgentsSection';
+import { AppearanceRow } from '../components/settings/AppearanceRow';
 import { BoardSyncGroup } from '../components/settings/BoardSyncGroup';
 import { ChecksSection } from '../components/settings/ChecksSection';
 import {
@@ -48,37 +52,58 @@ import {
   DaemonConfigGroups,
 } from '../components/settings/DaemonConfigGroups';
 import { DaemonSection } from '../components/settings/DaemonSection';
+import { DevicesSection } from '../components/settings/DevicesSection';
 import { DiffsSection } from '../components/settings/DiffsSection';
-import { GeneralSection } from '../components/settings/GeneralSection';
+import { DigestsGroup } from '../components/settings/DigestsGroup';
 import { IntegrationsSection } from '../components/settings/IntegrationsSection';
 import { LicenseSection } from '../components/settings/LicenseSection';
-import { MemorySection } from '../components/settings/MemorySection';
+import {
+  MemoryParityGroup,
+  MemorySection,
+} from '../components/settings/MemorySection';
 import { NotificationsSection } from '../components/settings/NotificationsSection';
-import { PolicySection } from '../components/settings/PolicySection';
-import { PreviewsSection } from '../components/settings/PreviewsSection';
+import { PlanningAuditGroup } from '../components/settings/PlanningAuditGroup';
+import {
+  PlanningSection,
+  PlanningTuningGroups,
+} from '../components/settings/PlanningSection';
+import {
+  GateOverridesGroup,
+  PolicySection,
+} from '../components/settings/PolicySection';
+import {
+  PullRequestsGroup,
+  StatusesGroup,
+} from '../components/settings/ProjectGroups';
 import { QueueWeightsGroup } from '../components/settings/QueueWeightsGroup';
 import { RemotesSection } from '../components/settings/RemotesSection';
 import {
   SearchScopeProvider,
   SettingsSearchProvider,
 } from '../components/settings/search';
+import { SettingsAdvanced } from '../components/settings/SettingsGroup';
+import {
+  SettingsEmptyFrame,
+  SettingsHostedBody,
+  SettingsLayout,
+  type SettingsNavGroup,
+  SettingsPageHead,
+  SettingsReadOnlyNote,
+  SettingsResultPage,
+  SettingsResults,
+  SettingsSaveLine,
+  type SettingsSaveState,
+} from '../components/settings/SettingsLayout';
 import { TakeOverDaemon } from '../components/settings/TakeOverDaemon';
 import { TeamSection } from '../components/settings/TeamSection';
+import { WebAccessSection } from '../components/settings/WebAccessSection';
 import { AgentStep } from '../components/setup/AgentStep';
 import { CliCommandStep } from '../components/setup/CliCommandStep';
 import { GitStep } from '../components/setup/GitStep';
+import { LinearStep } from '../components/setup/LinearStep';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import type { SettingsPage } from '../lib/appNav';
+import { SETTINGS_PAGE_LABELS, type SettingsPage } from '../lib/appNav';
 import { isInsufficientTier } from '../lib/daemonAuth';
-import { cn } from '@/lib/utils';
-import { PageHeader, PageHeaderEmbeddedContext } from '@/ui/ai/page-header';
-import {
-  SIDEBAR_ROW_ACTIVE_CLASS,
-  SIDEBAR_ROW_CLASS,
-  SIDEBAR_ROW_INACTIVE_CLASS,
-} from '@/ui/ai/sidebar-nav';
-import { EmptyState } from '@/ui/chrome';
-import { Input } from '@/ui/input';
 
 interface SettingsViewProps {
   /** Just `{ path, name }`, the same minimal shape `App.tsx` derives from
@@ -91,15 +116,21 @@ interface SettingsViewProps {
   /** The page to open on — `navState.settingsPage`, which the rail's Connect Linear and
    *  the strip's gear set to Integrations. A new value while mounted switches the page. */
   initialPage?: SettingsPage | HostedSettingsPage['id'];
-  /** Whole views shown as extra pages (Two views folds Sessions and All agents in here). */
+  /** Whole views shown as extra pages (App folds Usage and Runs in here). */
   hostedPages?: readonly HostedSettingsPage[];
-  /** Replaces the header's crumb-only row, e.g. with the panel's close button. */
-  headerActions?: ReactNode;
-  /** Shown after a page's own groups (Two views puts memory's Recent under Memory). */
+  /** Shown after a page's own groups (App puts memory's Recent under Agents). */
   pageExtras?: Partial<Record<SettingsPage, ReactNode>>;
+  /** A page picked in the rail or from search results. App dispatches
+   *  `openSettings` with it, so the hash and the crumbs follow; the view also
+   *  switches at once on its own, so it works without a host. */
+  onSelectPage?: (page: SettingsPage | HostedSettingsPage['id']) => void;
+  /** The hosted planner (app.dispatch.foo, no machine behind it): pages that
+   *  need a daemon on a machine are left out rather than shown stuck. */
+  planner?: boolean;
 }
 
-/** A page that is a whole view: full width, its own state, left out of search. */
+/** A page that is a whole view: full width, its own state, left out of search. Its
+ *  render keeps only the view's tabs row (the host marks the view as embedded). */
 export interface HostedSettingsPage {
   id: 'usage' | 'runs';
   label: string;
@@ -107,12 +138,6 @@ export interface HostedSettingsPage {
   intro: string;
   render: () => ReactNode;
 }
-
-type SaveState =
-  | { kind: 'idle' }
-  | { kind: 'saving' }
-  | { kind: 'saved' }
-  | { kind: 'error'; message: string };
 
 type Config = NonNullable<DispatchProjectData['config']>;
 
@@ -128,6 +153,10 @@ interface PageContext {
   canOperate: boolean;
   activeProject: { path: string; name: string };
   onOpenTask?: (taskId: string) => void;
+  /** Moves to another Settings page (Setup's Linear step opens Linear). */
+  selectPage: (page: SettingsPage) => void;
+  /** The hosted planner: no machine behind it, so machine-only groups hide. */
+  planner: boolean;
 }
 
 interface PageSpec {
@@ -138,10 +167,16 @@ interface PageSpec {
   intro: string;
   /** Whether saves on this page go to config.yml (and so show the save line). */
   savesConfig: boolean;
+  /** Groups saved in this browser rather than config.yml (General's
+   *  Appearance): drawn first, above the read-only note, which speaks for the
+   *  config groups under it only, and shown before config has loaded. */
+  preferences?: () => ReactNode;
   render: (ctx: PageContext) => ReactNode;
+  /** Groups few people change, folded under Advanced at the page's foot
+   *  (search still shows them inline). */
+  advanced?: (ctx: PageContext) => ReactNode;
 }
 
-/** The rail, grouped by what you are trying to do. Labels double as page titles. */
 // Renders a config-backed page body once config has loaded, and nothing before.
 function withConfig(
   render: (ctx: PageContext & { config: Config }) => ReactNode
@@ -150,13 +185,16 @@ function withConfig(
     ctx.config === null ? null : render({ ...ctx, config: ctx.config });
 }
 
+/** The rail, grouped by what you are trying to do. Labels come from
+ *  SETTINGS_PAGE_LABELS, so the rail, the page's h1 and the topbar's crumb
+ *  always say the same. */
 const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
   {
     label: 'Project',
     pages: [
       {
         id: 'setup',
-        label: 'Setup',
+        label: SETTINGS_PAGE_LABELS.setup,
         icon: Wrench,
         intro: 'Git and your AI agents: install, sign in, or switch.',
         savesConfig: false,
@@ -175,49 +213,60 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
                 continueLabel="Save"
               />
             )}
+            <LinearStep
+              connected={ctx.data.linearStatus?.connected ?? null}
+              onConnect={() => ctx.selectPage('integrations')}
+            />
             <CliCommandStep />
           </>
         ),
       },
       {
         id: 'general',
-        label: 'General',
+        label: SETTINGS_PAGE_LABELS.general,
         icon: Settings2,
-        intro: "The board's columns and where pull-request checkouts go.",
+        intro: "The theme in this browser and the board's columns.",
         savesConfig: true,
-        render: (ctx) => (
-          <>
-            {ctx.config !== null && (
-              <GeneralSection
-                config={ctx.config}
-                onSave={ctx.save}
-                canOperate={ctx.canOperate}
-              />
-            )}
-          </>
-        ),
+        preferences: () => <AppearanceRow />,
+        render: withConfig((ctx) => (
+          <StatusesGroup config={ctx.config} onSave={ctx.save} />
+        )),
       },
       {
         id: 'agents',
-        label: 'Agents',
+        label: SETTINGS_PAGE_LABELS.agents,
         icon: Bot,
         intro:
-          'Which models do the work, how hard they think, and the limits they run under.',
+          'Which models do the work, how hard they think, the limits they run under, and what they remember.',
         savesConfig: true,
         render: withConfig((ctx) => (
-          <AgentsSection
-            config={ctx.config}
-            executors={ctx.data.executors}
-            onSave={ctx.save}
-            canOperate={ctx.canOperate}
-            client={ctx.data.client}
-            port={ctx.data.port}
-          />
+          <>
+            <AgentsSection
+              config={ctx.config}
+              executors={ctx.data.executors}
+              onSave={ctx.save}
+              canOperate={ctx.canOperate}
+              client={ctx.data.client}
+              port={ctx.data.port}
+            />
+            <MemorySection
+              data={ctx.data}
+              config={ctx.config}
+              onSave={ctx.save}
+              planner={ctx.planner}
+            />
+          </>
+        )),
+        advanced: withConfig((ctx) => (
+          <>
+            <AgentStreamingGroup config={ctx.config} onSave={ctx.save} />
+            <MemoryParityGroup data={ctx.data} planner={ctx.planner} />
+          </>
         )),
       },
       {
         id: 'checks',
-        label: 'Checks',
+        label: SETTINGS_PAGE_LABELS.checks,
         icon: ShieldCheck,
         intro:
           'What a branch must pass before it merges, and what happens when it fails.',
@@ -232,7 +281,7 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
       },
       {
         id: 'autonomy',
-        label: 'Autonomy',
+        label: SETTINGS_PAGE_LABELS.autonomy,
         icon: Gauge,
         intro:
           'How much Dispatch decides on its own, and what always waits for you.',
@@ -248,40 +297,39 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
             <QueueWeightsGroup config={ctx.config} onSave={ctx.save} />
           </>
         )),
+        advanced: withConfig((ctx) => (
+          <GateOverridesGroup config={ctx.config} onSave={ctx.save} />
+        )),
       },
       {
-        id: 'memory',
-        label: 'Memory',
-        icon: Brain,
+        id: 'planning',
+        label: SETTINGS_PAGE_LABELS.planning,
+        icon: CalendarRange,
         intro:
-          'What runs remember between tasks, where it came from, and how much of it each prompt carries.',
-        savesConfig: true,
-        // The store's health renders without config, so a closed store still says why.
-        render: (ctx) => (
-          <MemorySection
-            data={ctx.data}
-            config={ctx.config}
-            onSave={ctx.save}
-          />
-        ),
-      },
-      {
-        id: 'previews',
-        label: 'Previews',
-        icon: MonitorPlay,
-        intro: "Start a run's app from its own checkout to try the change.",
+          'How the milestone planner judges risk, which projects it counts as active, and who hears about milestones at risk.',
         savesConfig: true,
         render: withConfig((ctx) => (
-          <PreviewsSection
-            config={ctx.config}
-            onSave={ctx.save}
-            canOperate={ctx.canOperate}
-          />
+          <>
+            <PlanningSection
+              config={ctx.config}
+              people={ctx.data.people}
+              onSave={ctx.save}
+            />
+            <DigestsGroup
+              config={ctx.config}
+              data={ctx.data}
+              onSave={ctx.save}
+            />
+            <PlanningAuditGroup data={ctx.data} />
+          </>
+        )),
+        advanced: withConfig((ctx) => (
+          <PlanningTuningGroups config={ctx.config} onSave={ctx.save} />
         )),
       },
       {
         id: 'notifications',
-        label: 'Notifications',
+        label: SETTINGS_PAGE_LABELS.notifications,
         icon: Bell,
         intro: 'What reaches you when you are not looking at Dispatch.',
         savesConfig: true,
@@ -300,7 +348,7 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
     pages: [
       {
         id: 'team',
-        label: 'Members',
+        label: SETTINGS_PAGE_LABELS.team,
         icon: Users,
         intro:
           'Your team: start one, invite a teammate, or join with a link someone sent you.',
@@ -309,7 +357,7 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
       },
       {
         id: 'sync',
-        label: 'Board sync',
+        label: SETTINGS_PAGE_LABELS.sync,
         icon: RefreshCw,
         intro:
           "Keep this board in step with your teammates' copies of Dispatch, through the team relay or a git branch.",
@@ -341,7 +389,7 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
       },
       {
         id: 'license',
-        label: 'License',
+        label: SETTINGS_PAGE_LABELS.license,
         icon: KeyRound,
         intro: 'Your plan and how many seats are in use.',
         savesConfig: false,
@@ -354,7 +402,7 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
     pages: [
       {
         id: 'integrations',
-        label: 'Linear',
+        label: SETTINGS_PAGE_LABELS.integrations,
         icon: Plug,
         intro: 'Keep tasks here and issues in one Linear team in step.',
         savesConfig: true,
@@ -373,7 +421,7 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
       },
       {
         id: 'connected-agents',
-        label: 'Connected agents',
+        label: SETTINGS_PAGE_LABELS['connected-agents'],
         icon: BotMessageSquare,
         intro:
           'Agent tools such as Claude Code or Codex that connected through Dispatch’s MCP server and asked to message this project, and whether they may.',
@@ -382,7 +430,7 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
       },
       {
         id: 'a2a',
-        label: 'A2A',
+        label: SETTINGS_PAGE_LABELS.a2a,
         icon: Network,
         intro:
           "Agents outside your team, on other platforms or other people's Dispatch, over the open A2A protocol. Teammates don't need this: their agents already reach yours through the team.",
@@ -396,7 +444,7 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
     pages: [
       {
         id: 'remotes',
-        label: 'Remotes',
+        label: SETTINGS_PAGE_LABELS.remotes,
         icon: Server,
         intro: 'Other machines your terminals can open on, over ssh.',
         savesConfig: true,
@@ -409,29 +457,54 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
         )),
       },
       {
+        id: 'web',
+        label: SETTINGS_PAGE_LABELS.web,
+        icon: Globe,
+        intro:
+          'Open this machine’s projects from app.dispatch.foo, in any browser, signed in as you.',
+        savesConfig: false,
+        render: (ctx) => <WebAccessSection data={ctx.data} />,
+      },
+      {
+        id: 'devices',
+        label: SETTINGS_PAGE_LABELS.devices,
+        icon: Smartphone,
+        intro:
+          'Your other devices on this daemon — the app on another machine, a phone — and the remote daemons this app connects to.',
+        savesConfig: false,
+        render: (ctx) => <DevicesSection data={ctx.data} />,
+      },
+      {
         id: 'daemon',
-        label: 'Background',
+        label: SETTINGS_PAGE_LABELS.daemon,
         icon: Cpu,
         intro:
-          "Dispatch's own process for this project, and the work it does in the background.",
+          "Dispatch's own process for this project, the work it does in the background, and where pull-request checkouts go.",
         savesConfig: true,
         // Status renders without config, so a daemon that is down still says so.
         render: (ctx) => (
           <>
             <DaemonSection activeProject={ctx.activeProject} data={ctx.data} />
             {ctx.config !== null && (
-              <DaemonConfigGroups
-                config={ctx.config}
-                onSave={ctx.save}
-                canOperate={ctx.canOperate}
-              />
+              <>
+                <DaemonConfigGroups
+                  config={ctx.config}
+                  onSave={ctx.save}
+                  canOperate={ctx.canOperate}
+                />
+                <PullRequestsGroup
+                  config={ctx.config}
+                  onSave={ctx.save}
+                  canOperate={ctx.canOperate}
+                />
+              </>
             )}
           </>
         ),
       },
       {
         id: 'diffs',
-        label: 'Diff display',
+        label: SETTINGS_PAGE_LABELS.diffs,
         icon: FileDiff,
         intro: 'How diffs look in this app. Saved in this browser only.',
         savesConfig: false,
@@ -441,23 +514,54 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
   },
 ];
 
-const ALL_PAGES = SETTINGS_GROUPS.flatMap((group) => group.pages);
+// Pages that read or change a machine's daemon, its team link or its files:
+// on the hosted planner they could only show "Checking…" forever.
+const MACHINE_PAGES: ReadonlySet<SettingsPage> = new Set<SettingsPage>([
+  'setup',
+  'team',
+  'sync',
+  'license',
+  'connected-agents',
+  'a2a',
+  'remotes',
+  'web',
+  'devices',
+  'daemon',
+  'diffs',
+]);
 
-/** Settings for the active project, laid out as Linear's settings shell: a
- *  grouped rail of pages on the left, the selected page as a centred column on
- *  the right. Typing in the rail's search swaps the page for every matching
- *  setting across all pages, still editable in place. Every config-backed page
- *  saves through the one `save` here and its one line beside the title. */
+// The rail's groups for this host: everything on a machine, the planning
+// pages alone on the hosted planner (empty groups dropped).
+function visibleGroups(
+  planner: boolean
+): { label: string; pages: PageSpec[] }[] {
+  if (!planner) return SETTINGS_GROUPS;
+  return SETTINGS_GROUPS.map((group) => ({
+    ...group,
+    pages: group.pages.filter((entry) => !MACHINE_PAGES.has(entry.id)),
+  })).filter((group) => group.pages.length > 0);
+}
+
+/** Settings for the active project, in the main column: a grouped rail of
+ *  pages beside the selected page (SettingsLayout). Typing in the rail's
+ *  search swaps the page for every matching setting across all pages, still
+ *  editable in place. Every config-backed page saves through the one `save`
+ *  here and its one line beside the title. There is no header or close
+ *  button: the shell's crumbs name the place, and Escape or any navigation
+ *  leaves it. */
 export function SettingsView({
   activeProject,
   data,
   onOpenTask,
   initialPage,
   hostedPages = [],
-  headerActions,
+  planner = false,
   pageExtras,
+  onSelectPage,
 }: SettingsViewProps) {
-  const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' });
+  const [saveState, setSaveState] = useState<SettingsSaveState>({
+    kind: 'idle',
+  });
   const [page, setPage] = useState<SettingsPage | HostedSettingsPage['id']>(
     initialPage ?? 'general'
   );
@@ -466,7 +570,8 @@ export function SettingsView({
   const [noMatches, setNoMatches] = useState(false);
 
   // A request that arrives while Settings is already mounted (the gear pressed from the
-  // General page) still lands; the nav rows keep working in between.
+  // General page, a rail link App turned into openSettings) still lands; the rail keeps
+  // working in between.
   useEffect(() => {
     if (initialPage !== undefined) setPage(initialPage);
   }, [initialPage]);
@@ -532,22 +637,32 @@ export function SettingsView({
     [data, access.canDecide, access.decideReason, access.operateReason]
   );
 
+  // Picking a page (a rail link, a results heading) ends any search, shows
+  // the page at once, and tells the host so the hash and crumbs follow.
+  const selectPage = (next: SettingsPage | HostedSettingsPage['id']) => {
+    setQuery('');
+    setPage(next);
+    onSelectPage?.(next);
+  };
+
   if (activeProject === null) {
     return (
-      <div className="flex h-full min-h-0 flex-col">
-        <PageHeader crumb={['Settings']} />
+      <SettingsEmptyFrame>
         <EmptyState
-          icon={FolderSearch}
-          heading="No project selected"
-          description="Pick a project in the sidebar."
-          className="flex-1"
-        />
-      </div>
+          label="No project selected"
+          icon={<FolderSearch size={22} strokeWidth={1.8} aria-hidden />}
+        >
+          Pick a project in the sidebar.
+        </EmptyState>
+      </SettingsEmptyFrame>
     );
   }
 
-  const hosted = hostedPages.find((entry) => entry.id === page);
-  const spec = ALL_PAGES.find((entry) => entry.id === page) ?? ALL_PAGES[0];
+  const groups = visibleGroups(planner);
+  const pages = groups.flatMap((group) => group.pages);
+  const activityPages = planner ? [] : hostedPages;
+  const hosted = activityPages.find((entry) => entry.id === page);
+  const spec = pages.find((entry) => entry.id === page) ?? pages[0];
   const ctx: PageContext = {
     data,
     config: data.config,
@@ -559,211 +674,96 @@ export function SettingsView({
     canOperate: access.canOperate,
     activeProject,
     onOpenTask,
+    selectPage,
+    planner,
   };
 
-  const saveLine = (
-    <span
-      role="status"
-      className={cn(
-        'font-book text-[12px]',
-        saveState.kind === 'error'
-          ? 'text-state-failed'
-          : 'text-muted-foreground'
-      )}
-    >
-      {saveState.kind === 'saving' && 'Saving…'}
-      {saveState.kind === 'saved' && 'Saved'}
-      {saveState.kind === 'error' && saveState.message}
-    </span>
-  );
+  const navGroups: SettingsNavGroup[] = [
+    ...groups,
+    ...(activityPages.length === 0
+      ? []
+      : [{ label: 'Activity', pages: activityPages }]),
+  ];
+  const saveLine = <SettingsSaveLine state={saveState} />;
+  const showHosted = hosted !== undefined && !searching;
 
   return (
     <SettingsAccessProvider access={access}>
-      <div className="flex h-full min-h-0 flex-col">
-        <PageHeader crumb={['Settings']} actions={headerActions} />
-        <div className="grid min-h-0 flex-1 grid-cols-[208px_minmax(0,1fr)]">
-          <nav
-            aria-label="Settings"
-            className="shadow-hairline-right flex min-h-0 flex-col gap-4 overflow-y-auto px-2 py-3"
-          >
-            <div className="relative">
-              <SearchIcon
-                aria-hidden
-                className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2"
+      <SettingsLayout
+        groups={navGroups}
+        page={showHosted ? hosted.id : spec.id}
+        query={query}
+        onQueryChange={setQuery}
+        onSelectPage={selectPage}
+        hosted={showHosted}
+      >
+        {showHosted ? (
+          // Titled like every other page; the hosted view keeps only its toolbar row.
+          <>
+            <SettingsPageHead title={hosted.label} intro={hosted.intro} />
+            <SettingsHostedBody>{hosted.render()}</SettingsHostedBody>
+          </>
+        ) : searching ? (
+          <>
+            <SettingsPageHead
+              title={<>Results for &ldquo;{query.trim()}&rdquo;</>}
+              status={saveLine}
+            />
+            <SettingsSearchProvider query={query}>
+              <SettingsResults ref={resultsRef}>
+                {pages.map((entry) => (
+                  <SearchScopeProvider key={entry.id} text={entry.label}>
+                    <SettingsResultPage
+                      page={entry}
+                      onPick={() => selectPage(entry.id)}
+                    >
+                      {entry.preferences?.()}
+                      {entry.render(ctx)}
+                      {entry.advanced?.(ctx)}
+                    </SettingsResultPage>
+                  </SearchScopeProvider>
+                ))}
+              </SettingsResults>
+            </SettingsSearchProvider>
+            {noMatches && (
+              <EmptyState
+                label="No settings match"
+                icon={<SearchIcon size={22} strokeWidth={1.8} aria-hidden />}
+              >
+                Try a different word, like “budget”, “model” or “webhook”.
+              </EmptyState>
+            )}
+          </>
+        ) : (
+          <>
+            <SettingsPageHead
+              title={spec.label}
+              status={spec.savesConfig ? saveLine : undefined}
+              intro={spec.intro}
+            />
+            {spec.preferences?.()}
+            {/* No tier yet means no connection yet, not a refusal. */}
+            {spec.savesConfig && data.myTier !== null && !access.canDecide && (
+              <SettingsReadOnlyNote
+                reason={access.decideReason}
+                action={
+                  data.takeover === null ? undefined : (
+                    <TakeOverDaemon
+                      takeover={data.takeover}
+                      onRestart={data.handleRestartDaemon}
+                    />
+                  )
+                }
               />
-              <Input
-                type="search"
-                aria-label="Search settings"
-                placeholder="Search settings"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') setQuery('');
-                }}
-                className="pr-7 pl-7 [&::-webkit-search-cancel-button]:hidden"
-              />
-              {searching && (
-                <button
-                  type="button"
-                  aria-label="Clear search"
-                  onClick={() => setQuery('')}
-                  className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 -translate-y-1/2"
-                >
-                  <XIcon aria-hidden className="size-3.5" />
-                </button>
-              )}
-            </div>
-            {[
-              ...SETTINGS_GROUPS,
-              ...(hostedPages.length === 0
-                ? []
-                : [{ label: 'Activity', pages: hostedPages }]),
-            ].map((group) => (
-              <div key={group.label}>
-                <div className="text-muted-foreground flex h-7 items-center px-2 text-[12px] font-medium">
-                  {group.label}
-                </div>
-                <div className="flex flex-col gap-px">
-                  {group.pages.map((entry) => {
-                    const active = !searching && entry.id === page;
-                    const Icon = entry.icon;
-                    return (
-                      <button
-                        key={entry.id}
-                        type="button"
-                        aria-current={active ? 'page' : undefined}
-                        onClick={() => {
-                          setQuery('');
-                          setPage(entry.id);
-                        }}
-                        className={cn(
-                          SIDEBAR_ROW_CLASS,
-                          'gap-2',
-                          active
-                            ? SIDEBAR_ROW_ACTIVE_CLASS
-                            : SIDEBAR_ROW_INACTIVE_CLASS
-                        )}
-                      >
-                        <Icon aria-hidden className="size-3.5 shrink-0" />
-                        <span className="min-w-0 flex-1 truncate">
-                          {entry.label}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </nav>
-
-          {hosted !== undefined && !searching ? (
-            // Titled like every other page; the hosted view keeps only its tabs row.
-            <div className="flex min-h-0 flex-col overflow-hidden">
-              <div className="flex flex-col gap-1 px-6 pt-5 pb-3">
-                <h1 className="text-foreground text-[24px] leading-8 font-semibold tracking-[-0.16px]">
-                  {hosted.label}
-                </h1>
-                <p className="font-book text-muted-foreground text-[13px]">
-                  {hosted.intro}
-                </p>
-              </div>
-              <PageHeaderEmbeddedContext.Provider value>
-                <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                  {hosted.render()}
-                </div>
-              </PageHeaderEmbeddedContext.Provider>
-            </div>
-          ) : (
-            <div className="min-h-0 overflow-y-auto px-6 py-5">
-              <div className="mx-auto flex w-full max-w-[600px] flex-col gap-6 pb-10">
-                {searching ? (
-                  <>
-                    <div className="flex items-baseline justify-between gap-3">
-                      <h1 className="text-foreground text-[20px] leading-7 font-semibold tracking-[-0.12px]">
-                        Results for &ldquo;{query.trim()}&rdquo;
-                      </h1>
-                      {saveLine}
-                    </div>
-                    <SettingsSearchProvider query={query}>
-                      <div ref={resultsRef} className="flex flex-col gap-8">
-                        {ALL_PAGES.map((entry) => (
-                          <SearchScopeProvider
-                            key={entry.id}
-                            text={entry.label}
-                          >
-                            <section
-                              aria-label={entry.label}
-                              className="flex flex-col gap-4 [&:not(:has([data-settings-row]))]:hidden"
-                            >
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setQuery('');
-                                  setPage(entry.id);
-                                }}
-                                className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 self-start text-[12px] font-medium"
-                              >
-                                <entry.icon aria-hidden className="size-3.5" />
-                                {entry.label}
-                              </button>
-                              {entry.render(ctx)}
-                            </section>
-                          </SearchScopeProvider>
-                        ))}
-                      </div>
-                    </SettingsSearchProvider>
-                    {noMatches && (
-                      <EmptyState
-                        icon={SearchIcon}
-                        heading="No settings match"
-                        description="Try a different word, like “budget”, “model” or “webhook”."
-                      />
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-baseline justify-between gap-3">
-                        <h1 className="text-foreground text-[24px] leading-8 font-semibold tracking-[-0.16px]">
-                          {spec.label}
-                        </h1>
-                        {spec.savesConfig && saveLine}
-                      </div>
-                      <p className="font-book text-muted-foreground text-[13px]">
-                        {spec.intro}
-                      </p>
-                    </div>
-                    {/* No tier yet means no connection yet, not a refusal. */}
-                    {spec.savesConfig &&
-                      data.myTier !== null &&
-                      !access.canDecide && (
-                        <div className="bg-surface-secondary text-muted-foreground rounded-control font-book flex flex-col gap-2 px-3 py-2 text-[12px]">
-                          <p role="note" className="flex items-start gap-2">
-                            <LockIcon
-                              aria-hidden
-                              className="mt-px size-3.5 shrink-0"
-                            />
-                            {access.decideReason}
-                          </p>
-                          {data.takeover !== null && (
-                            <div className="pl-[22px]">
-                              <TakeOverDaemon
-                                takeover={data.takeover}
-                                onRestart={data.handleRestartDaemon}
-                              />
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    {spec.render(ctx)}
-                    {pageExtras?.[spec.id]}
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+            )}
+            {spec.render(ctx)}
+            {pageExtras?.[spec.id]}
+            {spec.advanced !== undefined && ctx.config !== null && (
+              <SettingsAdvanced>{spec.advanced(ctx)}</SettingsAdvanced>
+            )}
+          </>
+        )}
+      </SettingsLayout>
     </SettingsAccessProvider>
   );
 }

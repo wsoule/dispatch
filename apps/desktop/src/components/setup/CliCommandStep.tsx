@@ -1,9 +1,9 @@
+import { Button } from '@dispatch/ui';
 import { useState } from 'react';
 
 import { type CliInstall, installCliCommand } from '../../lib/tauri';
 import { errorText } from './errorText';
 import { SetupStepRow } from './SetupStepRow';
-import { Button } from '@/ui/button';
 
 // Only ~/.local/bin can be off PATH (/usr/local/bin always counts as on it).
 const NOT_ON_PATH = `Installed. Add ~/.local/bin to your PATH to use it: echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`;
@@ -42,7 +42,13 @@ export function CliCommandStep() {
             : 'Use Dispatch from a terminal with the `dispatch` command.'
       }
       action={
-        <Button disabled={busy} onClick={() => void install()}>
+        // Optional, and drawn beside other steps' primary buttons (Settings > Setup):
+        // secondary, so a view keeps one primary action.
+        <Button
+          variant="secondary"
+          disabled={busy}
+          onClick={() => void install()}
+        >
           Install command
         </Button>
       }

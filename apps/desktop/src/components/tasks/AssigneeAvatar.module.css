@@ -1,0 +1,60 @@
+/* The assignee circle at 18px (rows, cards) or 16px (timeline lines,
+   picker faces). A person is the library InitialsAvatar inside, resized
+   here through its --sz; an agent is AG on the info tone's tint; nobody is
+   an empty dashed ring in the control edge colour (3:1). The initials are
+   half the circle (8px at 16, 9px at 18), not the library's 0.4, which at
+   these small sizes would print 6.4px and 7.2px text. */
+
+.avatar {
+  --sz: 18px;
+
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  box-sizing: border-box;
+  width: var(--sz);
+  height: var(--sz);
+  border-radius: 50%;
+  font-family: var(--font-body);
+  font-size: calc(var(--sz) * 0.5);
+  font-weight: var(--fw-semibold);
+  line-height: 1;
+  user-select: none;
+}
+
+.avatar[data-size='16'] {
+  --sz: 16px;
+}
+
+/* The library avatar sizes itself from --sz; this one wins over its 20px
+   and its 0.4 type scale. */
+.avatar [data-mark='avatar'] {
+  --sz: 18px;
+
+  font-size: calc(var(--sz) * 0.5);
+}
+
+.avatar[data-size='16'] [data-mark='avatar'] {
+  --sz: 16px;
+}
+
+.agent {
+  background: var(--tone-soft);
+  color: var(--tone-ink);
+  letter-spacing: 0.01em;
+}
+
+.empty {
+  border: 1px dashed var(--control-border);
+}
+
+.photo {
+  object-fit: cover;
+}
+
+/* Forced colours drop the agent's tint: keep its circle's edge. */
+@media (forced-colors: active) {
+  .agent {
+    border: 1px solid CanvasText;
+  }
+}

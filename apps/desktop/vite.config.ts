@@ -1,8 +1,10 @@
-import tailwindcss from '@tailwindcss/vite';
+import { themeScript } from '@dispatch/ui/lib/theme.ts';
 import react from '@vitejs/plugin-react';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
+
+import { THEME_STORAGE_KEY } from './src/lib/theme.ts';
 
 // The oldest WebKit this app supports, as a Vite/esbuild target. The Tauri
 // webview is the *host's* WebKit rather than a bundled engine, so the oldest
@@ -20,15 +22,40 @@ const polyfills = readFileSync(
   'utf8'
 );
 
+// Applies the stored theme before first paint: a classic inline script, the
+// first thing in <body> (before #root), reads 'dispatch:theme' and writes a
+// stored 'light' or 'dark' to html[data-theme], else leaves 'system' so
+// tokens.css follows the OS live. transformIndexHtml runs for the dev server
+// and the build alike, so the daemon-served dist and Tauri get it too. An
+// inline script is allowed in both hosts: Tauri's CSP sets only img-src and
+// frame-ancestors and leaves script-src unmodified (src-tauri/tauri.conf.json),
+// and the daemon's CSP on index.html is frame-ancestors alone (serveIndexHtml
+// in packages/server/src/index.ts injects its own inline token script). A
+// script-src policy added later would need this script's hash.
+const themeBeforePaint: Plugin = {
+  name: 'dispatch-theme',
+  transformIndexHtml: () => [
+    {
+      tag: 'script',
+      children: themeScript(THEME_STORAGE_KEY, { fallback: 'system' }),
+      injectTo: 'body-prepend',
+    },
+  ],
+};
+
+// The app's origin may not be framed. The browser pane frames pages with
+// `allow-same-origin`, and a page there can navigate itself onto this origin;
+// tauri.conf.json's CSP says the same for the packaged app.
+const NO_FRAMING = { 'Content-Security-Policy': "frame-ancestors 'none'" };
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), themeBeforePaint],
+  server: { headers: NO_FRAMING },
+  preview: { headers: NO_FRAMING },
   resolve: {
     alias: {
-      // The component library lives in packages/ui (@dispatch/ui) but keeps its historical
-      // `@/ui/…` import path; this must precede the bare `@` alias so it wins the match.
-      '@/ui': fileURLToPath(new URL('../../packages/ui/src', import.meta.url)),
-      // shadcn/ui components import from `@/…`; map it to src/.
+      // App modules import from `@/…`; map it to src/.
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
@@ -39,6 +66,13 @@ export default defineConfig({
     // stays blank rather than failing visibly.
     target: WEBKIT_TARGET,
     rolldownOptions: {
+      // Two pages: the desktop app, and the phone app dispatchd's mobile
+      // listener serves at /m/ (src/mobile). Separate entries, so the phone
+      // never downloads the desktop app.
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        mobile: fileURLToPath(new URL('./m/index.html', import.meta.url)),
+      },
       output: {
         // Entry chunks only: lazily-loaded chunks are reached from an entry
         // that has already installed the shims, so repeating them 300+ times

@@ -26,10 +26,12 @@ import type {
   ApiClient,
   AuthTier,
   DraftRecord,
+  EventStreamStatus,
   ExecutorsResponse,
   FixLoopState,
   HealthPayload,
   LandingSnapshot,
+  LinearAccountView,
   LinearBulkStart,
   LinearCapacity,
   LinearCoverage,
@@ -48,6 +50,7 @@ import type {
   ReadinessReading,
   RepoPr,
   ReviewComment,
+  RunAttachment,
   RunDetail,
   RunMeta,
   RunState,
@@ -97,7 +100,11 @@ import {
   resolveDaemonAuth,
 } from '../lib/daemonAuth';
 import type { DecisionItem } from '../lib/decisionFeed';
-import { fetchDecisions, isDecisionsChanged } from '../lib/decisionFeed';
+import {
+  fetchDecisions,
+  isDecisionsChanged,
+  setDecisionDismissed,
+} from '../lib/decisionFeed';
 import { isFakeExecutorDevToolEnabled } from '../lib/devTools';
 import { fixLoopCappedNotice } from '../lib/fixLoopStatus';
 import type { RunQuestion, RunScopeRequest } from '../lib/gates';
@@ -106,6 +113,7 @@ import {
   findToolApprovalGate,
   foldsIntoOpenApproval,
   gateNotification,
+  gateReminderNotification,
   openGatesAfter,
   openGatesKey,
   questionsByRun,
@@ -227,10 +235,10 @@ async function wakeNoticeFor(
   }
 }
 
-// Persists the Board/List/Runs "show archived" toggle across restarts — mirrors BoardView's
-// own `dispatch:tasks-view-mode` persistence. Guarded for `window` for the same reason (this
-// is a Tauri/browser-only app, never SSR'd, but a stray server-side render of this module
-// shouldn't throw on a missing `localStorage`).
+// Persists the one "show archived" toggle (the Issues Display popover's and the Runs
+// page's) across restarts, per origin, as '1' or '0'. Every read and write is guarded
+// for `window`: this is a Tauri/browser-only app, never SSR'd, but a stray server-side
+// render of this module shouldn't throw on a missing `localStorage`.
 const SHOW_ARCHIVED_STORAGE_KEY = 'dispatch:show-archived';
 
 // An in-place dispatch's failure reaches its caller as a rejection instead.
@@ -445,6 +453,12 @@ export interface DispatchProjectData {
   portError: boolean;
   portErrorDetail: unknown;
   retryEnsureDispatchd: () => void;
+  /** Where the live event stream to the daemon stands — connecting, open, or
+   *  reconnecting after a drop — or null with no daemon client yet. */
+  eventStream: EventStreamStatus | null;
+  /** The daemon's origin when it runs on another machine this app paired
+   *  with; null for a daemon on this machine. */
+  remoteOrigin: string | null;
 
   tasks: TaskListItem[];
   tasksLoading: boolean;
@@ -481,6 +495,10 @@ export interface DispatchProjectData {
   // consumer of run data (countMergeReady, liveRunStateByTaskId, latestRunByTaskId, the merge
   // queue) reads the unfiltered `runs` above on purpose.
   visibleRuns: RunMeta[];
+  /** Why the task list failed to load, or null. Views fall back to empty
+   *  lists, so the shell shows this instead of letting them read as an empty
+   *  project. */
+  readError: string | null;
   /** GET /api/health, undefined until it loads. `storageBackend` is absent
    *  on daemons older than it; `originWebUrl` without a GitHub remote. */
   health:
@@ -529,6 +547,9 @@ export interface DispatchProjectData {
   /** Splits `text` server-side into one item per non-empty line. */
   handleCaptureInbox: (text: string) => Promise<void>;
   handleDismissInbox: (ids: string[]) => Promise<void>;
+  /** Hides a derived Needs-you item until its condition changes, or with
+   *  `undo` brings it back. Gates and floor holds are refused by the daemon. */
+  handleDismissDecision: (id: string, undo?: boolean) => Promise<void>;
   /**
    * Starts an AI draft that adds the context an under-specified task is missing. Its own slot,
    * not the note one: the detail dialog reviews `enrichPlanRecord` and patches the drafted
@@ -594,10 +615,13 @@ export interface DispatchProjectData {
       direction?: 'both' | 'pull' | 'push';
       includeAcceptanceCriteria?: boolean;
       archiveFinished?: boolean;
+      oauthClientId?: string | null;
+      oauthCallbackPort?: number;
     };
     statusRoles?: StatusRoles | null;
     maxTurns?: number | null;
     maxBudgetUsd?: number | null;
+    unlimitedSpend?: boolean;
     fixLoop?: { cap?: number; escalation?: EscalationStep[] };
     verify?: { command?: string; url?: string; notes?: string };
     notifications?: {
@@ -627,6 +651,28 @@ export interface DispatchProjectData {
     apiKey: string
   ) => Promise<{ connected: boolean; viewer: LinearViewer }>;
   handleDisconnectLinear: () => Promise<void>;
+  /** "Your Linear account": who is signed in with Linear for this project's
+   *  workspace, as this window's credential may see it. Never a token. Null
+   *  until fetched, and fetched only while something holds
+   *  `watchLinearDetails`; polled every 1.5 s while a sign-in waits. */
+  linearAccount: LinearAccountView | null;
+  /** Why the account view could not be fetched (an older daemon has no
+   *  route), or null. */
+  linearAccountError: unknown;
+  /** Starts a sign-in and answers Linear's consent URL, for the caller to
+   *  open in the system browser. `anotherWorkspace` asks Linear to show its
+   *  workspace choice again. */
+  handleLinearSignIn: (opts?: {
+    anotherWorkspace?: boolean;
+  }) => Promise<{ authorizeUrl: string }>;
+  /** Stops waiting for a pending sign-in. */
+  handleCancelLinearSignIn: () => Promise<void>;
+  /** Signs out of the sign-in for `workspaceId` (the workspace of the
+   *  account the row shows): the daemon deletes the token, then revokes it
+   *  at Linear. `revoked` is false when Linear could not be reached. */
+  handleLinearSignOut: (opts?: {
+    workspaceId?: string;
+  }) => Promise<{ revoked: boolean }>;
   /** Runs a sync pass now, returning its summary. With `taskIds`, pushes exactly those tasks
    * regardless of the cursor filter — the task dialog's "Push to Linear" action. */
   handleSyncLinear: (taskIds?: string[]) => Promise<LinearSyncSummary>;
@@ -738,12 +784,18 @@ export interface DispatchProjectData {
   ) => Promise<void>;
   /** The full input of a call a run is parked on, which its gate may only preview. */
   fetchApprovalInput: (runId: string, requestId: string) => Promise<unknown>;
-  /** The same for a call an Assistant conversation is parked on. */
+  /** The same for a call an Overseer conversation is parked on. */
   fetchOverseerApprovalInput: (
     conversation: string,
     requestId: string
   ) => Promise<unknown>;
   handleSendMessage: (runId: string, text: string) => Promise<void>;
+  /** Uploads files dropped, pasted or picked in a run's follow-up composer;
+   * the composer names the answered paths in the message it sends next. */
+  handleUploadRunAttachments: (
+    runId: string,
+    files: File[]
+  ) => Promise<RunAttachment[]>;
   handleCancelRun: (runId: string) => Promise<void>;
   /** Asks a live run to wind down: it finishes its current operation, then stops,
    * keeping its work. `handleCancelRun` is the hard form that kills it outright. */
@@ -929,6 +981,13 @@ export function useDispatchProject(
   });
 
   const port = connection?.port;
+  const remoteOrigin =
+    connection?.remote !== undefined && connection.baseUrl != null
+      ? connection.baseUrl
+      : null;
+  const [eventStream, setEventStream] = useState<EventStreamStatus | null>(
+    null
+  );
   // The credential every call below presents. `canDecide` is false whenever the
   // app attached to a daemon it did not spawn, because the app token only ever
   // arrives on a spawned daemon's stdout.
@@ -998,6 +1057,10 @@ export function useDispatchProject(
     () => ['dispatch-linear-details', port],
     [port]
   );
+  const linearAccountQueryKey = useMemo(
+    () => ['dispatch-linear-account', port],
+    [port]
+  );
   const syncStatusQueryKey = useMemo(() => syncStatusKey(port), [port]);
 
   // One archived-inclusive, body-less list; `tasks` (active only) and
@@ -1006,6 +1069,7 @@ export function useDispatchProject(
     data: listedTasks,
     isLoading: tasksLoading,
     isFetched: allTasksFetched,
+    error: tasksError,
   } = useQuery({
     queryKey: tasksQueryKey,
     queryFn: () => {
@@ -1149,6 +1213,23 @@ export function useDispatchProject(
     // The daemon caches a measurement for a minute; asking sooner is wasted.
     staleTime: 60_000,
     // A refused key or a throttle is a settled answer the row explains.
+    retry: false,
+  });
+  // The sign-in row's state. Shown beside coverage and capacity, so it shares
+  // their watch; polled while a sign-in waits for Linear's redirect, since
+  // the daemon's `config.changed` is the only other signal that it ended.
+  // Unlike coverage it is read without a connection too: a sign-in stored on
+  // this computer stays visible, so it can be ended, after a disconnect.
+  const { data: linearAccount, error: linearAccountError } = useQuery({
+    queryKey: linearAccountQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchLinearAccount();
+    },
+    enabled: client !== null && linearDetailWatchers > 0,
+    refetchInterval: (query) =>
+      query.state.data?.pending === true ? 1500 : false,
+    // An older daemon has no route: a settled answer, and the group hides.
     retry: false,
   });
   const refreshLinearCapacity = useCallback(async (): Promise<void> => {
@@ -1674,6 +1755,7 @@ export function useDispatchProject(
     // The first hello is the initial connect; any later one is a reconnect.
     let connectedBefore = false;
     const disconnect = client.connectEvents(refreshTeamKeys, {
+      onStatus: setEventStream,
       onEvent: (event) => {
         applyThreadEvent(queryClient, port, event);
         applyDocsEvent(queryClient, port, event);
@@ -1848,6 +1930,24 @@ export function useDispatchProject(
               queryKey: agentRosterKey(port),
             });
           }
+        } else if (event.type === 'decision.reminder') {
+          // A scope request still undecided: ping again from the gate this
+          // window holds, under the same rules as its first notification.
+          const note = auth.canDecide
+            ? gateReminderNotification(
+                queryClient.getQueryData<{ items: Message[] }>(
+                  openGatesKey(port)
+                )?.items ?? NO_GATES,
+                event.messageId,
+                (runId) =>
+                  queryClient
+                    .getQueryData<RunMeta[]>(runsQueryKey)
+                    ?.find((r) => r.id === runId)?.taskTitle,
+                queryClient.getQueryData<{ ref: string }>(whoamiQueryKey)
+                  ?.ref ?? null
+              )
+            : null;
+          if (note !== null) void notify(note.title, note.body, note.kind);
         } else if (event.type === 'plan.changed') {
           void queryClient.invalidateQueries({
             queryKey: ['dispatch-plan', port, event.planId],
@@ -1972,8 +2072,15 @@ export function useDispatchProject(
           ]);
         } else if (event.type === 'config.changed') {
           // Settings in another window, the CLI, and Linear connect/disconnect
-          // all write config; without this branch they sit stale here.
+          // all write config; without this branch they sit stale here. A
+          // Linear sign-in, sign-out, or a sign-in Linear ended sends it too.
           refetchConfig();
+          void queryClient.invalidateQueries({
+            queryKey: linearAccountQueryKey,
+          });
+        } else if (event.type === 'health.changed') {
+          // The daemon's `pr` probe settles after it starts listening.
+          void queryClient.invalidateQueries({ queryKey: healthQueryKey });
         } else if (event.type === 'run.survey') {
           // Same cache-read reason as message.new above. This is the
           // only signal that a terminal run left uncommitted work behind.
@@ -2053,6 +2160,10 @@ export function useDispatchProject(
           void queryClient.invalidateQueries({
             queryKey: linearDetailsQueryKey,
           });
+          // A pass can end a sign-in (Linear refused its refresh).
+          void queryClient.invalidateQueries({
+            queryKey: linearAccountQueryKey,
+          });
         } else if (event.type === 'queue.drained') {
           // The drain reviewed runs (tasks/runs move to done) and may have
           // pushed origin (branches' pushedToOrigin flips) — refetch all
@@ -2125,6 +2236,7 @@ export function useDispatchProject(
       if (listTimer !== null) clearTimeout(listTimer);
       if (milestoneTimer !== null) clearTimeout(milestoneTimer);
       disconnect();
+      setEventStream(null);
     };
   }, [
     client,
@@ -2146,7 +2258,9 @@ export function useDispatchProject(
     linearStatusQueryKey,
     linearLinksQueryKey,
     linearDetailsQueryKey,
+    linearAccountQueryKey,
     syncStatusQueryKey,
+    healthQueryKey,
     port,
     onRecordInbox,
     auth,
@@ -2421,7 +2535,7 @@ export function useDispatchProject(
       const { pendingApprovals } = await client.getOverseer(conversation);
       const parked = pendingApprovals.find((a) => a.requestId === requestId);
       if (parked === undefined) {
-        throw new Error('The Assistant is no longer waiting on this call.');
+        throw new Error('The Overseer is no longer waiting on this call.');
       }
       return parked.input;
     },
@@ -2497,6 +2611,15 @@ export function useDispatchProject(
       void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
     },
     [client, queryClient, port, auth]
+  );
+
+  const handleUploadRunAttachments = useCallback(
+    async (runId: string, files: File[]): Promise<RunAttachment[]> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      assertCanMessage(auth);
+      return client.uploadRunAttachments(runId, files);
+    },
+    [client, auth]
   );
 
   const handleCancelRun = useCallback(
@@ -2763,6 +2886,15 @@ export function useDispatchProject(
     [client, invalidateInbox]
   );
 
+  const handleDismissDecision = useCallback(
+    async (id: string, undo = false): Promise<void> => {
+      if (client === null) return;
+      await setDecisionDismissed(client.baseUrl, auth.token, id, undo);
+      void queryClient.invalidateQueries({ queryKey: decisionsQueryKey });
+    },
+    [client, auth.token, queryClient, decisionsQueryKey]
+  );
+
   const handleConvertInbox = useCallback(
     async (ids: string[]) => {
       if (client === null) return { results: [], converted: 0, failed: 0 };
@@ -2923,10 +3055,13 @@ export function useDispatchProject(
         direction?: 'both' | 'pull' | 'push';
         includeAcceptanceCriteria?: boolean;
         archiveFinished?: boolean;
+        oauthClientId?: string | null;
+        oauthCallbackPort?: number;
       };
       statusRoles?: StatusRoles | null;
       maxTurns?: number | null;
       maxBudgetUsd?: number | null;
+      unlimitedSpend?: boolean;
       fixLoop?: { cap?: number; escalation?: EscalationStep[] };
       verify?: { command?: string; url?: string; notes?: string };
       notifications?: {
@@ -2965,6 +3100,50 @@ export function useDispatchProject(
     void queryClient.invalidateQueries({ queryKey: linearStatusQueryKey });
     void queryClient.invalidateQueries({ queryKey: linearTeamsQueryKey });
   }, [client, queryClient, linearStatusQueryKey, linearTeamsQueryKey]);
+
+  // Sign-in is the owner's own: the daemon answers Linear's consent URL and
+  // waits on its loopback listener; the caller opens the URL. The account
+  // view then reads as pending and polls until the redirect lands.
+  const handleLinearSignIn = useCallback(
+    async (opts?: {
+      anotherWorkspace?: boolean;
+    }): Promise<{ authorizeUrl: string }> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      try {
+        return await client.startLinearSignIn(opts);
+      } finally {
+        // A refused start can still have ended an earlier pending flow.
+        void queryClient.invalidateQueries({
+          queryKey: linearAccountQueryKey,
+        });
+      }
+    },
+    [client, queryClient, linearAccountQueryKey]
+  );
+
+  const handleCancelLinearSignIn = useCallback(async (): Promise<void> => {
+    if (client === null) return;
+    await client.cancelLinearSignIn();
+    void queryClient.invalidateQueries({ queryKey: linearAccountQueryKey });
+  }, [client, queryClient, linearAccountQueryKey]);
+
+  // The answer carries the view after sign-out, so the row changes without a
+  // second request. A read already in flight began before the sign-out and
+  // would put the account back, so it is cancelled first.
+  const handleLinearSignOut = useCallback(
+    async (opts?: {
+      workspaceId?: string;
+    }): Promise<{
+      revoked: boolean;
+    }> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      const result = await client.signOutOfLinear(opts);
+      await queryClient.cancelQueries({ queryKey: linearAccountQueryKey });
+      queryClient.setQueryData(linearAccountQueryKey, result.account);
+      return { revoked: result.revoked };
+    },
+    [client, queryClient, linearAccountQueryKey]
+  );
 
   const handleSyncLinear = useCallback(
     async (taskIds?: string[]): Promise<LinearSyncSummary> => {
@@ -3111,6 +3290,8 @@ export function useDispatchProject(
       portError,
       portErrorDetail,
       retryEnsureDispatchd: () => void retryEnsureDispatchd(),
+      eventStream,
+      remoteOrigin,
 
       tasks: tasks ?? [],
       tasksLoading,
@@ -3123,6 +3304,7 @@ export function useDispatchProject(
       executors: executors ?? null,
       runs: runs ?? [],
       visibleRuns,
+      readError: tasksError === null ? null : tasksError.message,
       health,
       readyIds,
       blockedIds,
@@ -3168,6 +3350,7 @@ export function useDispatchProject(
       fetchApprovalInput,
       fetchOverseerApprovalInput,
       handleSendMessage,
+      handleUploadRunAttachments,
       handleCancelRun,
       handleStopRun,
       handleArchiveRun,
@@ -3198,6 +3381,7 @@ export function useDispatchProject(
       inbox: inbox ?? [],
       handleCaptureInbox,
       handleDismissInbox,
+      handleDismissDecision,
       handleConvertInbox,
       handleEnrichTask,
       enrichTaskId: enrichPlan?.taskId ?? null,
@@ -3220,6 +3404,11 @@ export function useDispatchProject(
       linearLinks: linearLinks ?? {},
       handleConnectLinear,
       handleDisconnectLinear,
+      linearAccount: linearAccount ?? null,
+      linearAccountError,
+      handleLinearSignIn,
+      handleCancelLinearSignIn,
+      handleLinearSignOut,
       handleSyncLinear,
       handleImportLinear,
       linearCoverage: linearCoverage ?? null,
@@ -3250,6 +3439,8 @@ export function useDispatchProject(
       portError,
       portErrorDetail,
       retryEnsureDispatchd,
+      eventStream,
+      remoteOrigin,
       tasks,
       tasksLoading,
       allTasksFetched,
@@ -3261,6 +3452,7 @@ export function useDispatchProject(
       executors,
       runs,
       visibleRuns,
+      tasksError,
       health,
       readyIds,
       blockedIds,
@@ -3304,6 +3496,7 @@ export function useDispatchProject(
       fetchApprovalInput,
       fetchOverseerApprovalInput,
       handleSendMessage,
+      handleUploadRunAttachments,
       handleCancelRun,
       handleStopRun,
       handleArchiveRun,
@@ -3332,6 +3525,7 @@ export function useDispatchProject(
       inbox,
       handleCaptureInbox,
       handleDismissInbox,
+      handleDismissDecision,
       handleConvertInbox,
       handleEnrichTask,
       enrichPlan,
@@ -3354,6 +3548,11 @@ export function useDispatchProject(
       linearLinks,
       handleConnectLinear,
       handleDisconnectLinear,
+      linearAccount,
+      linearAccountError,
+      handleLinearSignIn,
+      handleCancelLinearSignIn,
+      handleLinearSignOut,
       handleSyncLinear,
       handleImportLinear,
       linearCoverage,

@@ -1,0 +1,86 @@
+/* ActivityTimeline (ActivityTimeline.tsx): the task's history as a vertical rail of events.
+   The rail is drawn per event, each one's ::before running from its glyph's centre to the
+   next glyph's, a 1px border-colour line through the centre of the 16px glyph column, so it
+   stops at the last glyph however far that event's words wrap. Each glyph sits on a
+   surface-coloured disc that hides the rail behind it and takes its hue from the data-tone
+   hook (--tone-ink). The words carry every event, so the hue
+   is never the only cue. The rail and the glyph discs are drawn with borders, which forced
+   colours keep. Tokens only. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.event {
+  position: relative;
+  display: flex;
+  gap: var(--s-2);
+  padding: 0 0 10px var(--s-2);
+}
+
+/* One stretch of the rail: from this glyph's centre (10px down) to the next glyph's, 10px
+   into the next event; the next glyph's disc, painted after it, covers the end. */
+.event:not(:last-child)::before {
+  position: absolute;
+  top: 10px;
+  bottom: -10px;
+  left: 15px;
+  border-left: 1px solid var(--border);
+  content: '';
+}
+
+/* The glyph's disc: the surface colour masks the rail behind it; the transparent edge only
+   shows in forced colours, where it outlines the glyph. */
+.glyph {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border: 1px solid transparent;
+  border-radius: var(--r-full);
+  background: var(--surface);
+  color: var(--tone-ink);
+}
+
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.actor {
+  color: var(--text-2);
+}
+
+.when {
+  white-space: nowrap;
+}
+
+.empty {
+  margin: 0;
+  padding: 0 var(--s-2);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+.more {
+  align-self: flex-start;
+  margin-left: var(--s-2);
+}

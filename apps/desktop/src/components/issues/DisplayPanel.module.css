@@ -1,0 +1,72 @@
+/* The Issues toolbar's Display panel (DisplayPanel.tsx), inside the
+   library Popover's card: sections stacked with a divider between each,
+   picker rows with the setting's name on the left and its control on the
+   right, switch rows, and the wrapped display-property toggles. Colours
+   and type come from the Gr8r tokens; the controls draw themselves. */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding: var(--s-2) 0;
+  border-bottom: 1px solid var(--divider);
+}
+
+.section:first-child {
+  padding-top: 0;
+}
+
+.section:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  min-height: var(--h-md);
+}
+
+.rowLabel {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowControls {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+.switchRow {
+  display: flex;
+  align-items: center;
+  min-height: var(--h-md);
+}
+
+.heading {
+  display: flex;
+  align-items: center;
+  min-height: var(--h-sm);
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.properties {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+}

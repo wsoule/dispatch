@@ -1,0 +1,89 @@
+/* Gr8r's skeletons: soft 5px-radius bars with a slow shimmer from
+   --surface-3 through --surface-2, laid out like the real rows. Reduced
+   motion holds them still and a touch fainter. */
+
+.bar {
+  display: block;
+  flex: 0 0 auto;
+  max-width: 100%;
+  border-radius: var(--r-chip);
+  background: linear-gradient(
+    90deg,
+    var(--surface-3) 0%,
+    var(--surface-2) 45%,
+    var(--surface-3) 90%
+  );
+  background-size: 220% 100%;
+  animation: shimmer 1.3s ease-in-out infinite;
+}
+
+/* A status mark's or avatar's place: round. */
+.round {
+  border-radius: 50%;
+}
+
+/* SkeletonRows' title line: it gives way first in a narrow column (a
+   side panel), so the fixed-width chips never push the row past its box. */
+.line {
+  flex: 0 1 auto;
+  min-width: 24px;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 4px 0;
+}
+
+.blockWrap {
+  display: block;
+}
+
+.block {
+  width: 100%;
+  border-radius: var(--r);
+}
+
+.rows {
+  display: block;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: var(--row-h);
+  padding: 0 14px;
+  border-bottom: 1px solid var(--divider);
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+@media (width <= 640px) {
+  .chip:last-child {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar {
+    animation: none;
+    opacity: 0.85;
+  }
+}

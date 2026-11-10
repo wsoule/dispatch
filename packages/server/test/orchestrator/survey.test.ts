@@ -742,7 +742,7 @@ describe('Orchestrator.dispatchOrResume', () => {
     store: TaskStore,
     title: string,
     model?: string
-  ): Promise<{ taskId: string; runId: string }> {
+  ): Promise<{ taskId: string; runId: string; executor: StallingExecutor }> {
     orchestrator.registerExecutor(
       'fake',
       new FakeExecutor({
@@ -771,21 +771,32 @@ describe('Orchestrator.dispatchOrResume', () => {
     await waitFor(() => orchestrator.getRun(meta.id)?.meta.state === 'failed');
     // The successor must stay live rather than failing again instantly, or the
     // assertions below cannot tell a resume from a second fresh dispatch.
-    orchestrator.registerExecutor('fake', new StallingExecutor());
-    return { taskId: task.meta.id, runId: meta.id };
+    const executor = new StallingExecutor();
+    orchestrator.registerExecutor('fake', executor);
+    return { taskId: task.meta.id, runId: meta.id, executor };
   }
 
   it('resumes when the caller names nothing, whatever executor the run used', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
-    const { taskId, runId } = await failedRunOn(orchestrator, store, 'Plain');
+    const { taskId, runId, executor } = await failedRunOn(
+      orchestrator,
+      store,
+      'Plain',
+      'recorded-model'
+    );
+    store.update(taskId, { model: 'new-task-model' });
 
     // No executor named at all — the shape a bare `dispatch run <taskId>`
     // arrives in once the CLI stops sending its flag's default. The run is on
     // 'fake', which is nothing like the daemon default, and it still resumes.
-    const resumed = await orchestrator.dispatchOrResume(taskId, {});
+    const resumed = await orchestrator.dispatchOrResume(taskId, {
+      defaults: { model: 'caller-default' },
+    });
 
     expect(resumed.resumedFrom).toBe(runId);
     expect(resumed.executor).toBe('fake');
+    expect(executor.started.map((s) => s.model)).toEqual(['recorded-model']);
+    expect(executor.started[0]?.resumeSessionId).toBe('session-1');
   });
 
   it('resumes when the named model is the one the run already used', async () => {

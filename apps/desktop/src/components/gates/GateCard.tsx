@@ -1,5 +1,6 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
 import type { ApiClient, Message } from '@dispatch/client';
+import { Button, Notice } from '@dispatch/ui';
 import { useEffect, useState } from 'react';
 
 import type { DecideAvailability } from '../../lib/daemonAuth';
@@ -16,7 +17,7 @@ import { MemoryGateCard } from '../memory/MemoryGateCard';
 import { ApprovalCard } from '../runs/ApprovalCard';
 import { ScopeRequestCard } from '../runs/ScopeRequestCard';
 import { TaskProposalCard } from '../threads/TaskProposalCard';
-import { Button } from '@/ui/button';
+import styles from './GateCard.module.css';
 
 /** An answer to a gate or ask: a body, and the choice a button stands for. */
 export type GateReply = { body: string; choice?: string };
@@ -58,9 +59,7 @@ export function GateCard({
   port,
 }: GateCardProps) {
   if (control.kind === 'read-only') {
-    return (
-      <p className="text-muted-foreground text-[12px]">{control.reason}</p>
-    );
+    return <p className={styles.note}>{control.reason}</p>;
   }
   // Drawn for every viewer; its answers wait on the decide tier.
   if (control.kind === 'task-proposal') {
@@ -108,7 +107,7 @@ export function GateCard({
       );
     case 'memory':
       return client === null ? (
-        <p className="text-muted-foreground text-[12px]">
+        <p className={styles.note}>
           This window cannot read the proposal, so it cannot decide it.
         </p>
       ) : (
@@ -123,7 +122,7 @@ export function GateCard({
       );
     case 'doc':
       return client === null ? (
-        <p className="text-muted-foreground text-[12px]">
+        <p className={styles.note}>
           This window cannot read the proposal, so it cannot decide it.
         </p>
       ) : (
@@ -180,13 +179,13 @@ function DecideButtons({
       role="group"
       aria-label="Answer"
       aria-busy={pending === null ? undefined : true}
-      className="flex flex-wrap gap-1.5"
+      className={styles.choices}
     >
       {options.map(({ choice, label }) => (
         <Button
           key={choice}
           size="sm"
-          variant="outline"
+          variant="secondary"
           disabled={disabled || pending !== null}
           onClick={() => void choose(choice)}
         >
@@ -203,7 +202,8 @@ function wakeLabel(target: string): string {
 }
 
 /** A wake gate: someone asked to wake `target` (a task or ended run) with a
- *  message; approving wakes it, Don't leaves the message waiting. */
+ *  message; approving wakes it, Don't leaves the message waiting. A quiet
+ *  muted Notice: the ask is a choice, not a status. */
 export function WakeCard({
   target,
   onDecide,
@@ -213,24 +213,34 @@ export function WakeCard({
   onDecide: (choice: 'approve' | 'deny') => Promise<void>;
   canDecide?: boolean;
 }) {
+  const label = wakeLabel(target);
   return (
-    <div data-testid="wake-card" className="flex flex-col gap-1.5">
-      <DecideButtons
-        options={[
-          { choice: 'approve', label: `Wake ${wakeLabel(target)}` },
-          { choice: 'deny', label: 'Don’t' },
-        ]}
-        onDecide={(choice) =>
-          onDecide(choice === 'approve' ? 'approve' : 'deny')
-        }
-        disabled={!canDecide}
-      />
-    </div>
+    <Notice
+      tone="muted"
+      label="Wake"
+      data-testid="wake-card"
+      action={
+        <DecideButtons
+          options={[
+            { choice: 'approve', label: `Wake ${label}` },
+            { choice: 'deny', label: 'Don’t' },
+          ]}
+          onDecide={(choice) =>
+            onDecide(choice === 'approve' ? 'approve' : 'deny')
+          }
+          disabled={!canDecide}
+        />
+      }
+    >
+      Waking starts <span className="mono">{label}</span> again with the message
+      that is waiting for it.
+    </Notice>
   );
 }
 
 /** An agent-registration gate: an MCP agent or A2A client asks to join;
- *  Approve lets its token act, Deny revokes it. */
+ *  Approve lets its token act, Deny revokes it. A bordered neutral Notice
+ *  naming the agent, its client and who asked, in mono (they are ids). */
 export function RegistrationCard({
   agent,
   client,
@@ -245,22 +255,35 @@ export function RegistrationCard({
   canDecide?: boolean;
 }) {
   return (
-    <div data-testid="registration-card" className="flex flex-col gap-1.5">
-      <p className="text-muted-foreground text-[12px] break-words">
-        {`${agent} · ${client}`}
-        {requestedBy === undefined ? null : ` · asked by ${requestedBy}`}
-      </p>
-      <DecideButtons
-        options={[
-          { choice: 'approve', label: 'Approve' },
-          { choice: 'deny', label: 'Deny' },
-        ]}
-        onDecide={(choice) =>
-          onDecide(choice === 'approve' ? 'approve' : 'deny')
-        }
-        disabled={!canDecide}
-      />
-    </div>
+    <Notice
+      tone="default"
+      label="Join request"
+      data-testid="registration-card"
+      action={
+        <DecideButtons
+          options={[
+            { choice: 'approve', label: 'Approve' },
+            { choice: 'deny', label: 'Deny' },
+          ]}
+          onDecide={(choice) =>
+            onDecide(choice === 'approve' ? 'approve' : 'deny')
+          }
+          disabled={!canDecide}
+        />
+      }
+    >
+      <span className={styles.who}>
+        <span className="mono">{agent}</span>
+        {' · '}
+        <span className="mono">{client}</span>
+        {requestedBy === undefined ? null : (
+          <>
+            {' · asked by '}
+            <span className="mono">{requestedBy}</span>
+          </>
+        )}
+      </span>
+    </Notice>
   );
 }
 

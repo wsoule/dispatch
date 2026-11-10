@@ -1,15 +1,11 @@
 import type { NormalizedEntry } from '@dispatch/client';
-import { ChevronRightIcon } from 'lucide-react';
+import { Button, cx, Disclosure } from '@dispatch/ui';
+import { ChevronRight } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 
-import { formatElapsed } from '@/lib/draftTray';
-import { ShimmerLabel } from '@/ui/ai/shimmer';
-import { Button } from '@/ui/button';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/ui/collapsible';
+import { formatElapsed } from '../../lib/draftTray';
+import { ShimmerLabel } from '../transcript/ShimmerLabel';
+import styles from './WorkFold.module.css';
 
 // Below this many steps a fold costs more than it saves, so the rows show as they are.
 const MIN_FOLDED_STEPS = 3;
@@ -41,37 +37,40 @@ export function WorkFold({
 }) {
   const [open, setOpen] = useState(live);
   if (entries.length < MIN_FOLDED_STEPS) {
-    return <div className="flex flex-col">{children}</div>;
+    return <div className={styles.rows}>{children}</div>;
   }
   const span = formatElapsed(workSpanMs(entries));
   const steps = `${entries.length} steps`;
   const label = live ? `Working for ${span}` : `Worked for ${span}`;
   return (
-    <Collapsible
-      open={live || open}
-      onOpenChange={setOpen}
-      data-slot="work-fold"
-      className="border-border/60 flex flex-col border-b pt-1 pb-2"
-    >
-      <CollapsibleTrigger
-        render={
+    <div className={styles.fold}>
+      <Disclosure
+        variant="plain"
+        open={live || open}
+        onOpenChange={setOpen}
+        data-slot="work-fold"
+        trigger={({ open: shown, props }) => (
           <Button
-            variant="ghost"
-            size="xs"
-            className="group/fold text-muted-foreground hover:text-foreground h-6 justify-start gap-1 self-start px-0.5 text-[13px] font-normal tabular-nums hover:bg-transparent"
-          />
-        }
+            {...props}
+            variant="quiet"
+            size="sm"
+            className={cx(styles.trigger, 'num')}
+            iconAfter={
+              <ChevronRight
+                className={cx(styles.chevron, shown ? styles.open : undefined)}
+                size={14}
+                strokeWidth={1.8}
+                aria-hidden
+              />
+            }
+          >
+            {live ? <ShimmerLabel>{label}</ShimmerLabel> : label}
+            <span className={styles.steps}> · {steps}</span>
+          </Button>
+        )}
       >
-        {live ? <ShimmerLabel>{label}</ShimmerLabel> : label}
-        <span className="text-muted-foreground/70">· {steps}</span>
-        <ChevronRightIcon
-          aria-hidden
-          className="size-3.5 opacity-70 transition-transform duration-200 group-data-[panel-open]/fold:rotate-90"
-        />
-      </CollapsibleTrigger>
-      <CollapsibleContent className="flex flex-col pt-1">
-        {children}
-      </CollapsibleContent>
-    </Collapsible>
+        <div className={cx(styles.rows, styles.opened)}>{children}</div>
+      </Disclosure>
+    </div>
   );
 }

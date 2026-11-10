@@ -35,6 +35,10 @@ test('a failed daemon start shows the captured detail', () => {
     />
   );
   expect(screen.getByText(/port 7777 in use/)).toBeDefined();
+  // The failure line is a status word in the danger tone, never colour alone.
+  const failed = screen.getByText(/couldn.t start for this project/);
+  expect(failed.getAttribute('data-tone')).toBe('danger');
+  expect(failed.classList.contains('toneText')).toBe(true);
 });
 
 // The daemon row reads its state as a sentence-case word beside the dot.

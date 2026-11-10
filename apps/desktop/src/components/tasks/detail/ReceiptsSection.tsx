@@ -1,7 +1,8 @@
 import type { LedgerEntry } from '@dispatch-foo/core/browser';
+import { cx, TaskDetailSection } from '@dispatch/ui';
 
 import { PolicyReceiptBadge } from '../../ledger/PolicyReceiptBadge';
-import { MainSection } from './MainSection';
+import styles from './sections.module.css';
 
 const LEDGER_KIND_ORDER: readonly LedgerEntry['kind'][] = [
   'constraint',
@@ -10,7 +11,7 @@ const LEDGER_KIND_ORDER: readonly LedgerEntry['kind'][] = [
   'handoff',
 ];
 
-// Plural, sentence case: each is a sub-heading over a run of cards.
+// Plural, sentence case: each is a 12px / 500 sub-heading over a run of cards.
 const LEDGER_KIND_LABEL: Record<LedgerEntry['kind'], string> = {
   constraint: 'Constraints',
   hazard: 'Hazards',
@@ -20,7 +21,8 @@ const LEDGER_KIND_LABEL: Record<LedgerEntry['kind'], string> = {
 
 // The ledger's audit receipts — a milestone's, or a plain task's own: policy
 // decisions, scope grants, undeclared writes. Grouped by kind and attributed
-// to the task that raised each one; its lessons live in memory instead.
+// to the task that raised each one (its id in mono, a machine-read string);
+// its lessons live in memory instead.
 export function ReceiptsSection({ entries }: { entries: LedgerEntry[] }) {
   if (entries.length === 0) return null;
   const groups = LEDGER_KIND_ORDER.map((kind) => ({
@@ -28,59 +30,44 @@ export function ReceiptsSection({ entries }: { entries: LedgerEntry[] }) {
     entries: entries.filter((e) => e.kind === kind),
   })).filter((group) => group.entries.length > 0);
   return (
-    <MainSection
-      title="Receipts"
-      trailing={
-        <span className="text-muted-foreground font-book text-[12px] tabular-nums">
-          {entries.length}
-        </span>
-      }
-    >
-      <div className="flex flex-col gap-3">
+    <TaskDetailSection title="Receipts" headingLevel={3} count={entries.length}>
+      <div className={styles.body}>
         {groups.map((group) => (
           <div
             key={group.kind}
             data-slot="receipt-group"
-            className="flex flex-col gap-1.5"
+            className={styles.group}
           >
-            <span className="text-muted-foreground flex items-center gap-1.5 text-[12px] font-medium">
+            <span className={styles.groupHead}>
               {LEDGER_KIND_LABEL[group.kind]}
-              <span className="font-book tabular-nums">
-                {group.entries.length}
-              </span>
+              <span className={styles.count}>{group.entries.length}</span>
             </span>
-            <ul className="flex flex-col gap-2">
+            <ul className={styles.list}>
               {group.entries.map((entry) => (
                 <li
                   key={entry.id}
                   data-slot="receipt-entry"
-                  className="bg-surface-quaternary rounded-card border-border-strong border-[0.5px] p-3"
+                  className={styles.card}
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="text-foreground min-w-0 text-[13px] font-medium break-words">
-                      {entry.title}
-                    </span>
+                  <div className={styles.cardHead}>
+                    <span className={styles.cardTitle}>{entry.title}</span>
                     <PolicyReceiptBadge entry={entry} />
                     {entry.sourceTaskId !== null && (
                       <span
                         data-slot="receipt-source"
-                        className="text-muted-foreground font-book ml-auto shrink-0 text-[12px] tracking-(--id-tracking)"
+                        className={cx('mono', styles.source)}
                       >
                         {entry.sourceTaskId}
                       </span>
                     )}
                   </div>
-                  {/* Scope grants put absolute paths in here, which have no
-                      break opportunity of their own. */}
-                  <p className="text-muted-foreground font-book mt-1 text-[13px] break-words whitespace-pre-wrap">
-                    {entry.detail}
-                  </p>
+                  <p className={styles.cardBody}>{entry.detail}</p>
                 </li>
               ))}
             </ul>
           </div>
         ))}
       </div>
-    </MainSection>
+    </TaskDetailSection>
   );
 }

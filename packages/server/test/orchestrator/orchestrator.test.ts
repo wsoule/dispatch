@@ -1261,6 +1261,19 @@ describe('Orchestrator.review merge closes superseded predecessors', () => {
     const body = store.get(task.meta.id)!.body;
     expect(body).toContain(`run ${a.id} superseded by run ${c.id}`);
     expect(body).toContain(`run ${b.id} superseded by run ${c.id}`);
+
+    // The API's decorated list names each run's direct successor, so a list
+    // can show the predecessors as superseded rather than failed; the merged
+    // run itself has none. A single-run read (run detail) gets the same answer.
+    const decorated = orchestrator.decorateRunsWithPushed(orchestrator.list());
+    const byId = new Map(decorated.map((run) => [run.id, run]));
+    expect(byId.get(a.id)!.supersededBy).toBe(b.id);
+    expect(byId.get(b.id)!.supersededBy).toBe(c.id);
+    expect(byId.get(c.id)!.supersededBy).toBeUndefined();
+    const [detail] = orchestrator.decorateRunsWithPushed([
+      orchestrator.getRun(a.id)!.meta,
+    ]);
+    expect(detail.supersededBy).toBe(b.id);
   });
 
   // No public path leaves a live run behind a successor (resume refuses a

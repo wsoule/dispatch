@@ -19,19 +19,18 @@ function taskWith(
 }
 
 function group(
-  milestoneId: string | null,
+  epicId: string | null,
   label: string,
   tasks: TaskListItem[]
 ): ListGroup {
   return {
-    key: milestoneId === null ? 'parent:none' : `parent:${milestoneId}`,
-    kind: 'parent',
+    key: epicId === null ? 'epic:none' : `milestone:${epicId}`,
+    kind: 'milestone',
     label,
-    tint: null,
-    icon: { kind: 'parent', parentId: milestoneId },
+    icon: null,
     rows: tasks.map((doc) => ({ doc, indent: 0 })),
     preset: {},
-    milestoneId,
+    milestoneId: epicId,
     archived: false,
   } as ListGroup;
 }

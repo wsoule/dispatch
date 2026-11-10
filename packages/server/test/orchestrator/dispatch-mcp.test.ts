@@ -27,7 +27,7 @@ describe('dispatchMcpSpec', () => {
     expect(spec.env.DISPATCH_PROJECT_ROOT).toBe('/proj');
     expect(spec.env.DISPATCH_RUN_ID).toBe('r-1');
     expect(spec.timeoutMs).toBe(DISPATCH_MCP_TOOL_TIMEOUT_MS);
-    expect(DISPATCH_MCP_TOOL_TIMEOUT_MS).toBe(31 * 60_000);
+    expect(DISPATCH_MCP_TOOL_TIMEOUT_MS).toBe(24 * 60 * 60_000 + 60_000);
     // The env is an allowlist: an arbitrary inherited variable never crosses.
     expect(spec.env.DISPATCH_MCP_TEST_SECRET).toBeUndefined();
     for (const key of Object.keys(spec.env)) {

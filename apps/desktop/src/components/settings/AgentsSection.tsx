@@ -3,16 +3,19 @@ import type {
   DispatchConfig,
   EffortConfig,
   ModelConfig,
+  OverseerAutonomy,
   OverseerStreamMode,
   RunStreamMode,
 } from '@dispatch-foo/core/browser';
 import {
   EFFORT_ROLES,
   MODEL_ROLES,
+  overseerAutonomy,
   overseerSettings,
   runSettings,
 } from '@dispatch-foo/core/browser';
 import type { ApiClient, ExecutorsResponse } from '@dispatch/client';
+import { RadioGroup, Select } from '@dispatch/ui';
 
 import {
   DEFAULT_EFFORT_ID,
@@ -22,16 +25,23 @@ import {
   MODELS,
 } from '../../lib/models';
 import { CliAgents } from './AgentsMoreGroups';
-import { ChoiceSetting, ModeSetting, NumberSetting } from './fields';
+import styles from './AgentsSection.module.css';
+import {
+  ChoiceSetting,
+  ModeSetting,
+  NumberSetting,
+  SwitchSetting,
+} from './fields';
 import { JudgmentStatusRow } from './JudgmentStatusRow';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/ui/select';
+
+// The overseer's autonomy levels, each saying what it asks about. Cancelling
+// or discarding a run and sending as you always ask, whichever is picked.
+const AUTONOMY_CHOICES: { value: OverseerAutonomy; label: string }[] = [
+  { value: 'cautious', label: 'Cautious: ask about everything' },
+  { value: 'balanced', label: 'Balanced: ask once per conversation' },
+  { value: 'trusting', label: 'Trusting: only ask about risky actions' },
+];
 
 interface AgentsSectionProps {
   config: DispatchConfig;
@@ -48,7 +58,7 @@ interface AgentsSectionProps {
 const ROLE_INFO: Record<keyof ModelConfig, { label: string; hint: string }> = {
   execute: { label: 'Coding runs', hint: 'Agents that change your code.' },
   overseer: {
-    label: 'Assistant',
+    label: 'Overseer',
     hint: 'The chat that watches your project and can act on it.',
   },
   plan: {
@@ -145,9 +155,8 @@ function streamHint(
   return modes.find((m) => m.value === value)?.hint ?? '';
 }
 
-/** Settings → Agents: models and effort per kind of work, how their chats
- *  stream, the limits runs work under, what they may do unasked, and the
- *  agents a dispatch can use.
+/** Settings → Agents: models and effort per kind of work, the limits runs
+ *  work under, what they may do unasked, and the agents a dispatch can use.
  *  Save feedback lives in the shell, not here: this only calls `onSave`. */
 export function AgentsSection({
   config,
@@ -164,8 +173,6 @@ export function AgentsSection({
       config.orchestrator.executor,
     ]),
   ];
-  const overseerStream = overseerSettings(config).stream;
-  const runStream = runSettings(config).stream;
   return (
     <>
       <SettingsGroup
@@ -185,51 +192,33 @@ export function AgentsSection({
               control={
                 <>
                   <Select
+                    label={`${info.label} model`}
                     value={current}
-                    onValueChange={(id) =>
-                      void onSave({ models: { [role]: id } })
-                    }
-                  >
-                    <SelectTrigger
-                      aria-label={`${info.label} model`}
-                      className="w-[124px]"
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {modelChoices(current).map((m) => (
-                        <SelectItem key={m.id} value={m.id}>
-                          {m.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    options={modelChoices(current).map((m) => ({
+                      value: m.id,
+                      label: m.label,
+                    }))}
+                    className={styles.model}
+                    onChange={(id) => void onSave({ models: { [role]: id } })}
+                  />
                   {hasEffort(role) ? (
                     <Select
+                      label={`${info.label} effort`}
                       value={config.effort?.[role] ?? DEFAULT_EFFORT_ID}
-                      onValueChange={(id) =>
+                      options={effortOptions(undefined).map((o) => ({
+                        value: o.id,
+                        label: o.label,
+                      }))}
+                      className={styles.effort}
+                      onChange={(id) =>
                         void onSave({
                           effort: { [role]: effortFromId(id) ?? null },
                         })
                       }
-                    >
-                      <SelectTrigger
-                        aria-label={`${info.label} effort`}
-                        className="w-[112px]"
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {effortOptions(undefined).map((o) => (
-                          <SelectItem key={o.id} value={o.id}>
-                            {o.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    />
                   ) : (
                     // Holds the column so every model select lines up.
-                    <span aria-hidden className="w-[112px]" />
+                    <span aria-hidden className={styles.effort} />
                   )}
                 </>
               }
@@ -244,31 +233,6 @@ export function AgentsSection({
         keywords="typesafe jev"
       >
         <JudgmentStatusRow client={client} port={port} />
-      </SettingsGroup>
-
-      <SettingsGroup
-        title="Streaming"
-        hint="How a chat shows an agent's text while it works. Live is the default; the others are for when streaming misbehaves. A change applies from the assistant's next turn, and to runs started after it."
-        keywords="stream live text typing chat"
-      >
-        <ModeSetting<OverseerStreamMode>
-          id="overseer-stream"
-          title="Assistant"
-          subtitle={streamHint(OVERSEER_STREAM, overseerStream)}
-          keywords="overseer.stream overseer narration"
-          value={overseerStream}
-          choices={OVERSEER_STREAM}
-          onSave={(stream) => void onSave({ overseer: { stream } })}
-        />
-        <ModeSetting<RunStreamMode>
-          id="runs-stream"
-          title="Runs"
-          subtitle={streamHint(RUN_STREAM, runStream)}
-          keywords="runs.stream task run agent"
-          value={runStream}
-          choices={RUN_STREAM}
-          onSave={(stream) => void onSave({ runs: { stream } })}
-        />
       </SettingsGroup>
 
       <SettingsGroup title="Limits" keywords="caps">
@@ -298,19 +262,31 @@ export function AgentsSection({
           allowEmpty
           onSave={(maxTurns) => void onSave({ maxTurns })}
         />
-        <NumberSetting
-          id="budget-cap-per-run"
-          title="Spend per run"
-          subtitle="Stops a run once it has spent this much. Leave empty for no limit."
-          keywords="budget cap cost dollars maxBudgetUsd"
-          value={config.orchestrator.maxBudgetUsd}
-          min={0.01}
-          integer={false}
-          suffix="USD"
-          placeholder="No limit"
-          allowEmpty
-          onSave={(maxBudgetUsd) => void onSave({ maxBudgetUsd })}
+        <SwitchSetting
+          id="unlimited-spend"
+          title="Unlimited spend"
+          subtitle="No spend cap on runs or fan-outs, and Send agents starts straight away without asking for a ceiling."
+          keywords="budget cap cost dollars unlimitedSpend ceiling no limit"
+          checked={config.orchestrator.unlimitedSpend}
+          onSave={(unlimitedSpend) => void onSave({ unlimitedSpend })}
         />
+        {/* Hidden rather than disabled: the daemon ignores the cap while the switch
+            is on, and keeps the saved value for when it goes off. */}
+        {!config.orchestrator.unlimitedSpend && (
+          <NumberSetting
+            id="budget-cap-per-run"
+            title="Spend per run"
+            subtitle="Stops a run once it has spent this much. Leave empty for no limit."
+            keywords="budget cap cost dollars maxBudgetUsd"
+            value={config.orchestrator.maxBudgetUsd}
+            min={0.01}
+            integer={false}
+            suffix="USD"
+            placeholder="No limit"
+            allowEmpty
+            onSave={(maxBudgetUsd) => void onSave({ maxBudgetUsd })}
+          />
+        )}
         <NumberSetting
           id="run-cost-estimate"
           title="Expected cost per run"
@@ -336,28 +312,18 @@ export function AgentsSection({
         >
           {/* Native radios: a real input keeps `getByLabelText(...).checked`
               meaningful in the tests. */}
-          <div
-            role="radiogroup"
-            aria-label="When an agent wants to run a command or edit a file"
-            className="grid gap-1.5"
-          >
-            {PERMISSION_MODES.map(([mode, label]) => (
-              <label
-                key={mode}
-                className="font-book flex items-center gap-2 text-[13px] text-(--text-secondary)"
-              >
-                <input
-                  type="radio"
-                  name="permission-mode"
-                  value={mode}
-                  checked={config.orchestrator.permissionMode === mode}
-                  onChange={() => void onSave({ permissionMode: mode })}
-                  className="accent-primary size-3.5"
-                />
-                <span>{label}</span>
-              </label>
-            ))}
-          </div>
+          <RadioGroup
+            label="When an agent wants to run a command or edit a file"
+            value={config.orchestrator.permissionMode}
+            options={PERMISSION_MODES.map(([mode, label]) => ({
+              value: mode,
+              label,
+            }))}
+            onChange={(next) => {
+              const mode = PERMISSION_MODES.find(([m]) => m === next)?.[0];
+              if (mode !== undefined) void onSave({ permissionMode: mode });
+            }}
+          />
           {!OFFERED_MODES.includes(config.orchestrator.permissionMode) && (
             <SettingsHint>
               Currently &ldquo;{config.orchestrator.permissionMode}&rdquo;, set
@@ -365,6 +331,15 @@ export function AgentsSection({
             </SettingsHint>
           )}
         </SettingsRow>
+        <ChoiceSetting
+          id="overseer-autonomy"
+          title="What your agent does without asking"
+          subtitle="Balanced files and edits tasks at once and asks once per conversation before dispatching or merging. Cancelling or discarding a run and sending as you always ask."
+          keywords="overseer autonomy assistant approve card cautious balanced trusting"
+          value={overseerAutonomy(config)}
+          choices={AUTONOMY_CHOICES}
+          onSave={(autonomy) => void onSave({ overseer: { autonomy } })}
+        />
       </SettingsGroup>
 
       <SettingsGroup title="Defaults">
@@ -381,5 +356,41 @@ export function AgentsSection({
 
       <CliAgents config={config} onSave={onSave} canOperate={canOperate} />
     </>
+  );
+}
+
+/** Agents' Streaming group: how chats show an agent's text while it works.
+ *  Folded under Advanced, since Live suits everyone until streaming misbehaves. */
+export function AgentStreamingGroup({
+  config,
+  onSave,
+}: Pick<AgentsSectionProps, 'config' | 'onSave'>) {
+  const overseerStream = overseerSettings(config).stream;
+  const runStream = runSettings(config).stream;
+  return (
+    <SettingsGroup
+      title="Streaming"
+      hint="How a chat shows an agent's text while it works. Live is the default; the others are for when streaming misbehaves. A change applies from the Overseer's next turn, and to runs started after it."
+      keywords="stream live text typing chat"
+    >
+      <ModeSetting<OverseerStreamMode>
+        id="overseer-stream"
+        title="Overseer"
+        subtitle={streamHint(OVERSEER_STREAM, overseerStream)}
+        keywords="overseer.stream overseer narration"
+        value={overseerStream}
+        choices={OVERSEER_STREAM}
+        onSave={(stream) => void onSave({ overseer: { stream } })}
+      />
+      <ModeSetting<RunStreamMode>
+        id="runs-stream"
+        title="Runs"
+        subtitle={streamHint(RUN_STREAM, runStream)}
+        keywords="runs.stream task run agent"
+        value={runStream}
+        choices={RUN_STREAM}
+        onSave={(stream) => void onSave({ runs: { stream } })}
+      />
+    </SettingsGroup>
   );
 }

@@ -10,6 +10,8 @@ import {
   knownAddresses,
   lookupsKey,
   mergeThreadSources,
+  messageBadge,
+  messageBadgeTone,
   offersAnswer,
   openRefWith,
   participantLabel,
@@ -220,7 +222,7 @@ describe('rowControl', () => {
       truncated: false,
       call: { runId: 'r-000001', requestId: 'req-1' },
     });
-    // An Assistant call is parked on its conversation instead of a run.
+    // An Overseer call is parked on its conversation instead of a run.
     expect(
       rowControl(approval(true, { conversation: 'o-000001' }), {
         me: ME,
@@ -804,14 +806,14 @@ describe('replyRoute', () => {
     );
   });
 
-  it("keeps a teammate's agent named overseer on the bus: only the daemon's own overseer is the Assistant", () => {
+  it("keeps a teammate's agent named overseer on the bus: only the daemon's own overseer is the Overseer", () => {
     const external = msg('m-05', { from: ME, to: ['agent:pmirand/overseer'] });
     expect(replyRoute([external], 'm-05', null, withRoster)).toBe('bus');
     expect(withRoster.isOverseer('agent:wyat/overseer')).toBe(true);
     expect(withRoster.isOverseer('agent:pmirand/overseer')).toBe(false);
   });
 
-  it('treats any overseer-named agent as the Assistant only until the roster loads', () => {
+  it('treats any overseer-named agent as the Overseer only until the roster loads', () => {
     const unloaded = threadLookups([], [], []);
     expect(replyRoute([line], 'm-01', 'm-01', unloaded)).toBe('overseer');
     expect(unloaded.isOverseer('agent:pmirand/overseer')).toBe(true);
@@ -917,6 +919,33 @@ describe('refs and labels', () => {
     expect(kindLabel('answer')).toBe('Answer');
     expect(kindLabel('x-review')).toBe('x-review');
     expect(kindLabel('message')).toBeUndefined();
+  });
+
+  it("badges the daemon's close and breaker markers by name, a look-alike by its kind", () => {
+    const marker = (from: string, kind: string, type: string) =>
+      msg('m-01', { from, kind, data: { type } });
+    expect(messageBadge(marker('agent:dispatch', 'answer', 'x-closed'))).toBe(
+      'Closed'
+    );
+    expect(messageBadge(marker('agent:dispatch', 'notice', 'x-breaker'))).toBe(
+      'Breaker'
+    );
+    expect(
+      messageBadge(marker('agent:wyat/a2a.acme', 'answer', 'x-closed'))
+    ).toBe('Answer');
+    expect(messageBadge(msg('m-01', { kind: 'question' }))).toBe('Question');
+    expect(messageBadge(msg('m-01', { kind: 'message' }))).toBeUndefined();
+  });
+
+  it('tones a closed thread and a silenced agent grey, a breaker red, Urgent amber, the rest neutral', () => {
+    expect(messageBadgeTone('Closed')).toBe('muted');
+    expect(messageBadgeTone('Revoked')).toBe('muted');
+    expect(messageBadgeTone('Muted')).toBe('muted');
+    expect(messageBadgeTone('Breaker')).toBe('danger');
+    expect(messageBadgeTone('Urgent')).toBe('warning');
+    expect(messageBadgeTone('Question')).toBe('default');
+    expect(messageBadgeTone('Answer')).toBe('default');
+    expect(messageBadgeTone('x-review')).toBe('default');
   });
 
   it('keys the lookups by what they read, so an event that changes no label keeps them', () => {

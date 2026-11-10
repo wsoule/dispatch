@@ -1,29 +1,31 @@
-import { CheckIcon, InfoIcon } from 'lucide-react';
-import { createContext, useContext, useMemo } from 'react';
-import { toast } from 'sonner';
+import {
+  type ToastInput as UiToastInput,
+  ToastProvider as UiToastProvider,
+  useToast,
+} from '@dispatch/ui';
+import { createContext, type ReactNode, useContext, useMemo } from 'react';
 
 import {
-  sonnerActionsFor,
-  sonnerOptionsFor,
+  toastActionFor,
+  toastDurationFor,
   type ToastLink,
   type ToastTone,
 } from './toastContract';
-import { Toaster } from '@/ui/sonner';
 
-interface ToastInput {
-  /** 13px/500, beside the tone's 14px icon (a green check for success, an info glyph for
-   * an error). */
+export interface ToastInput {
+  /** The semibold lead-in when a `description` follows (`Save failed`); on its own it is the
+   * whole sentence (`Copied link`), shown with no lead-in word. */
   title: string;
-  /** The 12px muted line under it. For a failure this should be what actually went wrong;
+  /** The sentence after the lead-in. For a failure this should be what actually went wrong;
    * for a task, `t-8f2a — Cache the search index` (`taskToastDescription`). */
   description?: string;
+  /** Picks the icon and how long the toast stays (`toastDurationFor`); `info` by default. */
   tone?: ToastTone;
-  /** The indigo text link under the description — `View task` (`viewTaskLink`). */
+  /** The toast's follow-up — `View task` (`viewTaskLink`). */
   link?: ToastLink;
-  /** The same slot as `link`, for follow-ups that are not a navigation (`Restart`). */
+  /** The same slot as `link`, for follow-ups that are not a navigation (`Restart`); `link`
+   * wins when both are given. */
   action?: ToastLink;
-  /** A second, quieter follow-up rendered as a ghost — dismisses the toast either way. */
-  secondary?: ToastLink;
 }
 
 interface ToastApi {
@@ -32,44 +34,45 @@ interface ToastApi {
 
 const ToastContext = createContext<ToastApi | null>(null);
 
-const TONE_FN = {
-  error: toast.error,
-  success: toast.success,
-  info: toast.info,
-} as const;
+/** Maps a `push` onto the library's toast: the tone is the kind; a title with a description
+ * reads the title as the lead-in word and the description as the sentence, a bare title is
+ * the sentence alone; `link` and `action` share the one action slot; errors never time out. */
+function toUiToast(input: ToastInput): UiToastInput {
+  const tone = input.tone ?? 'info';
+  const action = toastActionFor(input);
+  return {
+    kind: tone,
+    ...(input.description === undefined
+      ? { label: '', message: input.title }
+      : { label: input.title, message: input.description }),
+    ...(action !== undefined && { action }),
+    duration: toastDurationFor(tone),
+  };
+}
 
-// §12: success is a plain green check, an error is an info glyph with its description.
-// The Toaster colours them per tone; the shapes are set here.
-const TONE_ICON = {
-  error: <InfoIcon aria-hidden />,
-  success: <CheckIcon aria-hidden />,
-  info: <InfoIcon aria-hidden />,
-} as const;
-
-/** Mounts the Linear-styled `Toaster` (a 300px quaternary card, bottom-right) and hands
- * every surface a `push`. There is no close button: a toast times out, or its link or
- * ghost dismisses it. */
-export function ToastProvider({ children }: { children: React.ReactNode }) {
+/** Reads the library's `toast()` once and hands every surface one stable `push` over it, so a
+ * `[toasts]` dependency never changes. */
+function PushBridge({ children }: { children: ReactNode }) {
+  const { toast } = useToast();
   const api = useMemo<ToastApi>(
     () => ({
       push: (input) => {
-        const tone = input.tone ?? 'info';
-        TONE_FN[tone](input.title, {
-          description: input.description,
-          icon: TONE_ICON[tone],
-          ...sonnerActionsFor(input),
-          ...sonnerOptionsFor(tone),
-        });
+        toast(toUiToast(input));
       },
     }),
-    []
+    [toast]
   );
+  return <ToastContext.Provider value={api}>{children}</ToastContext.Provider>;
+}
 
+/** Mounts @dispatch/ui's toast stack (Gr8r's inverted cards, bottom-right, at most three) and
+ * hands every surface a `push`. A toast times out, or its action or dismiss button closes it;
+ * an error stays until it is read. */
+export function ToastProvider({ children }: { children: ReactNode }) {
   return (
-    <ToastContext.Provider value={api}>
-      {children}
-      <Toaster position="bottom-right" visibleToasts={4} />
-    </ToastContext.Provider>
+    <UiToastProvider>
+      <PushBridge>{children}</PushBridge>
+    </UiToastProvider>
   );
 }
 

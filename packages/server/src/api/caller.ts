@@ -94,3 +94,25 @@ export function routePrincipal(ctx: ApiContext): Principal {
     kind: 'human',
   };
 }
+
+/**
+ * Whose Linear credit a write made on this request carries
+ * (linear/personEdits.ts): the owner on their own app token, or a teammate on
+ * their own credential (`human:<handle>`, whose grant a shared host may hold).
+ * Null for a run, the shared agent token, or a request with no human behind
+ * it, which always go out through the project connection.
+ */
+export function linearCreditRef(
+  ctx: Pick<
+    ApiContext,
+    'caller' | 'viaAgentToken' | 'viaRun' | 'ownerCredential' | 'actorContext'
+  >
+): string | null {
+  if (ctx.viaRun !== undefined) return null;
+  if (ctx.ownerCredential === true) return ctx.actorContext.humanRef;
+  const ref = humanCredentialRef(ctx);
+  // The owner's credit (and so their sign-in) belongs to their own token
+  // only, never to another credential that resolves to the owner's ref.
+  if (ref === null || ref === ctx.actorContext.humanRef) return null;
+  return ref.startsWith('human:') ? ref : null;
+}

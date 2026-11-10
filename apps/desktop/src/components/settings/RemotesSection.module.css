@@ -1,0 +1,15 @@
+/* The add-a-machine form (RemotesSection.tsx): two columns of fields, then Add. */
+.form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--s-2);
+}
+
+.form .mono {
+  font-family: var(--font-mono);
+}
+
+.submit {
+  grid-column: span 2;
+  justify-self: start;
+}

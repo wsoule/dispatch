@@ -11,6 +11,8 @@ import type {
   DeliveryEngine,
   FederationHooks,
   GateData,
+  LinkHttpRequest,
+  LinkHttpResponse,
   LinkMail,
   LinkState,
   Message,
@@ -18,7 +20,7 @@ import type {
   Placement,
 } from '@dispatch-foo/protocol';
 import { OpClock } from '@dispatch-foo/protocol/federation';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -35,6 +37,19 @@ const HUB_ROW = 'hub:';
 // Cheap (one small file read while linked), and a hub a session just
 // started is linked within seconds.
 const POLL_MS = 5000;
+
+// The request headers a forwarded web request keeps; `authorization` and
+// `cookie` above all are dropped and replaced by the web credential.
+const FORWARDED_HEADERS = [
+  'accept',
+  'content-type',
+  'if-match',
+  'if-none-match',
+];
+const FORWARD_TIMEOUT_MS = 50_000;
+// The team link carries a reply in one frame of at most 4 MiB, and base64
+// grows it by a third: a larger answer would drop the machine's link.
+const MAX_FORWARD_REPLY_BYTES = 2.5 * 1024 * 1024;
 
 /** Whether `agent` is a mirror of one of the hub's agents. */
 export function isHubRow(agent: AgentRecord): boolean {
@@ -114,6 +129,14 @@ export interface HubLinkDeps {
 export class DaemonHubLink {
   /** The token the hub presents on /api/hub-link/*. */
   readonly token = randomBytes(32).toString('hex');
+  // What a request forwarded from the web (through the hub, from the team
+  // service) is replayed with: it speaks for the operator at the decide tier
+  // only (identity.ts), so the web never reaches a shell, a file write or
+  // the daemon's own controls. Never leaves this process.
+  private readonly webToken = `dsw_${randomBytes(32).toString('hex')}`;
+  private readonly webDigest = createHash('sha256')
+    .update(this.webToken)
+    .digest();
   private readonly local: LocalIdentity | null;
   private engine: DeliveryEngine | null = null;
   private port = 0;
@@ -185,6 +208,95 @@ export class DaemonHubLink {
     const a = Buffer.from(presented);
     const b = Buffer.from(this.token);
     return a.length === b.length && timingSafeEqual(a, b);
+  }
+
+  /** Whether a presented token's digest is the web credential. */
+  webMatches(digest: Buffer): boolean {
+    return (
+      digest.length === this.webDigest.length &&
+      timingSafeEqual(digest, this.webDigest)
+    );
+  }
+
+  /**
+   * Replays one request the hub forwarded from the web on this daemon's own
+   * API, with the web credential. Only `/api/` paths, and never the hub
+   * link's own routes, so a forwarded request cannot pose as the hub.
+   */
+  async forward(body: unknown): Promise<LinkHttpResponse> {
+    const req = body as Partial<LinkHttpRequest>;
+    const path = typeof req.path === 'string' ? req.path : '';
+    const method = typeof req.method === 'string' ? req.method : 'GET';
+    if (
+      !path.startsWith('/api/') ||
+      path.startsWith('/api/hub-link') ||
+      this.port === 0
+    )
+      return webAnswer(404, { error: 'not found' });
+    const headers = new Headers();
+    const given = req.headers ?? {};
+    for (const name of FORWARDED_HEADERS) {
+      const value = given[name];
+      if (typeof value === 'string') headers.set(name, value);
+    }
+    headers.set('authorization', `Bearer ${this.webToken}`);
+    const bytes =
+      typeof req.body === 'string' && req.body !== ''
+        ? Buffer.from(req.body, 'base64')
+        : null;
+    const res = await fetch(`http://127.0.0.1:${String(this.port)}${path}`, {
+      method,
+      headers,
+      ...(bytes === null || method === 'GET' || method === 'HEAD'
+        ? {}
+        : { body: bytes }),
+      redirect: 'manual',
+      signal: AbortSignal.timeout(FORWARD_TIMEOUT_MS),
+    });
+    const reply = await readCapped(res, MAX_FORWARD_REPLY_BYTES);
+    if (reply === null)
+      return webAnswer(413, {
+        error: 'That answer is too large to send to the web.',
+      });
+    const out: Record<string, string> = {};
+    res.headers.forEach((value, name) => {
+      if (name !== 'set-cookie') out[name] = value;
+    });
+    return {
+      status: res.status,
+      headers: out,
+      body: Buffer.from(reply).toString('base64'),
+    };
+  }
+
+  /**
+   * Whether this machine's hub lets the web reach its projects, or null when
+   * no hub runs; `enabled` sets it first. A machine-wide switch, kept by the
+   * hub (desktop's Settings, This machine).
+   */
+  async webAccess(enabled?: boolean): Promise<boolean | null> {
+    const file = readHubFile();
+    if (file === null) return null;
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${String(file.port)}/api/web-access`,
+        {
+          method: enabled === undefined ? 'GET' : 'PUT',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${file.token}`,
+          },
+          ...(enabled === undefined
+            ? {}
+            : { body: JSON.stringify({ enabled }) }),
+          signal: AbortSignal.timeout(5000),
+        }
+      );
+      if (!res.ok) return null;
+      return ((await res.json()) as { enabled?: unknown }).enabled === true;
+    } catch {
+      return null;
+    }
   }
 
   /** Handles one /api/hub-link/<kind> call from the hub. */
@@ -456,4 +568,35 @@ export function hubMaySpeakFor(store: MessageStore, from: unknown): boolean {
 // A mirror row's hash: unique, so its gate key is too, and matching no token.
 function hubTokenHash(): string {
   return `${HUB_ROW}${randomBytes(16).toString('hex')}`;
+}
+
+function webAnswer(status: number, body: unknown): LinkHttpResponse {
+  return {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8' },
+    body: Buffer.from(JSON.stringify(body)).toString('base64'),
+  };
+}
+
+// A response body, or null once it passes `max` bytes (the read stops there,
+// so a streaming route is cancelled rather than buffered whole).
+async function readCapped(
+  res: Response,
+  max: number
+): Promise<Uint8Array | null> {
+  if (res.body === null) return new Uint8Array();
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks);
 }

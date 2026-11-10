@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 
 // Single-quotes a path for bash, so a home directory with a space or a quote
 // in it still lands on PATH as one entry.
@@ -30,10 +30,46 @@ export function withProtoShims(
   command: string,
   env: NodeJS.ProcessEnv = process.env
 ): string {
-  if (!existsSync(join(worktreePath, '.prototools'))) return command;
+  const dirs = protoShimDirs(worktreePath, env);
+  if (dirs === null) return command;
+  const [shims, bin] = dirs;
+  return `export PATH=${shellQuote(shims)}:${shellQuote(bin)}:"$PATH"; ${command}`;
+}
+
+/**
+ * Returns an agent process's env with proto's shims (and the proto binary)
+ * at the front of PATH, so the agent and every git hook it triggers run the
+ * versions the worktree pins in `.prototools`.
+ *
+ * Agents inherit the daemon's widened PATH, which knows nvm, Homebrew and
+ * `~/.bun/bin` but not proto. Without the shims, a pre-commit hook's
+ * `pnpm exec lint-staged` gets whichever pnpm (or node, or bun) one of those
+ * happens to provide, or none at all. An agent is not a login shell, so the
+ * env PATH survives as given and needs no in-shell prefix like
+ * `withProtoShims`. Hands `env` back unchanged when the worktree pins nothing
+ * or proto is not installed.
+ */
+export function withProtoPath(
+  worktreePath: string,
+  env: Record<string, string>
+): Record<string, string> {
+  const dirs = protoShimDirs(worktreePath, env);
+  if (dirs === null) return env;
+  const rest = (env.PATH ?? '')
+    .split(delimiter)
+    .filter((p) => p !== '' && !dirs.includes(p));
+  return { ...env, PATH: [...dirs, ...rest].join(delimiter) };
+}
+
+// proto's shims and bin directories, when `worktreePath` pins tools in a
+// `.prototools` and proto is installed under PROTO_HOME (default ~/.proto).
+function protoShimDirs(
+  worktreePath: string,
+  env: Record<string, string | undefined>
+): [shims: string, bin: string] | null {
+  if (!existsSync(join(worktreePath, '.prototools'))) return null;
   const protoHome = env.PROTO_HOME ?? join(homedir(), '.proto');
   const shims = join(protoHome, 'shims');
-  if (!existsSync(shims)) return command;
-  const bin = join(protoHome, 'bin');
-  return `export PATH=${shellQuote(shims)}:${shellQuote(bin)}:"$PATH"; ${command}`;
+  if (!existsSync(shims)) return null;
+  return [shims, join(protoHome, 'bin')];
 }

@@ -7,6 +7,7 @@ import type {
 import {
   DEFAULT_HANDOFF_STATUSES,
   handoffStatuses,
+  IpLimiter,
   isClientAddress,
   openA2ADb,
   SqliteA2AStore,
@@ -42,6 +43,7 @@ import {
   ProposalGuard,
 } from './guards.js';
 import { handleProposal } from './handoff.js';
+import { IntakeNotifier, IntakePages } from './intake.js';
 import { KeyService } from './keys.js';
 import { A2ALineage } from './lineage.js';
 import { LinkWiring } from './links.js';
@@ -206,6 +208,11 @@ interface OpenBridgeDeps {
   linkIntervalMs?: number;
   mark?: (label: string) => void;
   track?: (fn: () => Promise<Response>) => Promise<Response>;
+  // The notifications.webhook URL, for intake requests' request.changed
+  // events; read per event. Absent, intake requests notify nothing.
+  notificationsWebhook?: () => string | undefined;
+  // Test seam for the intake webhook's POSTs.
+  intakeFetch?: typeof globalThis.fetch;
 }
 
 // The a2a: block, its warnings and the handoff statuses, read from the
@@ -334,6 +341,15 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     };
     // Push delivery returns at once and runs on its own chains, so a slow
     // webhook never delays the watch, its streams or the broadcast.
+    // Intake requests are A2A handoffs: the same watch that drives push tells
+    // the notifier when a request's step may have changed.
+    const intakeNotifier = new IntakeNotifier({
+      rootDir,
+      store,
+      webhook: () => deps.notificationsWebhook?.(),
+      publicUrl: () => listener?.url() ?? null,
+      ...(deps.intakeFetch === undefined ? {} : { fetch: deps.intakeFetch }),
+    });
     const push = new PushWorker({
       store,
       now: () => new Date(),
@@ -345,6 +361,13 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       events: deps.events,
       onChanged: (row, facts) => {
         deps.events.broadcast({ type: 'a2a.changed' });
+        void intakeNotifier
+          .changed(row.id, facts)
+          .catch((err: unknown) =>
+            console.error(
+              `dispatchd: intake notification for ${row.id} failed: ${err instanceof Error ? err.name : 'error'}`
+            )
+          );
         try {
           push.onChanged(row, facts);
         } catch (err) {
@@ -471,8 +494,29 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       handleProposal(bridgeDeps, hub, question, answer)
     );
     port = new DaemonBridgePort(bridgeDeps, hub);
+    const limiter = new IpLimiter();
+    const intake = new IntakePages({
+      store,
+      port,
+      clientStatus: (address) =>
+        messaging.store.getAgent(address)?.status ?? null,
+      limiter,
+      // The draft and gate exist before the request row does, so the watch's
+      // first recompute missed it: the first step is checked here.
+      submitted: (request, statusPath, facts) => {
+        intakeNotifier
+          .changed(request.taskId, facts, statusPath)
+          .catch((err: unknown) =>
+            console.error(
+              `dispatchd: intake notification for ${request.id} failed: ${err instanceof Error ? err.name : 'error'}`
+            )
+          );
+      },
+    });
     listener = new A2AListener({
       port,
+      intake,
+      limiter,
       policy: () => a2aConfig(rootDir).policy,
       ...(deps.mark === undefined ? {} : { mark: deps.mark }),
       ...(deps.track === undefined ? {} : { track: deps.track }),

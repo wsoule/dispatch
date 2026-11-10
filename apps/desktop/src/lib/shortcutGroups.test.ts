@@ -1,0 +1,188 @@
+import { describe, expect, test } from 'bun:test';
+
+import { keyAction } from './appNav';
+import {
+  type GlobalKeyboardContext,
+  type GlobalKeyCommand,
+  type ListKeyCommand,
+  resolveChordKey,
+  resolveGlobalKeyCommand,
+  resolveListKeyCommand,
+} from './keyboard';
+import { buildShortcutGroups, GOTO_CHORDS } from './shortcutGroups';
+
+const ARMED: GlobalKeyboardContext = {
+  isTyping: false,
+  modalOpen: false,
+  pendingPrefix: 'g',
+};
+
+/** The list command a focused row resolves this bare letter to, or null. */
+function listKey(letter: string): ListKeyCommand | null {
+  return resolveListKeyCommand(
+    { key: letter.toLowerCase(), metaKey: false, ctrlKey: false },
+    { isTyping: false }
+  );
+}
+
+/** The command an armed `g` plus this letter resolves to, or null. */
+function chord(letter: string): GlobalKeyCommand | null {
+  return resolveChordKey(
+    { key: letter.toLowerCase(), metaKey: false, ctrlKey: false },
+    ARMED
+  );
+}
+
+describe('buildShortcutGroups', () => {
+  const groups = buildShortcutGroups('Ctrl');
+  const titles = groups.map((g) => g.title);
+
+  test('has the six groups of the old dialog, in its order', () => {
+    expect(titles).toEqual(['Shell', 'Go to', 'View', 'List', 'Live', 'Task']);
+  });
+
+  test('every row is one shortcut with one or more caps, with labels unique in a group', () => {
+    for (const group of groups) {
+      const labels = group.rows.map((row) => row.label);
+      expect(new Set(labels).size).toBe(labels.length);
+      for (const row of group.rows) {
+        expect(row.keys.length).toBeGreaterThan(0);
+        for (const key of row.keys) expect(key).not.toBe('');
+        // Alternates are their own rows: no cap is a "/" or a pair.
+        for (const key of row.keys) expect(key).not.toMatch(/\//);
+      }
+    }
+  });
+
+  test('the modifier is the given label, never a hard-coded ⌘', () => {
+    const caps = groups.flatMap((g) => g.rows.flatMap((row) => row.keys));
+    expect(caps).not.toContain('⌘');
+    expect(caps.filter((key) => key === 'Ctrl').length).toBeGreaterThan(0);
+    expect(buildShortcutGroups('⌘')[0]?.rows[0]?.keys).toEqual(['⌘', 'K']);
+  });
+
+  test('alternates became their own rows', () => {
+    const list = groups.find((g) => g.title === 'List');
+    expect(list?.rows.slice(0, 2)).toEqual([
+      { label: 'Move down', keys: ['J'] },
+      { label: 'Move up', keys: ['K'] },
+    ]);
+    const goto = groups.find((g) => g.title === 'Go to');
+    expect(goto?.rows.slice(-2)).toEqual([
+      { label: 'Back', keys: ['Ctrl', '['] },
+      { label: 'Forward', keys: ['Ctrl', ']'] },
+    ]);
+  });
+
+  test('lists only the places the app has', () => {
+    const labels = groups.flatMap((g) => g.rows.map((row) => row.label));
+    for (const absent of [
+      'Inbox',
+      'Overview',
+      'Assistant',
+      'Projects',
+      'Toggle sidebar',
+      'Home',
+    ]) {
+      expect(labels).not.toContain(absent);
+    }
+  });
+});
+
+describe('the Go to chords mirror lib/keyboard.ts', () => {
+  test('every listed chord resolves to a nav action', () => {
+    for (const { key } of GOTO_CHORDS) {
+      const command = chord(key);
+      expect(command).not.toBeNull();
+      if (command === null) continue;
+      const action = keyAction(command);
+      expect(action).not.toBeNull();
+      expect(action).not.toBe('swallow');
+    }
+  });
+
+  test('every chord the resolver knows is listed, aliases by the place they reach', () => {
+    // `g h` and `g c` are their own commands but land where `g o` does, so
+    // chords compare by the nav action keyAction gives them.
+    const place = (command: GlobalKeyCommand): string =>
+      JSON.stringify(keyAction(command));
+    const listed = new Set(
+      GOTO_CHORDS.map(({ key }) => chord(key))
+        .filter((command): command is GlobalKeyCommand => command !== null)
+        .map(place)
+    );
+    const known = new Set<string>();
+    for (let code = 97; code <= 122; code++) {
+      const command = chord(String.fromCharCode(code));
+      if (command !== null) known.add(place(command));
+    }
+    expect(known.size).toBeGreaterThan(0);
+    expect([...known].sort()).toEqual([...listed].sort());
+  });
+
+  test('the chord rows are drawn as G then the letter', () => {
+    const goto = buildShortcutGroups('Ctrl').find((g) => g.title === 'Go to');
+    const chords = goto?.rows.filter((row) => row.keys[0] === 'G') ?? [];
+    expect(chords.map((row) => row.keys)).toEqual(
+      GOTO_CHORDS.map(({ key }) => ['G', key])
+    );
+    expect(chords.find((row) => row.label === 'Graph')?.keys).toEqual([
+      'G',
+      'G',
+    ]);
+  });
+});
+
+describe('the Task keys mirror lib/keyboard.ts', () => {
+  const task = buildShortcutGroups('Ctrl').find((g) => g.title === 'Task');
+  const rows = task?.rows ?? [];
+
+  test('every Task row is one bare key a focused row resolves', () => {
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.keys).toHaveLength(1);
+      const command = listKey(row.keys[0] ?? '');
+      expect(command, `${row.label} (${row.keys[0]})`).not.toBeNull();
+    }
+  });
+
+  test('every property and dispatch key the resolver knows is listed', () => {
+    const isTaskCommand = (command: ListKeyCommand | null): boolean =>
+      command !== null &&
+      (command.startsWith('list-set-') || command === 'list-dispatch');
+    const listed = new Set(rows.map((row) => listKey(row.keys[0] ?? '')));
+    const known = new Set<ListKeyCommand | null>();
+    for (let code = 97; code <= 122; code++) {
+      const command = listKey(String.fromCharCode(code));
+      if (isTaskCommand(command)) known.add(command);
+    }
+    expect(known.size).toBeGreaterThan(0);
+    expect([...known].sort()).toEqual([...listed].sort());
+  });
+});
+
+describe('the Shell rows mirror lib/keyboard.ts', () => {
+  test('Go to file follows the command menu and resolves to quick-open', () => {
+    const shell = buildShortcutGroups('Ctrl').find((g) => g.title === 'Shell');
+    const labels = shell?.rows.map((row) => row.label) ?? [];
+    expect(labels.indexOf('Go to file')).toBe(
+      labels.indexOf('Command menu') + 1
+    );
+    const row = shell?.rows.find((r) => r.label === 'Go to file');
+    expect(row?.keys).toEqual(['Ctrl', 'P']);
+    const letter = (row?.keys[1] ?? '').toLowerCase();
+    for (const mods of [
+      { metaKey: true, ctrlKey: false },
+      { metaKey: false, ctrlKey: true },
+    ]) {
+      const command = resolveGlobalKeyCommand(
+        { key: letter, ...mods },
+        { isTyping: false, modalOpen: false, pendingPrefix: null }
+      );
+      expect(command).toBe('quick-open');
+      if (command !== null) {
+        expect(keyAction(command)).toEqual({ type: 'openQuickOpen' });
+      }
+    }
+  });
+});

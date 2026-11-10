@@ -3,14 +3,15 @@ import type {
   DispatchConfig,
   VerifyConfig,
 } from '@dispatch-foo/core/browser';
+import { TextArea, TextField } from '@dispatch/ui';
 import { useEffect, useState } from 'react';
 
 import { EscalationEditor } from './EscalationEditor';
 import { NumberSetting, SwitchSetting } from './fields';
+import { PreviewsGroup } from './PreviewsGroup';
 import { VerifyStepsList } from './ProjectGroups';
+import styles from './settings.module.css';
 import { SettingsGroup, SettingsRow } from './SettingsGroup';
-import { Input } from '@/ui/input';
-import { Textarea } from '@/ui/textarea';
 
 interface ChecksSectionProps {
   config: DispatchConfig;
@@ -21,7 +22,8 @@ interface ChecksSectionProps {
 /**
  * Settings → Checks: everything about proving a change works. The checks the
  * merge queue runs before a branch merges, how an agent starts the app to try
- * a change by hand, and the fix loop that sends failed work back.
+ * a change by hand, how a run's Preview tab starts it for you, and the fix
+ * loop that sends failed work back.
  */
 export function ChecksSection({
   config,
@@ -82,7 +84,7 @@ export function ChecksSection({
           locked={!canOperate}
           stacked
           control={
-            <Input
+            <TextField
               id="verify-command"
               disabled={!canOperate}
               value={verify}
@@ -96,7 +98,7 @@ export function ChecksSection({
                 }
               }}
               placeholder="bun run verify"
-              className="font-mono"
+              className={styles.monoInput}
             />
           }
         />
@@ -123,7 +125,7 @@ export function ChecksSection({
           locked={!canOperate}
           stacked
           control={
-            <Input
+            <TextField
               id="run-command"
               disabled={!canOperate}
               value={runCommand}
@@ -137,7 +139,7 @@ export function ChecksSection({
                 )
               }
               placeholder="bun run dev"
-              className="font-mono"
+              className={styles.monoInput}
             />
           }
         />
@@ -148,7 +150,7 @@ export function ChecksSection({
           htmlFor="url"
           stacked
           control={
-            <Input
+            <TextField
               id="url"
               value={runUrl}
               onChange={(e) => setRunUrl(e.target.value)}
@@ -165,7 +167,7 @@ export function ChecksSection({
           htmlFor="notes"
           stacked
           control={
-            <Textarea
+            <TextArea
               id="notes"
               value={runNotes}
               onChange={(e) => setRunNotes(e.target.value)}
@@ -182,6 +184,8 @@ export function ChecksSection({
           }
         />
       </SettingsGroup>
+
+      <PreviewsGroup config={config} onSave={onSave} canOperate={canOperate} />
 
       <SettingsGroup
         title="Fix loop"

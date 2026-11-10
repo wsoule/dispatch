@@ -1,7 +1,8 @@
+import { cx, Dialog } from '@dispatch/ui';
 import type { DiagramType } from 'pele/lazy';
 import { useEffect, useRef, useState } from 'react';
 
-import { Dialog, DialogContent, DialogTitle } from '@/ui/dialog';
+import styles from './MermaidDiagram.module.css';
 
 type Pele = typeof import('pele/lazy');
 type Purify = typeof import('dompurify').default;
@@ -70,9 +71,9 @@ function sanitizer(purify: ReturnType<Purify>) {
 
 /**
  * A ```mermaid fence drawn as a themed SVG by pele (Obsidian's Mermaid renderer), which
- * reads its colors from `--pele-*` (markdown.css) so it follows light and dark. Clicking
- * opens it larger. A parse error or a failed load reports through `onError`, and the
- * caller falls back to the fence's source.
+ * reads its colors from `--pele-*` (markdown.css maps them to Gr8r tokens) so it follows
+ * light and dark. Clicking opens it larger in the library Dialog. A parse error or a failed
+ * load reports through `onError`, and the caller falls back to the fence's source.
  */
 export function MermaidDiagram({
   source,
@@ -141,7 +142,7 @@ export function MermaidDiagram({
         aria-label="Expand diagram"
         data-slot="mermaid-diagram"
         data-rendered={rendered || undefined}
-        className="focus-visible:outline-ring block w-full cursor-zoom-in overflow-x-auto rounded-md p-2 focus-visible:outline-2"
+        className={styles.diagram}
         onClick={() => {
           const svg = mountRef.current?.innerHTML;
           if (!svg) return;
@@ -152,23 +153,20 @@ export function MermaidDiagram({
           });
         }}
       >
-        <span ref={mountRef} className="pele flex w-full justify-center" />
+        <span ref={mountRef} className={cx('pele', styles.mount)} />
       </button>
       <Dialog
         open={expanded !== null}
-        onOpenChange={(open) => {
-          if (!open) setExpanded(null);
-        }}
+        onClose={() => setExpanded(null)}
+        title="Diagram"
+        size="lg"
       >
-        <DialogContent className="max-h-[90vh] overflow-auto p-6 sm:max-w-[min(92vw,1100px)]">
-          <DialogTitle className="sr-only">Diagram</DialogTitle>
-          {expanded !== null && (
-            <div
-              className="pele dispatch-md-diagram-expanded flex justify-center"
-              dangerouslySetInnerHTML={{ __html: expanded }}
-            />
-          )}
-        </DialogContent>
+        {expanded !== null && (
+          <div
+            className={cx('pele', styles.expanded)}
+            dangerouslySetInnerHTML={{ __html: expanded }}
+          />
+        )}
       </Dialog>
     </>
   );

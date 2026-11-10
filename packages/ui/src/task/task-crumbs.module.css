@@ -1,0 +1,111 @@
+/* The header's trail, like Gr8r's drawer crumb: 12.5px in the secondary
+   text step, "/" separators in the icon step, the current crumb in --text
+   and the issue key in the mono id voice. One line, cut with an ellipsis:
+   a crumb list is a flex row in which only the earlier crumbs shrink, so a
+   phone reads "Beacon… / Search… / ENG-24" rather than losing the key.
+   Under 260px of trail the earlier crumbs step aside entirely. */
+
+.trail {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-regular);
+  color: var(--text-2);
+}
+
+.crumbs {
+  container: task-crumbs / inline-size;
+}
+
+.list {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+}
+
+/* Each earlier crumb keeps room for its separator and an ellipsis. */
+.item {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: baseline;
+  min-width: 3.4em;
+  overflow: hidden;
+}
+
+.item:first-child {
+  min-width: 2em;
+}
+
+.item:last-child {
+  flex-shrink: 0;
+  min-width: 0;
+  max-width: 100%;
+}
+
+@container task-crumbs (width < 260px) {
+  .item:not(:last-child) {
+    display: none;
+  }
+
+  .item:last-child .sep {
+    display: none;
+  }
+}
+
+.label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sep {
+  flex: none;
+  margin: 0 7px;
+  color: var(--text-4);
+}
+
+/* The crumbs clip (overflow: hidden, for the ellipsis), so a ring drawn
+   outside a link would be cut away: the link gets 3px of side padding and
+   its focus ring is drawn inside it, with the text turning --text and
+   underlined as a second cue (WCAG 2.4.7). */
+.link {
+  padding: 1px 3px;
+  border-radius: var(--r-xs);
+  color: var(--text-2);
+  transition: color var(--dur) ease;
+}
+
+.link:focus-visible {
+  outline-offset: -2px;
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .link:hover {
+    color: var(--text);
+  }
+}
+
+.current {
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+/* The task's own key (the last crumb, or the trail on its own). */
+.key {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-regular);
+  color: var(--text-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .link {
+    transition: none;
+  }
+}

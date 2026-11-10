@@ -3,12 +3,12 @@ import type {
   DispatchConfig,
   RemoteConfig,
 } from '@dispatch-foo/core/browser';
+import { Button, TextField } from '@dispatch/ui';
 import { Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 
+import styles from './RemotesSection.module.css';
 import { SettingsGroup, SettingsRow } from './SettingsGroup';
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
 
 interface Props {
   config: DispatchConfig;
@@ -88,20 +88,17 @@ export function RemotesSection({ config, onSave, canOperate }: Props) {
           <SettingsRow
             key={id}
             title={id}
-            subtitle={
-              <span className="font-mono">{describeRemote(remote)}</span>
-            }
+            subtitle={<span className="mono">{describeRemote(remote)}</span>}
             locked={!canOperate}
             control={
               canOperate ? (
                 <Button
-                  variant="ghost"
+                  variant="quiet"
                   size="sm"
+                  icon={<Trash2 size={14} strokeWidth={1.8} />}
                   aria-label={`Remove ${id}`}
                   onClick={() => void onSave({ remotes: { [id]: null } })}
-                >
-                  <Trash2 />
-                </Button>
+                />
               ) : undefined
             }
           />
@@ -111,7 +108,7 @@ export function RemotesSection({ config, onSave, canOperate }: Props) {
         {canOperate ? (
           <SettingsRow title="Connection" htmlFor="remote-name" stacked>
             <form
-              className="grid grid-cols-2 gap-2"
+              className={styles.form}
               onSubmit={(e) => {
                 e.preventDefault();
                 if (name === '' || next === null) return;
@@ -120,53 +117,53 @@ export function RemotesSection({ config, onSave, canOperate }: Props) {
                 });
               }}
             >
-              <Input
+              <TextField
                 id="remote-name"
                 aria-label="Name"
                 value={form.name}
                 onChange={(e) => set('name')(e.target.value)}
                 placeholder="build-box"
               />
-              <Input
+              <TextField
                 aria-label="Host"
                 value={form.host}
                 onChange={(e) => set('host')(e.target.value)}
                 placeholder="build-box.internal"
               />
-              <Input
+              <TextField
                 aria-label="User"
                 value={form.user}
                 onChange={(e) => set('user')(e.target.value)}
                 placeholder="user (optional)"
               />
-              <Input
+              <TextField
                 aria-label="Port"
                 value={form.port}
                 inputMode="numeric"
                 onChange={(e) => set('port')(e.target.value)}
                 placeholder="port (optional)"
               />
-              <Input
+              <TextField
                 aria-label="Checkout path"
                 value={form.path}
                 onChange={(e) => set('path')(e.target.value)}
                 placeholder="/srv/repo (optional)"
-                className="font-mono"
+                className={styles.mono}
               />
-              <Input
+              <TextField
                 aria-label="Identity file"
                 value={form.identityFile}
                 onChange={(e) => set('identityFile')(e.target.value)}
                 placeholder="~/.ssh/id_ed25519 (optional)"
-                className="font-mono"
+                className={styles.mono}
               />
               <Button
                 type="submit"
-                variant="outline"
-                className="col-span-2 justify-self-start"
+                variant="secondary"
+                className={styles.submit}
+                icon={<Plus size={14} strokeWidth={1.8} />}
                 disabled={name === '' || next === null}
               >
-                <Plus />
                 Add machine
               </Button>
             </form>

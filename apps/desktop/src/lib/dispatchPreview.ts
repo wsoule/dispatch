@@ -14,10 +14,11 @@ import { isTerminalRunState } from './runState';
  * is computed against the concurrency the user is about to pick, not an imaginary ceiling.
  *
  * The rule the dialog exists to enforce: nothing is ever silently dropped. Every selected task
- * appears in the preview, either starting now or explicitly queued.
+ * appears in the preview: starting now, queued, unable to start yet, or a teammate's (a
+ * fan-out never starts a task that belongs to someone else).
  */
 
-type DispatchDisposition = 'starts-now' | 'queued' | 'not-ready';
+type DispatchDisposition = 'starts-now' | 'queued' | 'not-ready' | 'teammate';
 
 interface DispatchPreviewRow {
   taskId: string;
@@ -31,6 +32,9 @@ export interface DispatchPreview {
   queued: number;
   /** Selected tasks that cannot be dispatched at all — blocked, or already running. */
   notReady: number;
+  /** Selected tasks that belong to a teammate (`holderOf`), which the fan-out never
+   * starts. Left out of the counts, the estimate and the overlap check. */
+  teammate: number;
   /** How many agents are already working, which is what eats into the concurrency budget. */
   runningNow: number;
   /** One sentence stating the arithmetic, so the dialog never makes the user do it. */
@@ -105,6 +109,11 @@ export interface BuildDispatchPreviewInput {
   /** Runs live right now and the files each has claimed. Absent means no overlap
    * check — the raise dialog, for one, has no tasks to check. */
   liveClaims?: LiveClaim[];
+  /** Who holds a task against the fan-out about to start (core's `fanoutHolder` for the
+   * person starting it): a non-null holder is a teammate, whose task the daemon's fan-out
+   * never dispatches. Absent: nobody's tasks are held (a hand dispatch of a selection,
+   * which the per-task endpoint starts whoever it belongs to). */
+  holderOf?: (task: TaskListItem) => string | null;
 }
 
 // The estimate is a range around the midpoint — half to one-and-a-half — since a run's
@@ -136,14 +145,16 @@ function sentence(
   startsNow: number,
   queued: number,
   notReady: number,
+  teammate: number,
   runningNow: number,
   concurrency: number,
   cost: string[]
 ): string {
   if (startsNow === 0 && queued === 0) {
-    return notReady > 0
-      ? 'Nothing can start. Everything is blocked or already running.'
-      : 'Nothing selected.';
+    if (notReady === 0 && teammate === 0) return 'Nothing selected.';
+    return teammate > 0
+      ? 'Nothing can start. Everything is blocked, already running or a teammate’s.'
+      : 'Nothing can start. Everything is blocked or already running.';
   }
   const parts = [
     `${runningNow} already running, ${concurrency} at a time`,
@@ -153,7 +164,16 @@ function sentence(
   if (notReady > 0) {
     parts.push(`${notReady} cannot start yet`);
   }
+  if (teammate > 0) {
+    parts.push(`${teammate} ${teammate === 1 ? 'is' : 'are'} a teammate’s`);
+  }
   return [...parts, ...cost].join(' · ');
+}
+
+/** Whether a row's task will run (now or queued): only those are priced, serialised and
+ * checked for overlaps. */
+function willRun(row: DispatchPreviewRow | undefined): boolean {
+  return row?.disposition === 'starts-now' || row?.disposition === 'queued';
 }
 
 export function buildDispatchPreview(
@@ -167,6 +187,7 @@ export function buildDispatchPreview(
     runCostEstimateUsd = DEFAULT_RUN_COST_USD,
     ceilingUsd = null,
     liveClaims = [],
+    holderOf,
   } = input;
   // A concurrency of 0 or less would silently start nothing; treat it as at least one so the
   // preview and the dispatch agree about what the button will do.
@@ -176,6 +197,9 @@ export function buildDispatchPreview(
   let started = 0;
   const rows: DispatchPreviewRow[] = tasks.map((task) => {
     const id = task.meta.id;
+    if (holderOf !== undefined && holderOf(task) !== null) {
+      return { taskId: id, title: task.meta.title, disposition: 'teammate' };
+    }
     if (!readyIds.has(id)) {
       return { taskId: id, title: task.meta.title, disposition: 'not-ready' };
     }
@@ -189,6 +213,7 @@ export function buildDispatchPreview(
   const startsNow = rows.filter((r) => r.disposition === 'starts-now').length;
   const queued = rows.filter((r) => r.disposition === 'queued').length;
   const notReady = rows.filter((r) => r.disposition === 'not-ready').length;
+  const teammate = rows.filter((r) => r.disposition === 'teammate').length;
 
   const perRun = {
     low: runCostEstimateUsd * ESTIMATE_LOW_FACTOR,
@@ -196,11 +221,10 @@ export function buildDispatchPreview(
   };
   const runs = startsNow + queued;
   const estimateUsd = { low: runs * perRun.low, high: runs * perRun.high };
-  // Only the tasks that will run get serialised, so a blocked or landed task with no
-  // writes is not counted against the fan-out.
+  // Only the tasks that will run get serialised, so a blocked, landed or teammate's task
+  // with no writes is not counted against the fan-out.
   const undeclaredWrites = tasks.filter(
-    (task, i) =>
-      rows[i]?.disposition !== 'not-ready' && task.meta.writes.length === 0
+    (task, i) => willRun(rows[i]) && task.meta.writes.length === 0
   ).length;
   // Same predicate the milestone scheduler uses to keep its own runs apart
   // (claimConflictsWithWrites in core), so the dialog and the scheduler agree
@@ -208,7 +232,7 @@ export function buildDispatchPreview(
   // is a redispatch, and the orchestrator resumes it rather than colliding.
   const overlaps: DispatchOverlap[] = [];
   tasks.forEach((task, i) => {
-    if (rows[i]?.disposition === 'not-ready') return;
+    if (!willRun(rows[i])) return;
     for (const live of liveClaims) {
       if (live.taskId === task.meta.id) continue;
       if (!claimConflictsWithWrites(live.claims, task.meta.writes)) continue;
@@ -229,8 +253,17 @@ export function buildDispatchPreview(
     startsNow,
     queued,
     notReady,
+    teammate,
     runningNow,
-    summary: sentence(startsNow, queued, notReady, runningNow, limit, cost),
+    summary: sentence(
+      startsNow,
+      queued,
+      notReady,
+      teammate,
+      runningNow,
+      limit,
+      cost
+    ),
     costSummary: cost.join(' · '),
     estimateUsd,
     undeclaredWrites,

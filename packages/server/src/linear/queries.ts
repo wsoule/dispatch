@@ -114,9 +114,16 @@ const STATE_FIELDS = 'id name type color position';
 
 export const VIEWER_QUERY = `query Viewer { viewer { ${USER_FIELDS} } }`;
 
+/** Who a credential acts as, and in which Linear workspace: the sign-in's
+ *  workspace check and the account view's connection line. */
+export const IDENTITY_QUERY = `query Identity {
+  viewer { id name displayName email active admin guest }
+  organization { id name urlKey }
+}`;
+
 export const TEAMS_QUERY = `query Teams($after: String) {
   teams(first: 50, after: $after) {
-    nodes { id key name }
+    nodes { id key name private }
     ${PAGE_INFO}
   }
 }`;

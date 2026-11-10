@@ -1,0 +1,32 @@
+/* field is the global .textarea; grow hides the handle and scroll bar while
+   the script fits the height; inline drops the box. grow adds its element
+   (:is(textarea), class first so the rule stays local) to outrank the
+   global `:where(…) .textarea` rule's `resize: vertical`: with one class
+   each, whichever sheet the build put last won, and that showed the grip. */
+
+.grow:is(textarea) {
+  overflow: hidden;
+  resize: none;
+}
+
+.inline {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: var(--lh-long);
+}
+
+.inline::placeholder {
+  color: var(--text-3);
+}
+
+.inline:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}

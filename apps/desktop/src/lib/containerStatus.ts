@@ -7,7 +7,7 @@ import {
 import { activeStatusModel } from './statusModel';
 import type { TaskBucket } from './taskStatus';
 
-export type ContainerHealth = 'attention' | 'moving' | 'idle' | 'finished';
+type ContainerHealth = 'attention' | 'moving' | 'idle' | 'finished';
 
 export interface ContainerStatus {
   /** Open asks on its tasks: the same unit as the orb and "tasks ●". */

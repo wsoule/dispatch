@@ -6,7 +6,7 @@ import {
 import type { CommentStorePort, TaskComment } from '@dispatch-foo/core';
 
 import type { ApiContext } from '../api.js';
-import { humanActor } from './caller.js';
+import { humanActor, linearCreditRef } from './caller.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 // The comment routes under /api/tasks/:id/comments. Comments are records of
@@ -30,7 +30,25 @@ type CommentRouteContext = Pick<
   | 'viaRun'
   | 'runActor'
 > &
-  Partial<Pick<ApiContext, 'orchestrator'>>;
+  Partial<
+    Pick<
+      ApiContext,
+      'orchestrator' | 'ownerCredential' | 'linearPersonEdits' | 'viaAgentToken'
+    >
+  >;
+
+// The daemon's owner on their own app token: only then may their Linear
+// sign-in carry this comment write (linear/personEdits.ts). A comment that
+// reaches the store any other way (git, board sync, an agent) never does.
+function ownerLedger(ctx: CommentRouteContext): {
+  ledger: NonNullable<ApiContext['linearPersonEdits']>;
+  ref: string;
+} | null {
+  const ledger = ctx.linearPersonEdits;
+  const ref = linearCreditRef(ctx);
+  if (ref === null || ledger === undefined) return null;
+  return { ledger, ref };
+}
 
 // The daemon passes the backend's store; a hand-built test context without
 // one gets the file store, which is what a files-backed project uses.
@@ -112,6 +130,9 @@ export async function addComment(
     body: body.body as string,
     parentId,
   });
+  const owner = ownerLedger(ctx);
+  if (owner !== null && comment.author === owner.ref)
+    owner.ledger.commentWritten(comment.id, comment.body, owner.ref);
   ctx.events.broadcast({
     type: 'comment.changed',
     taskId,
@@ -197,6 +218,9 @@ export async function updateComment(
   const comment = commentsOf(ctx).update(taskId, commentId, {
     body: body.body as string,
   });
+  const owner = ownerLedger(ctx);
+  if (owner !== null && comment.author === owner.ref)
+    owner.ledger.commentWritten(comment.id, comment.body, owner.ref);
   ctx.events.broadcast({
     type: 'comment.changed',
     taskId,
@@ -228,6 +252,7 @@ export function deleteComment(
     );
   }
   const removed = comments.remove(taskId, commentId);
+  ownerLedger(ctx)?.ledger.commentsDeleted(removed, ctx.actorContext.humanRef);
   ctx.events.broadcast({
     type: 'comment.changed',
     taskId,

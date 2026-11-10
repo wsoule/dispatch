@@ -108,6 +108,15 @@ export function grantKey(
   return elsewhere ? `${key} in ${JSON.stringify(cwd)}` : key;
 }
 
+/**
+ * The grant key "Allow for this conversation" makes for an overseer action:
+ * the tool itself, whatever its input. The kind word and the blank keep it
+ * from ever matching a built-in tool's key (see grantKey).
+ */
+export function actionGrantKey(tool: string): string {
+  return `overseer action ${tool}`;
+}
+
 interface Grant {
   grantedAt: number;
   expiresAt: number;

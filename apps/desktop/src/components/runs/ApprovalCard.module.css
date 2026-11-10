@@ -1,0 +1,10 @@
+/* A run's tool-call gate (ApprovalCard.tsx) adds lines under the shared
+   ToolApprovalCard's preview: the truncated-preview warning's sentence and
+   a failed answer's error (its colour is the danger tone's ink, set by the
+   global .toneText). */
+.line {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}

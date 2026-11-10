@@ -3,7 +3,8 @@ import { expect, test } from '@playwright/test';
 import { createServer } from 'node:net';
 
 import { type IsolatedDaemon, startIsolatedDaemon } from './isolatedDaemon';
-import { APP_TOKEN } from './paths';
+import { APP_TOKEN, SETUP_DONE } from './paths';
+import { openDestination, waitForShell } from './shell';
 
 // Opening a loopback listener is operator-tier: the app token drives it.
 const APP = { authorization: `Bearer ${APP_TOKEN}` };
@@ -40,24 +41,25 @@ async function openListener(
   expect(res.status()).toBe(200);
 }
 
-// Threads, from the top bar; Settings is a dialog over it, so close it first.
+// Threads, from the sidebar. Settings fills the main column while it is open
+// (an overlay place); Escape returns to the view beneath before moving on.
 async function openThreads(page: Page): Promise<void> {
   const settings = page.getByTestId('settings-panel');
   if ((await settings.count()) > 0) {
     await page.keyboard.press('Escape');
     await expect(settings).toHaveCount(0);
   }
-  await page.getByTestId('two-views-threads').click();
+  await openDestination(page, 'Threads');
 }
 
 // Settings → A2A, through the `G S` shortcut and the Settings page list.
 async function openA2ASettings(page: Page): Promise<void> {
-  await page.getByTestId('two-views-shell').waitFor();
+  await waitForShell(page);
   await page.keyboard.press('g');
   await page.keyboard.press('s');
   await page
     .getByRole('navigation', { name: 'Settings' })
-    .getByRole('button', { name: 'A2A', exact: true })
+    .getByRole('link', { name: 'A2A', exact: true })
     .click();
 }
 
@@ -94,7 +96,9 @@ test.describe('pairing two Dispatch agents', () => {
     expect(code.startsWith('dispatch-a2a-pair:')).toBe(true);
 
     // B enters it, in its own browser context (the app keeps one daemon per origin).
-    const pageB = await (await browser.newContext()).newPage();
+    const pageB = await (
+      await browser.newContext({ storageState: SETUP_DONE })
+    ).newPage();
     await pageB.goto(b.appUrl);
     await openA2ASettings(pageB);
     const field = pageB.getByLabel('Pairing code');

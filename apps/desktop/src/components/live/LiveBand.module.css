@@ -1,0 +1,96 @@
+/* One band of the Live view (LiveBand): a 44px title row over the band's
+   dependency chart. The band's height is set inline from liveBandHeight
+   (exact, so the band list sizes its gaps before a band is drawn); this
+   sheet only places and colours what is inside it. */
+.band {
+  display: flex;
+  flex-direction: column;
+}
+
+/* The title row: what the band is, how it is moving, then the verbs. The
+   left side clips from its end when the row runs short, so the title always
+   shows. */
+.head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 0 var(--s-4);
+}
+
+.headMain {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.glyph {
+  flex: none;
+}
+
+/* Loose work has no container: a neutral glyph in the quiet ink. */
+.looseGlyph {
+  color: var(--text-3);
+}
+
+.title {
+  min-width: 6rem;
+  overflow: hidden;
+  font-size: var(--fs);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The container's reference is read by machines and people alike (Q5). */
+.ref {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.quiet {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.count {
+  flex: none;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.controls {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+/* A band with nothing under its container says so in one 36px line. */
+.empty {
+  margin: 0;
+  padding: 0 var(--s-5);
+  font-size: var(--fs-xs);
+  line-height: 36px;
+  color: var(--text-3);
+}
+
+/* The chart's fixed-height slot, inset to the band's margins. */
+.canvas {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  padding: 0 var(--s-4) var(--s-1);
+}
+
+.chart {
+  flex: 1;
+}

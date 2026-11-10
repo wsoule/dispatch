@@ -1,4 +1,5 @@
 import { isContainerKind } from '@dispatch-foo/core/browser';
+import { Button, Chip, InitialsAvatar, SectionHeader } from '@dispatch/ui';
 import { useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
@@ -8,10 +9,7 @@ import { threadsPrefix, useChannels } from '../../hooks/useThreads';
 import type { RefAction } from '../../lib/threadSources';
 import { TasksPageHeader } from '../tasks/TasksPageHeader';
 import { ConversationTimeline } from './ConversationTimeline';
-import { InitialsAvatar } from '@/ui/ai/initials-avatar';
-import { Pill } from '@/ui/ai/pill';
-import { Button } from '@/ui/button';
-import { SectionLabel } from '@/ui/chrome/SectionLabel';
+import styles from './Homes.module.css';
 
 // Follow or leave a room; humans are never implicit members.
 function FollowButton({
@@ -32,8 +30,8 @@ function FollowButton({
   if (client === null || me === null) return null;
   return (
     <Button
-      size="xs"
-      variant={following ? 'ghost' : 'outline'}
+      size="sm"
+      variant={following ? 'quiet' : 'secondary'}
       disabled={busy}
       data-testid="follow-room"
       onClick={() => {
@@ -83,11 +81,11 @@ export function TaskConversationHome({
         onOpenRef={onOpenRef}
         emptyText="Nothing said about this milestone yet."
         header={
-          <div className="flex flex-col gap-0.5">
-            <div className="flex items-center gap-2">
+          <div className={styles.roomHead}>
+            <div className={styles.follow}>
               <FollowButton data={data} room={room} />
             </div>
-            <p className="text-muted-foreground text-[11px]">
+            <p className={styles.reach}>
               Reaches {children} direct child{' '}
               {children === 1 ? 'task’s' : 'tasks’'} agents at their next turn ·
               sub-issues not included · wake off
@@ -107,7 +105,7 @@ export function TaskConversationHome({
       onOpenRef={onOpenRef}
       emptyText="No conversation on this task yet."
       header={
-        <span className="text-muted-foreground text-[12px]">
+        <span className={styles.note}>
           Comments sync with the team · messages stay on this daemon
         </span>
       }
@@ -149,30 +147,39 @@ export function RoomHome({
   );
   const members = channels.find((c) => c.name === room)?.members ?? [];
   return (
-    <div data-testid="room-page" className="flex h-full min-h-0 flex-col">
+    <div data-testid="room-page" className={styles.room}>
       <TasksPageHeader
         onBack={onBack}
         crumb={[`# ${room}`]}
         actions={<FollowButton data={data} room={room} />}
       />
-      <div className="shadow-hairline-bottom flex flex-wrap items-center gap-1.5 px-4 py-2">
-        <SectionLabel count={members.length}>Members</SectionLabel>
-        {members.slice(0, 8).map((member) => (
-          <Pill key={member} className="pl-1">
-            <InitialsAvatar
-              name={memberLabel(member, data.people)}
-              className="size-4 text-[7px]"
-            />
-            {memberLabel(member, data.people)}
-          </Pill>
-        ))}
-        {members.length > 8 && (
-          <span className="text-muted-foreground text-[12px]">
-            +{members.length - 8}
-          </span>
-        )}
+      <div className={styles.members}>
+        <SectionHeader
+          as="h2"
+          name="Members"
+          count={members.length}
+          className={styles.membersHead}
+        />
+        <ul aria-label="Members" className={styles.memberList}>
+          {members.slice(0, 8).map((member) => {
+            const name = memberLabel(member, data.people);
+            return (
+              <li key={member}>
+                <Chip>
+                  <span className={styles.member}>
+                    <InitialsAvatar name={name} />
+                    {name}
+                  </span>
+                </Chip>
+              </li>
+            );
+          })}
+          {members.length > 8 && (
+            <li className={styles.more}>+{members.length - 8}</li>
+          )}
+        </ul>
       </div>
-      <div className="min-h-0 flex-1">
+      <div className={styles.timeline}>
         <ConversationTimeline
           data={data}
           query={{ about: `channel:${room}` }}

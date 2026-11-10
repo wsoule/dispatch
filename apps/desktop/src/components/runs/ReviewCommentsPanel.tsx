@@ -1,5 +1,6 @@
 import type { ReviewComment, ReviewVerdict } from '@dispatch/client';
 
+import styles from './ReviewCommentsPanel.module.css';
 import { ReviewThreadIndex } from './ReviewThreadIndex';
 import { ReviewVerdictBar } from './ReviewVerdictBar';
 
@@ -43,7 +44,7 @@ export function ReviewCommentsPanel({
   reviewAgentLive,
 }: ReviewCommentsPanelProps) {
   return (
-    <div className="flex flex-col gap-4">
+    <div className={styles.root}>
       <ReviewThreadIndex
         comments={comments}
         onResolve={onResolve}

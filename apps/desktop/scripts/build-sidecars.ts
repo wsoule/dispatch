@@ -31,6 +31,11 @@ const entitlements = join(
   'sidecar.plist'
 );
 
+// Precompiled JSC bytecode (ESM, so the entries' top-level await still works)
+// plus minification: the app spawns dispatchd on every launch and waits for it
+// before anything can be sent, and these roughly halve its boot CPU time.
+export const COMPILE_FLAGS = ['--bytecode', '--format=esm', '--minify'];
+
 export const SIDECARS = [
   {
     entry: join(repoRoot, 'packages', 'server', 'src', 'bin.ts'),
@@ -98,6 +103,7 @@ function main(): void {
       'bun',
       'build',
       '--compile',
+      ...COMPILE_FLAGS,
       entry,
       ...extraEntries,
       '--outfile',

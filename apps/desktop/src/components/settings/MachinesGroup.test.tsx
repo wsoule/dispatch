@@ -1,7 +1,8 @@
 import { ApiError } from '@dispatch/client';
-import type { TeamKeys } from '@dispatch/client';
+import type { TeamKeys, TeamStatus } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -10,8 +11,8 @@ import {
 } from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
 
-import { accessFor, SettingsAccessProvider } from './access';
-import { dataWith } from './fixtures.test-helper';
+import { accessFor, NEEDS_DECIDE, SettingsAccessProvider } from './access';
+import { dataWith, visibleText } from './fixtures.test-helper';
 import { MachinesGroup } from './MachinesGroup';
 
 const base: TeamKeys = {
@@ -74,6 +75,18 @@ const founded: TeamKeys = {
   },
 };
 
+/** The team status the page reads first: sync on, this machine in the team. */
+const SYNC_ON: Pick<TeamStatus, 'state'> = { state: 'member' };
+
+// Clicks a roster action and lets it settle: the change, the team re-read it
+// asks for, and the group leaving its busy state all land inside the act.
+async function settled(button: HTMLElement): Promise<void> {
+  await act(async () => {
+    fireEvent.click(button);
+    await Promise.resolve();
+  });
+}
+
 function mount(
   keys: TeamKeys | (() => Promise<TeamKeys>),
   tier: 'request' | 'decide' | 'operator' = 'operator',
@@ -82,6 +95,7 @@ function mount(
   const ok = () => Promise.resolve({ ok: true });
   const client = {
     baseUrl: 'http://127.0.0.1:1',
+    getTeamStatus: mock(() => Promise.resolve(SYNC_ON)),
     getTeamKeys: mock(
       typeof keys === 'function' ? keys : () => Promise.resolve(keys)
     ),
@@ -141,7 +155,7 @@ test('shows both fingerprints when two foundings compete, and trusts the one pic
       { replica: 'bob-0000000b', fingerprint: 'BBBB-BBBB-BBBB-BBBB-BBBB-BBBB' },
     ],
   });
-  fireEvent.click(
+  await settled(
     await screen.findByRole('button', {
       name: 'Trust BBBB-BBBB-BBBB-BBBB-BBBB-BBBB',
     })
@@ -171,7 +185,7 @@ test('admits a waiting machine only after its fingerprint is typed to match', as
     target: { value: 'cccc-cccc-cccc-cccc-cccc-cccc' },
   });
   expect(admit.hasAttribute('disabled')).toBe(false);
-  fireEvent.click(admit);
+  await settled(admit);
   expect(client.admitReplica).toHaveBeenCalledWith('cy-0000000c', {
     fingerprint: 'CCCC-CCCC-CCCC-CCCC-CCCC-CCCC',
   });
@@ -212,9 +226,7 @@ test('shows the branch size and each pruning blocker, with Revoke it? for the op
     )
   ).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Revoke bob?' }));
-  fireEvent.click(
-    await screen.findByRole('button', { name: 'Confirm revoke' })
-  );
+  await settled(await screen.findByRole('button', { name: 'Confirm revoke' }));
   expect(client.revokeReplica).toHaveBeenCalledWith(
     'bob-0000000b',
     'blocked pruning'
@@ -259,7 +271,48 @@ test('says why when the team keys cannot be read', async () => {
   expect(await screen.findByText(/dispatchd refused/)).toBeTruthy();
 });
 
-test('shows nothing while board sync is off', async () => {
+// The keys route answers 409 while board sync is off: the status says so
+// first, so the keys are never asked for (no refused request per load).
+test('asks nothing of the team keys while board sync is off', async () => {
+  const client = mount(base, 'operator', {
+    getTeamStatus: mock(() => Promise.resolve({ state: 'off' })),
+  });
+  await waitFor(() => expect(client.getTeamStatus).toHaveBeenCalled());
+  await waitFor(() =>
+    expect(screen.queryByText('Reading the team…')).toBeNull()
+  );
+  expect(client.getTeamKeys).not.toHaveBeenCalled();
+  expect(screen.queryByText('7QX2-K9PA-M3TD-0W4R-HB8E-5NCF')).toBeNull();
+});
+
+test('waits for the team status before asking for the keys', async () => {
+  let answer: (status: Pick<TeamStatus, 'state'>) => void = () => {};
+  const client = mount(base, 'operator', {
+    getTeamStatus: mock(
+      () =>
+        new Promise<Pick<TeamStatus, 'state'>>((resolve) => {
+          answer = resolve;
+        })
+    ),
+  });
+  expect(await screen.findByText('Reading the team…')).toBeTruthy();
+  expect(client.getTeamKeys).not.toHaveBeenCalled();
+  answer({ state: 'none' });
+  expect(await screen.findByText('7QX2-K9PA-M3TD-0W4R-HB8E-5NCF')).toBeTruthy();
+  expect(client.getTeamKeys).toHaveBeenCalledTimes(1);
+});
+
+// A status that could not be read leaves the keys to say why.
+test('still reads the keys when the team status cannot be read', async () => {
+  const client = mount(base, 'operator', {
+    getTeamStatus: mock(() => Promise.reject(new Error('status refused'))),
+  });
+  expect(await screen.findByText('7QX2-K9PA-M3TD-0W4R-HB8E-5NCF')).toBeTruthy();
+  expect(client.getTeamKeys).toHaveBeenCalledTimes(1);
+});
+
+// A status read just before sync went off: the keys' refusal still shows nothing.
+test('shows nothing when the keys say board sync is off', async () => {
   const client = mount(() => Promise.reject(new Error('board sync is not on')));
   await waitFor(() => expect(client.getTeamKeys).toHaveBeenCalled());
   expect(screen.queryByText(/board sync is not on/)).toBeNull();
@@ -308,9 +361,13 @@ test('invites a handle and shows the code once; makes a new recovery code', asyn
   });
   fireEvent.click(screen.getByRole('button', { name: 'Create invite' }));
   expect(await screen.findByText('di1.invite-code')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Copy invite code' })).toBeTruthy();
   expect(client.inviteToTeam).toHaveBeenCalledWith('dee');
   fireEvent.click(screen.getByRole('button', { name: 'New recovery code' }));
   expect(await screen.findByText('NEW-RECOVERY-CODE')).toBeTruthy();
+  expect(
+    screen.getByRole('button', { name: 'Copy recovery code' })
+  ).toBeTruthy();
 });
 
 test('closes the legacy window and sets the hosts a machine serves', async () => {
@@ -372,9 +429,8 @@ test('explains the tier instead of showing a refused request', async () => {
     'auth_insufficient_tier'
   );
   mount(() => Promise.reject(refused));
-  expect(
-    await screen.findByText(/Changing settings needs Can approve access/)
-  ).toBeTruthy();
+  // The lock's tooltip holds the same words, hidden until hovered.
+  await waitFor(() => expect(visibleText(NEEDS_DECIDE)).toHaveLength(1));
 });
 
 // Minor (1): an operator on a member's machine sees no admin control.

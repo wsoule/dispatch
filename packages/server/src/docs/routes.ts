@@ -10,8 +10,10 @@ import type {
 import {
   DOC_STATUSES,
   DOCS_LIMITS,
+  executorModels,
   LINK_RELS,
   LINK_TARGET_TYPES,
+  loadConfig,
 } from '@dispatch-foo/core';
 
 import type { ApiContext } from '../api.js';
@@ -313,16 +315,16 @@ async function once(
 // operator is theirs, the owner only with the owner credential). The task
 // stands either way, so a failed dispatch is reported rather than thrown.
 async function dispatchPublish(
-  ctx: Pick<ApiContext, 'orchestrator'>,
+  ctx: Pick<ApiContext, 'orchestrator' | 'rootDir'>,
   task: string,
   as: { actor: string; operator: string | null }
 ): Promise<{ run: string | null; dispatchError: string | null }> {
   try {
-    const run = await ctx.orchestrator.dispatch(
-      task,
-      ctx.orchestrator.defaultExecutorName(),
-      as
-    );
+    const executor = ctx.orchestrator.defaultExecutorName();
+    const run = await ctx.orchestrator.dispatch(task, executor, {
+      ...as,
+      model: executorModels(loadConfig(ctx.rootDir), executor).execute,
+    });
     return { run: run.id, dispatchError: null };
   } catch (err) {
     return {
@@ -336,12 +338,12 @@ async function dispatchPublish(
 // none (a crash between its row and its dispatch) starts as who asked.
 export async function redispatchPublishes(
   docs: DocsService,
-  orchestrator: ApiContext['orchestrator']
+  ctx: Pick<ApiContext, 'orchestrator' | 'rootDir'>
 ): Promise<void> {
-  const ran = new Set(orchestrator.list().map((r) => r.taskId));
+  const ran = new Set(ctx.orchestrator.list().map((r) => r.taskId));
   for (const p of docs.publishesToDispatch()) {
     if (ran.has(p.task)) continue;
-    const out = await dispatchPublish({ orchestrator }, p.task, {
+    const out = await dispatchPublish(ctx, p.task, {
       actor: p.actor,
       operator: p.operator,
     });
@@ -605,7 +607,11 @@ export async function handleDocsRoute(
         case 'share-linear':
           return await write(async () => {
             await body();
-            const documentId = await ctx.linearSync.shareDocument(actor, ref);
+            // Shared on the owner's own credential, it goes out as them when
+            // they are signed in to Linear; otherwise as the connection.
+            const documentId = await ctx.linearSync.shareDocument(actor, ref, {
+              asOwner: ctx.ownerCredential === true,
+            });
             return jsonResponse({ documentId }, 201);
           });
         case 'promote':

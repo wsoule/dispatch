@@ -1,35 +1,64 @@
-import type { TaskListItem, UpdatePatch } from '@dispatch-foo/core/browser';
+import type {
+  StatusModel,
+  TaskListItem,
+  UpdatePatch,
+} from '@dispatch-foo/core/browser';
+import { statusType } from '@dispatch-foo/core/browser';
 import type {
   MergeQueueEntryState,
   ReadinessReading,
   RunMeta,
   RunState,
 } from '@dispatch/client';
+import {
+  AssigneePicker,
+  Button,
+  Chip,
+  cx,
+  type LabelChoice,
+  LabelPicker,
+  type PersonChoice,
+  PriorityGlyph,
+  PriorityPicker,
+  Spinner,
+  type StateChoice,
+  StatePicker,
+} from '@dispatch/ui';
 import type {
   DraggableAttributes,
   DraggableSyntheticListeners,
 } from '@dnd-kit/core';
-import { ArrowRight } from 'lucide-react';
-import { memo, useEffect, useRef, useState } from 'react';
+import { ArrowRight, Bot } from 'lucide-react';
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react';
 
+import { AGENTS_GROUP, buildPersonChoices } from '../../adapters/people';
+import { fromTaskPriority, toTaskPriority } from '../../adapters/rows';
+import { labelChoices } from '../../adapters/taskDetail';
 import { readinessBadges } from '../../lib/judgmentBadges';
-import { colorForLabel } from '../../lib/labelColor';
+import {
+  type LabelColors,
+  labelColors,
+  subscribeLabelColors,
+} from '../../lib/labelColor';
+import { useActiveStatusModel } from '../../lib/statusModel';
 import { formatCreated } from '../../lib/taskDates';
+import { assigneeLabel, assigneeRef, statusLabel } from '../../lib/taskDisplay';
 import { TASK_PROPERTIES, type TaskProperty } from '../../lib/tasksPrefs';
+import { type PeopleDirectory, usePeople } from '../people/PeopleContext';
 import { MergeLadderPill } from '../runs/MergeLadderDot';
 import { RunStatePill } from '../runs/RunStatePill';
+import { AssigneeAvatar } from './AssigneeAvatar';
+import { LabelChip } from './LabelChip';
 import { LandingBadge } from './LandingBadge';
-import {
-  AssigneeControl,
-  LabelsControl,
-  PriorityControl,
-  StatusControl,
-} from './PropertyControls';
-import { cn } from '@/lib/utils';
-import { LabelPill, Pill } from '@/ui/ai/pill';
-import { TextButton } from '@/ui/ai/text-button';
-import { Button } from '@/ui/button';
-import { Spinner } from '@/ui/spinner';
+import { StatusIcon } from './StatusIcon';
+import styles from './TaskCardTile.module.css';
 
 // Drag wiring handed down from `TaskBoard`'s `@dnd-kit` draggable card — grouped into one
 // optional prop rather than several loose ones so a card rendered outside the board (the drag
@@ -96,15 +125,100 @@ interface TaskCardTileProps {
 const MAX_VISIBLE_LABELS = 2;
 
 const ALL_PROPERTIES: ReadonlySet<TaskProperty> = new Set(TASK_PROPERTIES);
+const NO_LABELS: readonly string[] = [];
+
+const AGENT_MARK = {
+  kind: 'node',
+  node: <Bot size={14} strokeWidth={1.8} aria-hidden />,
+} as const;
+
+/** The StatePicker's choices: the board's configured statuses, each with its label and
+ * workflow type, plus the card's own status when the list lacks it (a renamed status), so
+ * the picker still shows it as chosen. Each row draws the card's own StatusIcon (hidden:
+ * the row's name says the status), so the menu's glyphs match the trigger's face rather
+ * than the library's workflow glyphs (review a green pie, done the neutral disk). */
+function cardStateChoices(
+  statuses: readonly string[],
+  current: string,
+  model: StatusModel
+): StateChoice[] {
+  const names = statuses.includes(current) ? statuses : [...statuses, current];
+  return names.map((name) => ({
+    id: name,
+    name: statusLabel(name),
+    kind: statusType(name, model),
+    mark: {
+      kind: 'node',
+      node: (
+        <span aria-hidden className={styles.optionGlyph}>
+          <StatusIcon status={name} />
+        </span>
+      ),
+    },
+  }));
+}
+
+/** The AssigneePicker's choices from the people directory: the people (you first), the agent
+ * pool and nobody (the picker's none row), the agents drawn with the bot glyph as on the
+ * Issues list. */
+function cardPersonChoices(directory: PeopleDirectory): PersonChoice[] {
+  return buildPersonChoices({
+    people: directory.people,
+    executors: [],
+    me: directory.me,
+  }).map((choice) =>
+    choice.kind === 'agent' || choice.group === AGENTS_GROUP
+      ? { ...choice, mark: AGENT_MARK }
+      : choice
+  );
+}
+
+/** The LabelPicker's choices: the project's vocabulary and the card's own labels, one per
+ * label (case aside, the card's spelling first so its labels show as chosen), in name
+ * order, each with its registry colour when the registry has one. */
+function cardLabelChoices(
+  doc: TaskListItem,
+  catalogue: readonly string[],
+  colors: LabelColors
+): LabelChoice[] {
+  const byKey = new Map<string, string>();
+  for (const label of [...doc.meta.labels, ...catalogue]) {
+    const key = label.toLowerCase();
+    if (!byKey.has(key)) byKey.set(key, label);
+  }
+  const vocabulary = [...byKey.values()].sort((a, b) =>
+    a.toLowerCase().localeCompare(b.toLowerCase())
+  );
+  return labelChoices([], doc, vocabulary).map((choice) => {
+    const hex = colors.hex(choice.id);
+    return hex === undefined ? choice : { ...choice, color: hex };
+  });
+}
+
+/** The card's labels with a label typed into the picker's create row appended, or null
+ * when there is nothing to add: a blank name, or a case-variant of a label the card already
+ * has (`UI` and `ui` are one label). The picker itself never offers a name an option
+ * already carries. */
+function withCreatedLabel(
+  labels: readonly string[],
+  query: string
+): string[] | null {
+  const label = query.trim();
+  const folded = label.toLowerCase();
+  if (label === '' || labels.some((l) => l.toLowerCase() === folded)) {
+    return null;
+  }
+  return [...labels, label];
+}
 
 /**
- * A Board card on Linear's four-row anatomy (§5): row 1 the id and ` › Milestone` crumb with the
- * assignee avatar pushed right; row 2 the status glyph and a two-line title; row 3 the
- * priority glyph and the pills (labels, blocked, `Needs you`, `Landing`, live run mark, merge
- * ladder);
- * row 4 `Created Sep 13` with the Dispatch action on the right. Every card is the same
- * 322px `#1b1a1a` tile with a half-pixel ring — no coloured edge, no state tint; the
- * keyboard cursor and hover are neutral. Draggable via the optional `drag` prop.
+ * A Board card on Linear's four-row anatomy: row 1 the id and ` › Milestone` crumb with the
+ * assignee picker pushed right; row 2 the status picker and a two-line title; row 3 the
+ * priority picker and the pills (blocked, `Needs you`, labels, readiness, `Landing`, live run
+ * mark, merge ladder); row 4 `Created Sep 13` with the Dispatch action on the right. Every
+ * card is the same 322px tile on `--surface` with a soft border and no shadow; the keyboard
+ * cursor and hover are neutral. The pickers are the library's glyph-only (`mark`) pickers.
+ * Draggable via the optional `drag` prop.
  */
 export const TaskCardTile = memo(function TaskCardTile({
   doc,
@@ -126,16 +240,39 @@ export const TaskCardTile = memo(function TaskCardTile({
   landing,
   properties = ALL_PROPERTIES,
   readiness,
-  labelCatalogue = [],
+  labelCatalogue = NO_LABELS,
 }: TaskCardTileProps) {
   const id = doc.meta.id;
   const [dispatching, setDispatching] = useState(false);
   const openRef = useRef<HTMLButtonElement>(null);
   const has = (p: TaskProperty) => properties.has(p);
+  const model = useActiveStatusModel();
+  const directory = usePeople();
+  // Re-render when the label registry loads, so the label swatches repaint on a memoized card.
+  const colors = useSyncExternalStore(
+    subscribeLabelColors,
+    labelColors,
+    labelColors
+  );
 
   useEffect(() => {
     if (focused) openRef.current?.focus();
   }, [focused]);
+
+  const states = useMemo(
+    () => cardStateChoices(statuses, doc.meta.status, model),
+    [statuses, doc.meta.status, model]
+  );
+  const people = useMemo(() => cardPersonChoices(directory), [directory]);
+  // The picker's value: the registry ref for the card's assignee (the legacy bare `human` is
+  // you), or null for nobody.
+  const assignee =
+    assigneeRef(doc.meta.assignee) === null
+      ? null
+      : (directory.personFor(doc.meta.assignee)?.ref ??
+        (doc.meta.assignee === 'human' && directory.me !== null
+          ? directory.me
+          : doc.meta.assignee));
 
   async function dispatchNow(e: React.MouseEvent) {
     e.stopPropagation();
@@ -155,6 +292,16 @@ export const TaskCardTile = memo(function TaskCardTile({
     ? doc.meta.labels.length - visibleLabels.length
     : 0;
   const showCrumb = has('milestone') && milestoneTitle !== undefined;
+  const labelsEditable = visibleLabels.length > 0 && !archived;
+  // Built only for a card that shows the labels picker, and again when the registry's
+  // colours (the options' swatches) change.
+  const labelOptions = useMemo(
+    () => (labelsEditable ? cardLabelChoices(doc, labelCatalogue, colors) : []),
+    [labelsEditable, doc, labelCatalogue, colors]
+  );
+  const labelFace = visibleLabels.map((label) => (
+    <LabelChip key={label} label={label} hex={colors.hex(label)} />
+  ));
 
   return (
     // The card is a container, not a button: its title is the real `<button>` that opens the
@@ -165,18 +312,18 @@ export const TaskCardTile = memo(function TaskCardTile({
       style={drag?.style}
       data-slot="task-card"
       data-focused={focused}
-      className={cn(
-        'group bg-surface-quaternary rounded-card shadow-card relative flex w-[322px] max-w-full cursor-pointer flex-col gap-1.5 p-3 text-left transition-[background-color,box-shadow] duration-100',
-        // 3% of the text colour into the card surface: a lift in dark, a dip in light.
-        'hover:bg-[color-mix(in_srgb,var(--surface-quaternary),var(--text-primary)_3%)]',
-        'has-[[data-task-card-open]:focus-visible]:shadow-raised',
-        'data-[focused=true]:shadow-raised',
-        // Every nested control rides above the stretched open button.
-        '[&_button:not([data-task-card-open])]:relative [&_button:not([data-task-card-open])]:z-10',
-        drag?.isDragging === true && 'opacity-40',
-        archived && 'cursor-default opacity-55 hover:bg-surface-quaternary'
-      )}
+      data-dragging={drag?.isDragging === true ? 'true' : undefined}
+      data-archived={archived ? 'true' : undefined}
+      className={styles.card}
       onFocus={onFocus === undefined ? undefined : () => onFocus(id)}
+      onPointerDown={(e) => {
+        // A press on a picker (its trigger or its open popover) is the picker's own: it
+        // never reaches the board behind the card. The drag handle is the open button,
+        // whose own listener has already run.
+        if (e.target instanceof Element && e.target.closest('[data-picker]')) {
+          e.stopPropagation();
+        }
+      }}
       onKeyDown={(e) => {
         // A keydown from a nested control (a picker, the Dispatch button) owns its own keys;
         // stop it before it reaches the Board's roving-focus track. The open button's keys
@@ -184,19 +331,16 @@ export const TaskCardTile = memo(function TaskCardTile({
         if (e.target !== openRef.current) e.stopPropagation();
       }}
     >
-      <div
-        data-slot="task-card-meta"
-        className="font-book text-muted-foreground flex min-h-[18px] min-w-0 items-center gap-1 text-[12px]"
-      >
-        {has('id') && <span className="shrink-0">{doc.meta.id}</span>}
+      <div data-slot="task-card-meta" className={styles.meta}>
+        {has('id') && <span className={styles.id}>{doc.meta.id}</span>}
         {showCrumb && (
           <>
-            <span aria-hidden className="shrink-0">
+            <span aria-hidden className={styles.separator}>
               ›
             </span>
             <span
               data-slot="task-card-crumb"
-              className="min-w-0 truncate"
+              className={styles.crumb}
               title={milestoneTitle}
             >
               {milestoneTitle}
@@ -204,29 +348,42 @@ export const TaskCardTile = memo(function TaskCardTile({
           </>
         )}
         {has('assignee') && (
-          <span className="ml-auto flex shrink-0 items-center">
-            <AssigneeControl
-              value={doc.meta.assignee}
-              onChange={(a) => onEditTask(id, { assignee: a })}
-            />
-          </span>
+          // Each picker's own root is the control (no wrapper of the card's): it rides
+          // above the stretched open button.
+          <AssigneePicker
+            className={cx(styles.control, styles.assignee)}
+            appearance="mark"
+            people={people}
+            meId={directory.me ?? undefined}
+            value={assignee}
+            valueLabel={assigneeLabel(doc.meta.assignee)}
+            noneLabel="No assignee"
+            trigger={<AssigneeAvatar assignee={doc.meta.assignee} size={16} />}
+            triggerLabel="Change assignee"
+            disabled={archived}
+            onChange={(next) => onEditTask(id, { assignee: next ?? 'none' })}
+          />
         )}
       </div>
 
-      <div data-slot="task-card-title" className="flex items-start gap-1.5">
+      <div data-slot="task-card-title" className={styles.titleRow}>
         {has('status') && (
-          <span className="mt-px -ml-0.5 shrink-0">
-            <StatusControl
-              value={doc.meta.status}
-              statuses={statuses}
-              onChange={(status) => onStatusChange(id, status)}
-            />
-          </span>
+          <StatePicker
+            className={styles.control}
+            appearance="mark"
+            states={states}
+            value={doc.meta.status}
+            trigger={<StatusIcon status={doc.meta.status} />}
+            triggerLabel="Change status"
+            disabled={archived}
+            onChange={(status) => onStatusChange(id, status)}
+          />
         )}
-        <TextButton
+        <button
           ref={openRef}
-          stretch
+          type="button"
           data-task-card-open=""
+          className={styles.open}
           {...drag?.attributes}
           {...drag?.listeners}
           onClick={() => onClick(id)}
@@ -239,66 +396,62 @@ export const TaskCardTile = memo(function TaskCardTile({
               drag.listeners?.onKeyDown?.(e);
             }
           }}
-          // The keyboard cursor is the card's neutral raised ring (above), never the accent.
-          className={cn(
-            'cursor-pointer focus-visible:after:ring-0',
-            archived && 'cursor-default'
-          )}
         >
-          <span className="text-foreground line-clamp-2 text-[13px] leading-5 font-medium whitespace-normal">
-            {doc.meta.title}
-          </span>
-        </TextButton>
+          <span className={styles.title}>{doc.meta.title}</span>
+        </button>
       </div>
 
-      <div
-        data-slot="task-card-pills"
-        className="flex flex-wrap items-center gap-1.5"
-      >
+      <div data-slot="task-card-pills" className={styles.pills}>
         {has('priority') && (
-          <span className="-ml-0.5 shrink-0">
-            <PriorityControl
-              value={doc.meta.priority}
-              onChange={(p) => onEditTask(id, { priority: p })}
-            />
-          </span>
+          <PriorityPicker
+            className={styles.control}
+            appearance="mark"
+            value={toTaskPriority(doc.meta.priority)}
+            trigger={
+              <PriorityGlyph priority={toTaskPriority(doc.meta.priority)} />
+            }
+            triggerLabel="Change priority"
+            disabled={archived}
+            onChange={(p) => onEditTask(id, { priority: fromTaskPriority(p) })}
+          />
         )}
         {blocked && (
-          <LabelPill color="var(--status-blocked)">Blocked</LabelPill>
+          <Chip data-slot="label-pill" tone="warning" filled>
+            Blocked
+          </Chip>
         )}
         {needsAttention && !archived && (
-          <LabelPill color="var(--state-waiting-fg)">Needs you</LabelPill>
+          <Chip data-slot="label-pill" tone="warning" filled>
+            Needs you
+          </Chip>
         )}
         {/* The label pills are the face of the labels picker (click a pill to change the
             labels); the `+N` overflow stays outside it. An archived card shows plain pills. */}
         {visibleLabels.length > 0 &&
           (archived ? (
-            visibleLabels.map((label) => (
-              <LabelPill key={label} color={colorForLabel(label)}>
-                {label}
-              </LabelPill>
-            ))
+            labelFace
           ) : (
-            <LabelsControl
-              variant="inline"
+            // The chips are the trigger's face as they are (the face lays them out:
+            // .labels in the card's module), with no wrapper of their own.
+            <LabelPicker
+              className={cx(styles.control, styles.labels)}
+              appearance="mark"
+              labelOptions={labelOptions}
               value={doc.meta.labels}
-              candidates={labelCatalogue}
+              trigger={labelFace}
+              triggerLabel="Change labels"
               onChange={(labels) => onEditTask(id, { labels })}
-            >
-              {visibleLabels.map((label) => (
-                <LabelPill key={label} color={colorForLabel(label)}>
-                  {label}
-                </LabelPill>
-              ))}
-            </LabelsControl>
+              onCreate={(query) => {
+                const labels = withCreatedLabel(doc.meta.labels, query);
+                if (labels !== null) onEditTask(id, { labels });
+              }}
+            />
           ))}
-        {hiddenLabelCount > 0 && (
-          <Pill className="text-muted-foreground">+{hiddenLabelCount}</Pill>
-        )}
+        {hiddenLabelCount > 0 && <Chip tone="muted">+{hiddenLabelCount}</Chip>}
         {readinessBadges(readiness).map((badge) => (
-          <LabelPill key={badge} color="var(--state-waiting-fg)">
+          <Chip key={badge} data-slot="label-pill" tone="warning">
             {badge}
-          </LabelPill>
+          </Chip>
         ))}
         {has('run') && landing !== undefined && !archived && (
           <LandingBadge state={landing} />
@@ -307,41 +460,31 @@ export const TaskCardTile = memo(function TaskCardTile({
           <RunStatePill meta={run} compact />
         )}
         {has('run') && <MergeLadderPill meta={run} />}
-        {archived && <Pill className="text-muted-foreground">Archived</Pill>}
+        {archived && <Chip tone="muted">Archived</Chip>}
       </div>
 
       {/* The footer is the card's fixed `Created` line (Linear's row 4); the Created/Updated
           property chips govern the list's date column, not this. */}
-      <div
-        data-slot="task-card-footer"
-        className="font-book text-muted-foreground flex min-h-6 items-center justify-between gap-2 text-[12px]"
-      >
-        <span className="shrink-0 whitespace-nowrap">
+      <div data-slot="task-card-footer" className={styles.footer}>
+        <span className={styles.created}>
           {formatCreated(doc.meta.created)}
         </span>
         {ready && onDispatch !== undefined && (
           <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            disabled={dispatching}
+            variant="quiet"
+            size="sm"
+            busy={dispatching}
+            busyLabel="Dispatching"
+            icon={dispatching ? <Spinner label="" /> : undefined}
+            iconAfter={
+              dispatching ? undefined : (
+                <ArrowRight size={14} strokeWidth={1.8} aria-hidden />
+              )
+            }
+            className={styles.dispatch}
             onClick={(e) => void dispatchNow(e)}
-            className={cn(
-              '-my-1 -mr-1.5 text-[12px] font-medium',
-              dispatching && 'pointer-events-none'
-            )}
           >
-            {dispatching ? (
-              <>
-                <Spinner className="size-3" />
-                Dispatching
-              </>
-            ) : (
-              <>
-                Dispatch
-                <ArrowRight className="size-3" />
-              </>
-            )}
+            Dispatch
           </Button>
         )}
       </div>

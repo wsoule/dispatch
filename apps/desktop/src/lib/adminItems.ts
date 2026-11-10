@@ -33,6 +33,6 @@ export function adminItems(counts: {
   const c = counts.pendingClients ?? 0;
   add(c, `${plural(c, 'A2A client', 'A2A clients')} pending`, 'a2a');
   const f = counts.skippedFiles ?? 0;
-  add(f, `${plural(f, 'Claude file', 'Claude files')} skipped`, 'memory');
+  add(f, `${plural(f, 'Claude file', 'Claude files')} skipped`, 'agents');
   return items;
 }

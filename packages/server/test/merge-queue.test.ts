@@ -89,6 +89,8 @@ class StubRunner {
   verifyResult: CommandResult = { ok: true, stdout: '', stderr: '' };
   pushResult: CommandResult = { ok: true, stdout: '', stderr: '' };
   ghMergeResult: CommandResult = { ok: true, stdout: '', stderr: '' };
+  // `git diff --name-only --diff-filter=U`: the paths a stopped rebase left unmerged.
+  conflictResult: CommandResult = { ok: true, stdout: '', stderr: '' };
 
   run = (cwd: string, cmd: string[]): Promise<CommandResult> => {
     this.calls.push({ cwd, cmd });
@@ -99,6 +101,8 @@ class StubRunner {
     }
     if (cmd[0] === 'git' && cmd[1] === 'rebase')
       return Promise.resolve(this.rebaseResult);
+    if (cmd[0] === 'git' && cmd[1] === 'diff' && cmd[3] === '--diff-filter=U')
+      return Promise.resolve(this.conflictResult);
     if (cmd[0] === 'bash' && cmd[1] === '-lc')
       return Promise.resolve(this.verifyResult);
     if (cmd[0] === 'git' && cmd[1] === 'push')
@@ -307,7 +311,13 @@ describe('MergeQueue verify timeout', () => {
             hangUntilReleased,
             new Promise<CommandResult>((resolve) =>
               setTimeout(
-                () => resolve({ ok: false, stdout: '', stderr: 'timed out' }),
+                () =>
+                  resolve({
+                    ok: false,
+                    stdout: '',
+                    stderr: 'timed out',
+                    timedOut: true,
+                  }),
                 opts.timeoutMs
               )
             ),
@@ -333,6 +343,37 @@ describe('MergeQueue verify timeout', () => {
     expect(ok?.state).toBe('merged');
     releaseHang?.();
   }, 30_000);
+
+  // A test runner's own per-test limit ("this test timed out after 5000ms")
+  // is a failing test, not the step running out of time. Reading it as the
+  // step timeout told people to raise verifyTimeoutSec, which never helps.
+  it("reports a step whose output says 'timed out' as failed, not as a step timeout", async () => {
+    const harness = makeHarness();
+    writeFileSync(
+      join(harness.rootDir, DISPATCH_DIR, 'config.yml'),
+      'verifyCommand: "bun test"\n'
+    );
+    const { runId } = await dispatchAndFinish(harness, 'Slow test');
+    const stub = new StubRunner();
+    const runner = async (cwd: string, cmd: string[]): Promise<CommandResult> =>
+      cmd[0] === 'bash'
+        ? {
+            ok: false,
+            stdout: '',
+            stderr:
+              '(fail) slow case [5002ms]\n  ^ this test timed out after 5000ms.',
+          }
+        : await stub.run(cwd, cmd);
+    const queue = makeQueue(harness, runner);
+
+    queue.enqueue(runId);
+    await waitFor(() => queue.snapshot().history.length === 1, 20_000);
+
+    const entry = queue.snapshot().history[0];
+    expect(entry?.state).toBe('failed');
+    expect(entry?.reason).toMatch(/^verify failed: /);
+    expect(entry?.reason).not.toMatch(/verifyTimeoutSec/);
+  });
 });
 
 // Elapsed time is what makes "slow" and "wedged" distinguishable without
@@ -624,6 +665,28 @@ describe('MergeQueue local-run happy path', () => {
       .snapshot()
       .history.find((e) => e.runId === goodRunId);
     expect(goodEntry?.state).toBe('merged');
+  });
+
+  it('records the files a conflicted rebase stopped on, read before the abort', async () => {
+    const harness = makeHarness();
+    const { runId } = await dispatchAndFinish(harness, 'Conflicting');
+    const stub = new StubRunner();
+    stub.rebaseResult = {
+      ok: false,
+      stdout: 'CONFLICT (content): Merge conflict in a.ts',
+      stderr: 'error: could not apply 71fc328... feat: a',
+    };
+    stub.conflictResult = { ok: true, stdout: 'a.ts\nsrc/b.ts\n', stderr: '' };
+    const queue = makeQueue(harness, stub.run);
+
+    queue.enqueue(runId);
+    await waitFor(() => queue.snapshot().history.length === 1);
+
+    expect(queue.snapshot().history[0].conflicts).toEqual(['a.ts', 'src/b.ts']);
+    const diffIdx = stub.calls.findIndex((c) => c.cmd[1] === 'diff');
+    const abortIdx = stub.calls.findIndex((c) => c.cmd[2] === '--abort');
+    expect(diffIdx).toBeGreaterThan(-1);
+    expect(diffIdx).toBeLessThan(abortIdx);
   });
 });
 
@@ -1531,6 +1594,41 @@ describe('MergeQueue persistence', () => {
     expect(reloaded?.state).toBe('queued');
   });
 
+  it('keeps only the latest history row for a run that failed more than once', () => {
+    const harness = makeHarness();
+    mkdirSync(runsDir(harness.rootDir), { recursive: true });
+    const failed = (runId: string, finishedAt: string) => ({
+      runId,
+      taskId: 't-gone00',
+      taskTitle: 'Gone',
+      state: 'failed',
+      reason: 'worktree is gone',
+      enqueuedAt: finishedAt,
+      finishedAt,
+    });
+    writeFileSync(
+      mergeQueuePath(harness.rootDir),
+      JSON.stringify({
+        entries: [],
+        history: [
+          failed('r-aaaaaa', '2026-11-06T10:00:00.000Z'),
+          failed('r-bbbbbb', '2026-11-06T09:00:00.000Z'),
+          failed('r-aaaaaa', '2026-10-20T10:00:00.000Z'),
+          failed('r-bbbbbb', '2026-10-20T09:00:00.000Z'),
+        ],
+      })
+    );
+
+    const queue = makeQueue(harness, new StubRunner().run);
+
+    expect(
+      queue.snapshot().history.map((e) => [e.runId, e.finishedAt])
+    ).toEqual([
+      ['r-aaaaaa', '2026-11-06T10:00:00.000Z'],
+      ['r-bbbbbb', '2026-11-06T09:00:00.000Z'],
+    ]);
+  });
+
   it('requeues a mid-flight persisted entry instead of failing it, counting the attempt', async () => {
     const harness = makeHarness();
     const { runId, taskId } = await dispatchAndFinish(harness);
@@ -1963,6 +2061,8 @@ describe('MergeQueue restack edge cases', () => {
   // A run on a multi-parent stack base keeps every blocker's work: when one
   // blocker lands, its base is rebuilt over the new main plus the blockers
   // still unmerged, and only the run's own commits are replayed onto it.
+  // Real git work for three parents and a rebuilt base: about 1.7-2.1 s idle,
+  // over a third of Bun's 5 s default, which a loaded CI runner can exceed.
   it('restacks a three-parent dependent onto a rebuilt base when one blocker merges, using only git', async () => {
     const harness = makeHarness();
     const { blockers, dependentId, taskId } = await makeMultiParentDependent(
@@ -2076,7 +2176,7 @@ describe('MergeQueue restack edge cases', () => {
 
     // The whole sequence shelled out to git and nothing else.
     expect([...new Set(calls.map((c) => c[0]))]).toEqual(['git']);
-  });
+  }, 30_000);
 
   // Only a real conflict flags the run: the blockers left can't be combined
   // with the new main any more, so there is no correct base to move it to.

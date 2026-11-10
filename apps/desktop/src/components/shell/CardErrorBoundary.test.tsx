@@ -1,5 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { ReactNode } from 'react';
 
 import { CardErrorBoundary } from './CardErrorBoundary';
@@ -63,4 +65,18 @@ test('a later update to the item draws it again', () => {
   rerender(<List items={[{ id: 'b', text: 'complete' }]} />);
   expect(screen.getByTestId('row').textContent).toBe('complete');
   expect(screen.queryByText("Couldn't display this step")).toBeNull();
+});
+
+// The boundary's CSS module, comments dropped, so a rule reads as written.
+const ownCss = readFileSync(
+  join(import.meta.dir, 'CardErrorBoundary.module.css'),
+  'utf8'
+).replace(/\/\*[\s\S]*?\*\//g, '');
+
+test("the failed step's icon reads in the danger tone, not a raw hue", () => {
+  render(<List items={[{ id: 'b', text: 'broken', bad: true }]} />);
+  const icon = document.querySelector('[data-slot=card-error] svg');
+  expect(icon?.getAttribute('data-tone')).toBe('danger');
+  expect(ownCss).not.toContain('var(--red)');
+  expect(ownCss).toContain('color: var(--tone);');
 });

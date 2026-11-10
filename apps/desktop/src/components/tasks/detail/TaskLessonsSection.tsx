@@ -1,8 +1,9 @@
 import type { ApiClient } from '@dispatch/client';
+import { TaskDetailSection } from '@dispatch/ui';
 import { useQuery } from '@tanstack/react-query';
 
 import { entryProvenance, memoryQueryKey } from '../../../lib/memory';
-import { MainSection } from './MainSection';
+import styles from './sections.module.css';
 
 const LIST_LIMIT = 200;
 
@@ -25,25 +26,22 @@ export function TaskLessonsSection({
   const lessons = (data?.entries ?? []).filter((e) => authors.has(e.author));
   if (lessons.length === 0) return null;
   return (
-    <MainSection
+    <TaskDetailSection
       title="Lessons from this task"
-      trailing={
-        <span className="text-muted-foreground font-book text-[12px] tabular-nums">
-          {lessons.length}
-        </span>
-      }
+      headingLevel={3}
+      count={lessons.length}
     >
-      <ul data-testid="task-lessons" className="flex flex-col gap-1.5">
+      <ul data-testid="task-lessons" className={styles.lessons}>
         {lessons.map((entry) => (
-          <li key={entry.id} className="text-[13px]">
-            <span className="font-medium">{entry.title}</span>
-            <span className="text-muted-foreground font-book block text-[12px]">
+          <li key={entry.id} className={styles.lesson}>
+            <span className={styles.lessonTitle}>{entry.title}</span>
+            <span className={styles.cardLine}>
               {entryProvenance(entry)}
               {entry.status === 'retired' ? ' · retired' : ''}
             </span>
           </li>
         ))}
       </ul>
-    </MainSection>
+    </TaskDetailSection>
   );
 }

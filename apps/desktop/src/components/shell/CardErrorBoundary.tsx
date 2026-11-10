@@ -1,13 +1,16 @@
+import { Button } from '@dispatch/ui';
 import { ChevronRight, TriangleAlert } from 'lucide-react';
-import { Component, type ErrorInfo, type ReactNode } from 'react';
+import {
+  Component,
+  type ErrorInfo,
+  type ReactNode,
+  useId,
+  useState,
+} from 'react';
 
 import { contentKey } from '../../lib/cardContent';
-import { Button } from '@/ui/button';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/ui/collapsible';
+import { RawText } from '../gr8r/RawText';
+import styles from './CardErrorBoundary.module.css';
 
 interface CardErrorBoundaryProps {
   /** The item's raw text or JSON, shown (and copyable) when it fails to draw. */
@@ -64,43 +67,53 @@ export class CardErrorBoundary extends Component<
   render(): ReactNode {
     const { error } = this.state;
     if (error === null) return this.props.children;
-    const { raw } = this.props;
-    return (
-      <div
-        data-slot="card-error"
-        role="note"
-        className="text-muted-foreground flex flex-col gap-1 rounded-md px-2 py-1 text-[12px]"
-      >
-        <Collapsible>
-          <div className="flex items-center gap-2">
-            <TriangleAlert className="text-state-failed size-3.5 shrink-0" />
-            <span className="min-w-0 flex-1 truncate">
-              Couldn&apos;t display this step
-            </span>
-            <CollapsibleTrigger
-              render={<Button variant="ghost" size="xs" className="group" />}
-            >
-              <ChevronRight className="size-3 transition-transform group-data-panel-open:rotate-90" />
-              Show raw
-            </CollapsibleTrigger>
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => void navigator.clipboard?.writeText(raw)}
-            >
-              Copy
-            </Button>
-          </div>
-          <CollapsibleContent>
-            <pre
-              data-slot="card-error-raw"
-              className="bg-secondary/50 mt-1 max-h-48 overflow-auto rounded-md p-2 font-mono text-[11px] break-words whitespace-pre-wrap"
-            >
-              {raw}
-            </pre>
-          </CollapsibleContent>
-        </Collapsible>
-      </div>
-    );
+    return <CardErrorRow raw={this.props.raw} />;
   }
+}
+
+/** The failed item's compact row: the sentence, Show raw (which unfolds the raw content under
+    it) and Copy. */
+function CardErrorRow({ raw }: { raw: string }) {
+  const [open, setOpen] = useState(false);
+  const rawId = useId();
+  return (
+    <div data-slot="card-error" role="note" className={styles.card}>
+      <div className={styles.row}>
+        <TriangleAlert
+          className={styles.icon}
+          data-tone="danger"
+          size={14}
+          strokeWidth={1.8}
+          aria-hidden="true"
+        />
+        <span className={styles.sentence}>Couldn&apos;t display this step</span>
+        <Button
+          variant="quiet"
+          size="sm"
+          icon={
+            <ChevronRight
+              className={styles.chevron}
+              size={12}
+              strokeWidth={1.8}
+            />
+          }
+          aria-expanded={open}
+          aria-controls={rawId}
+          onClick={() => setOpen((value) => !value)}
+        >
+          Show raw
+        </Button>
+        <Button
+          variant="quiet"
+          size="sm"
+          onClick={() => void navigator.clipboard?.writeText(raw)}
+        >
+          Copy
+        </Button>
+      </div>
+      <div id={rawId} hidden={!open}>
+        {open ? <RawText>{raw}</RawText> : null}
+      </div>
+    </div>
+  );
 }

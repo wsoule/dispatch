@@ -6,8 +6,16 @@ import {
   widenedPath,
   writeGitAttributes,
 } from '@dispatch-foo/core';
-import { existsSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 
 import { parseListenerFlags } from './a2a/settings.js';
 import { FakeAiTaskFilter } from './aiTaskFilter.js';
@@ -20,6 +28,8 @@ import {
   resolveStoreBackend,
   startServer,
 } from './index.js';
+import { fakeOAuthEndpoints } from './linear/oauth.js';
+import { parseMobileSettings } from './mobile/host.js';
 import {
   registerCodexOverseer,
   registerCodexPlanner,
@@ -372,11 +382,18 @@ const FAKE_OVERSEER_MUTATING_TURN: FakeOverseerTurn = {
   },
 };
 
+// The turn deciding a queued action wakes the overseer for: it reports the
+// outcome and queues nothing. Same wording rule as the mutating turn's reply.
+const FAKE_OVERSEER_DECIDED_TURN: FakeOverseerTurn = {
+  reply: 'Noted — I have your decision.',
+};
+
 // The one default script every DISPATCH_ENABLE_FAKES daemon's 'fake' overseer
 // backend plays: a status turn that answers from a real list_runs read, then
-// two identical mutating turns (queue-deny-requeue-approve is the flow the
-// desktop e2e drives, so the second ask must queue again). Fixed like the
-// executor/planner defaults above — a test/e2e hook, not a scripting facility.
+// two identical mutating turns, each followed by the turn its decision wakes
+// (queue-deny-requeue-approve is the flow the desktop e2e drives, so the second
+// ask must queue again). Fixed like the executor/planner defaults above — a
+// test/e2e hook, not a scripting facility.
 //
 // The status turn narrates before its read and streams its text a few
 // characters at a time, slowly enough (about a second and a half in all) for
@@ -404,7 +421,9 @@ function buildDefaultFakeOverseerScript(): FakeOverseerScript {
         },
       },
       FAKE_OVERSEER_MUTATING_TURN,
+      FAKE_OVERSEER_DECIDED_TURN,
       FAKE_OVERSEER_MUTATING_TURN,
+      FAKE_OVERSEER_DECIDED_TURN,
     ],
   };
 }
@@ -416,6 +435,32 @@ function readFlag(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
   if (index === -1 || index === args.length - 1) return undefined;
   return args[index + 1];
+}
+
+// The first and last four characters of a token: enough to match it against
+// one you hold, too little to use. 64 hex characters leave 224 bits hidden.
+function maskToken(token: string): string {
+  return token.length <= 16 ? '…' : `${token.slice(0, 4)}…${token.slice(-4)}`;
+}
+
+// Writes `contents` to `path` readable only by this user. The bytes go to a
+// fresh sibling created 0600 (`wx` refuses one that already exists, so no
+// planted file or symlink is followed) and are renamed over `path`, so an
+// older file with looser permissions is replaced rather than reused.
+function writePrivateFile(path: string, contents: string): void {
+  const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.tmp`);
+  const fd = openSync(tmp, 'wx', 0o600);
+  try {
+    writeSync(fd, contents);
+  } finally {
+    closeSync(fd);
+  }
+  try {
+    renameSync(tmp, path);
+  } catch (err) {
+    rmSync(tmp, { force: true });
+    throw err;
+  }
 }
 
 const args = process.argv.slice(2);
@@ -480,6 +525,44 @@ if (args.includes('--init')) {
 
 const enableFakes = process.env.DISPATCH_ENABLE_FAKES === '1';
 
+// DISPATCH_LINEAR_FAKE_ORIGIN sends every Linear OAuth and GraphQL call to a
+// fake Linear (the browser smoke). Honoured only behind the fakes gate and
+// only on a loopback host, so no setting can send a token anywhere else.
+function linearFakeOrigin(): string | null {
+  const raw = process.env.DISPATCH_LINEAR_FAKE_ORIGIN?.trim();
+  if (raw === undefined || raw === '') return null;
+  let url: URL | null = null;
+  try {
+    url = new URL(raw);
+  } catch {
+    url = null;
+  }
+  const loopback =
+    url !== null &&
+    url.protocol === 'http:' &&
+    (url.hostname === '127.0.0.1' || url.hostname === 'localhost');
+  if (!enableFakes || !loopback) {
+    console.warn(
+      'dispatchd: ignoring DISPATCH_LINEAR_FAKE_ORIGIN: it needs DISPATCH_ENABLE_FAKES=1 and a loopback http origin'
+    );
+    return null;
+  }
+  return url?.origin ?? null;
+}
+const linearFake = linearFakeOrigin();
+
+// DISPATCH_LINEAR_CLIENT_SECRET, the escape hatch for a Linear OAuth app that
+// turns out to want its secret: read once and gone, like the app token
+// below, so no agent run or terminal this daemon starts can read it.
+const linearClientSecret = process.env.DISPATCH_LINEAR_CLIENT_SECRET?.trim();
+delete process.env.DISPATCH_LINEAR_CLIENT_SECRET;
+const linearOAuth = {
+  ...(linearFake === null ? {} : { endpoints: fakeOAuthEndpoints(linearFake) }),
+  ...(linearClientSecret === undefined || linearClientSecret === ''
+    ? {}
+    : { clientSecret: linearClientSecret }),
+};
+
 // A test harness that cannot read this process's stdout (Playwright's
 // webServer, the browser-dev URL) may preset the decide-tier token instead;
 // whoever launches the daemon with it is as trusted as whoever reads the
@@ -534,9 +617,44 @@ if (!a2aFlags.ok) {
 }
 const a2aOverrides = a2aFlags.overrides;
 
+// One-boot overrides of the mobile listener's saved settings (mobile/host.ts):
+// `--mobile-port` opens it on a loopback port, `--mobile-url` names the https
+// URL a phone reaches it at through a tunnel.
+const mobileFlags = parseMobileSettings({
+  port:
+    readFlag(args, '--mobile-port') === undefined
+      ? null
+      : Number(readFlag(args, '--mobile-port')),
+  publicUrl: readFlag(args, '--mobile-url') ?? null,
+});
+if (!mobileFlags.ok) {
+  console.error(`dispatchd: --mobile-*: ${mobileFlags.error}`);
+  process.exit(2);
+}
+const mobileOverrides = {
+  ...(mobileFlags.settings.port === null
+    ? {}
+    : { port: mobileFlags.settings.port }),
+  ...(mobileFlags.settings.publicUrl === null
+    ? {}
+    : { publicUrl: mobileFlags.settings.publicUrl }),
+};
+
 // `--started-by <label>`: who spawned this background daemon, for the daemon
 // file (the CLI's ensureDaemon passes it alongside --idle-timeout).
 const startedBy = readFlag(args, '--started-by');
+
+// Where the app token goes besides the desktop sidecar's stdout pipe.
+// `dispatch serve` runs in a terminal whose scrollback (and any agent tool log
+// capturing it) keeps whatever is printed, so it passes one of these:
+// `--app-token-file <path>` writes the token to a 0600 file the user named and
+// prints nothing of it; `--mask-app-token` prints only its ends, enough to tell
+// two tokens apart. Without either, the full `DISPATCH_APP_TOKEN=` line is
+// printed, which the sidecar and the e2e harnesses parse.
+const appTokenFileArg = readFlag(args, '--app-token-file');
+const appTokenFile =
+  appTokenFileArg === undefined ? undefined : resolve(appTokenFileArg);
+const maskAppToken = args.includes('--mask-app-token');
 
 const serverOpts: Parameters<typeof startServer>[0] = {
   rootDir,
@@ -555,6 +673,10 @@ const serverOpts: Parameters<typeof startServer>[0] = {
         },
       }),
   ...(Object.keys(a2aOverrides).length === 0 ? {} : { a2a: a2aOverrides }),
+  ...(Object.keys(linearOAuth).length === 0 ? {} : { linearOAuth }),
+  ...(Object.keys(mobileOverrides).length === 0
+    ? {}
+    : { mobile: mobileOverrides }),
   // `--init` is the desktop's add-project spawn, which stops whatever daemon
   // predates the project's tracker; `--replace` is the explicit override.
   // Either way this boot waits for the old pid to exit, never runs beside it.
@@ -683,18 +805,37 @@ let handle = await startServer({
 });
 console.log(`dispatchd listening on http://127.0.0.1:${handle.port}`);
 
-// The only place the app token leaves this process — it is never written to
-// disk, so anything capturing this stdout must not persist the line either.
+// The only places the app token leaves this process: stdout for the desktop
+// sidecar, or the file `--app-token-file` names. It is never written anywhere
+// else on disk, so anything capturing this stdout must not persist the line.
 //
 // Unless it came in through DISPATCH_APP_TOKEN: then whoever launched the
 // daemon already holds it, and printing it only hands a copy to wherever
 // stdout goes. Under a service manager that is a journal kept on disk, which
-// is the one place the token is meant never to be. The notice deliberately
-// does not start with `DISPATCH_APP_TOKEN=`, the prefix the desktop sidecar
-// parses — that spawner never presets one, and Playwright's never reads it.
-if (presetAppToken !== undefined && presetAppToken !== '') {
+// is the one place the token is meant never to be. The notices deliberately
+// do not start with `DISPATCH_APP_TOKEN=`, the prefix the desktop sidecar
+// parses — that spawner never presets one or masks it, and Playwright's never
+// reads it.
+if (appTokenFile !== undefined) {
+  try {
+    writePrivateFile(appTokenFile, `${handle.tokens.appToken}\n`);
+  } catch (err) {
+    console.error(
+      `dispatchd: could not write the app token to ${appTokenFile}: ${(err as Error).message}`
+    );
+    await handle.stop();
+    process.exit(1);
+  }
+  console.log(
+    `dispatchd: app token written to ${appTokenFile} (mode 0600); it changes every time this daemon starts`
+  );
+} else if (presetAppToken !== undefined && presetAppToken !== '') {
   console.log(
     'dispatchd: using the app token from DISPATCH_APP_TOKEN; not printing it'
+  );
+} else if (maskAppToken) {
+  console.log(
+    `dispatchd: app token ${maskToken(handle.tokens.appToken)} (masked). It authorizes approval decisions and changes every time this daemon starts; to get it, restart with \`dispatch serve --app-token-file <path>\` or \`--print-token\`.`
   );
 } else {
   console.log(`DISPATCH_APP_TOKEN=${handle.tokens.appToken}`);

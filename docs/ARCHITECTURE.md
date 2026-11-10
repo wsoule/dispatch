@@ -101,6 +101,17 @@ Personal memory lives outside every project, in
 `$DISPATCH_HOME/.dispatch/memory/`: `identities.db` (who each handle is) and one
 `<identity>.db` per human.
 
+Secrets live in `$DISPATCH_HOME/.dispatch/credentials.json` (mode 0600, written
+atomically under `credentials.json.lock`, `packages/core/src/credentials.ts`):
+each project's Linear API key and other integration keys, agent API keys, and
+the person's own Linear sign-ins under `linearAccounts`, one record per Linear
+workspace (organization) id, with the access and refresh tokens, the Linear user
+they belong to and the OAuth app that issued them
+(`packages/core/src/linearAccounts.ts`). A sign-in is machine-wide: every
+project on this machine whose Linear connection is in that workspace uses it.
+Nothing in a project's `.dispatch/`, the Linear sync state or `config.yml` ever
+holds a token.
+
 Keying by a hash of the project root means several projects share one
 `DISPATCH_HOME` without colliding (`packages/server/src/orchestrator/paths.ts`).
 
@@ -110,21 +121,22 @@ none of your runs or memory; replicating team memory is team-server work.
 
 ## Packages
 
-| Package                  | Size                  | What it is                                                                                                                                     |
-| ------------------------ | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@dispatch-foo/core`     | ~11.5k                | Domain model. Task parse/serialize, `TaskStore`, actors, conflicts, timeline, ledger, findings, evidence, config, merge drivers, Carto binding |
-| `@dispatch-foo/protocol` | ~2.0k                 | The message bus, MIT: addresses, the envelope and its validation, `MessageStore` over SQLite, `DeliveryEngine`                                 |
-| `@dispatch/memory`       | ~4.6k                 | The memory engine, MIT: entries and scopes, proposals, ranking, the prompt index, the SQLite store, Claude's memory file format                |
-| `@dispatch/server`       | ~56.8k                | `dispatchd` — HTTP API, event bus, orchestrator, git, Linear, board sync                                                                       |
-| `@dispatch/cli`          | ~6.4k                 | The `dispatch` binary                                                                                                                          |
-| `@dispatch-foo/mcp`      | ~2.8k                 | Stdio MCP server, 21 tools                                                                                                                     |
-| `@dispatch/client`       | ~4.1k                 | Typed API client and React hooks over the daemon                                                                                               |
-| `@dispatch/ui`           | ~8.8k                 | Component library (shadcn-style) plus `ai/`, `chrome/`, `hooks/`, `lib/`                                                                       |
-| `@dispatch/tokens`       | —                     | The design token palette (`tokens.css`) the desktop app and the site share                                                                     |
-| `apps/desktop`           | ~67.4k TS + 8.6k Rust | The Tauri app: ~25 views, Rust shell, sidecar management                                                                                       |
-| `apps/demo`              | —                     | Hosted sandbox. Embeds `startServer` in-process with `FakeExecutor`/`FakePlanner`                                                              |
-| `apps/site`              | —                     | Static marketing server (Railway)                                                                                                              |
-| `packages/demo`          | —                     | Seeds a demo repo — board, runs, records, teammate                                                                                             |
+| Package                  | Size                    | What it is                                                                                                                                                                                                |
+| ------------------------ | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@dispatch-foo/core`     | ~11.5k                  | Domain model. Task parse/serialize, `TaskStore`, actors, conflicts, timeline, ledger, findings, evidence, config, merge drivers, Carto binding                                                            |
+| `@dispatch-foo/protocol` | ~2.0k                   | The message bus, MIT: addresses, the envelope and its validation, `MessageStore` over SQLite, `DeliveryEngine`                                                                                            |
+| `@dispatch/memory`       | ~4.6k                   | The memory engine, MIT: entries and scopes, proposals, ranking, the prompt index, the SQLite store, Claude's memory file format                                                                           |
+| `@dispatch/server`       | ~56.8k                  | `dispatchd` — HTTP API, event bus, orchestrator, git, Linear, board sync                                                                                                                                  |
+| `@dispatch/cli`          | ~6.4k                   | The `dispatch` binary                                                                                                                                                                                     |
+| `@dispatch-foo/mcp`      | ~2.8k                   | Stdio MCP server, 21 tools                                                                                                                                                                                |
+| `@dispatch/client`       | ~4.1k                   | Typed API client and React hooks over the daemon                                                                                                                                                          |
+| `@dispatch/ui`           | ~31.6k TS + 16.7k CSS   | The desktop's only component library (Gr8r Studio design system): shell, grouped task table, timeline, dependency graph, task detail, pickers, controls; source-consumed (the desktop's Vite compiles it) |
+| `@dispatch/planning`     | —                       | Pure planning view-model builders from Better-Tracker's core: workspace snapshot, assessment, timeline, dependency graph, allocation                                                                      |
+| `@dispatch/tokens`       | —                       | The design token palette (`tokens.css`) of the marketing site (`apps/site`); the desktop app is on `@dispatch/ui`                                                                                         |
+| `apps/desktop`           | ~105.5k TS + 11.1k Rust | The Tauri app: the destinations under Clients, Rust shell, sidecar management                                                                                                                             |
+| `apps/demo`              | —                       | Hosted sandbox. Embeds `startServer` in-process with `FakeExecutor`/`FakePlanner`                                                                                                                         |
+| `apps/site`              | —                       | Static marketing server (Railway)                                                                                                                                                                         |
+| `packages/demo`          | —                       | Seeds a demo repo — board, runs, records, teammate                                                                                                                                                        |
 
 ## The task model
 
@@ -171,7 +183,32 @@ they're for:
 - **Capture** — `/api/inbox/*`, `/api/notes/*`, `/api/conversations`
 - **Overseer** — `/api/overseer`, `/api/overseer/:id/message`; its action
   confirmations and built-in tool-call approvals are gates on the message bus
-- **Integrations** — `/api/linear/*`
+- **Integrations** — `/api/linear/*`, including "Sign in with Linear":
+  `GET /api/linear/account` (what this caller may see of the sign-in, never a
+  token), `POST`/`DELETE /api/linear/sign-in` (start, cancel) and
+  `POST /api/linear/sign-out` (`{ workspaceId? }`: the app names the sign-in it
+  shows, so signing out needs no Linear lookup). The last three need the
+  operator tier and then the daemon owner's own app token (403
+  `linear_sign_in_owner_only` otherwise). The account view shows a stored
+  sign-in whatever the setup says, and lists every sign-in stored on the machine
+  when the project's workspace cannot be told, so one can always be ended. While
+  a sign-in waits, and only then, the daemon also listens on
+  `127.0.0.1:<linear.oauthCallbackPort>` (default 47823) for Linear's redirect
+  to `GET /linear/callback`; it checks the `Host` header, turns away any request
+  a browser marks as other than a navigation, checks the state (a wrong one
+  never ends the flow), takes one code, and closes after the callback, a cancel,
+  a new start or 10 minutes (`linear/signIn.ts`)
+- **Files** — `/api/files/*`: browse, read, search and preview a checkout or a
+  run's worktree, every path held inside it by `api/workspacePaths.ts`. A page
+  that authenticates with a bearer header downloads through
+  `POST /api/files/download-ticket`, which checks the path and credential as
+  `GET /api/files/raw` would and returns `{ ticket, expiresAt }`;
+  `GET /api/files/raw?ticket=` then streams that one file once, as an
+  attachment, with no header, within 60 seconds and while the credential that
+  asked still holds. Tickets live only in the daemon's memory
+  (`api/downloadTickets.ts`) and work on no other route. Minting one starts
+  nothing and only lets one read through, so it stays open while team sync turns
+  on, as reads do.
 - **Meta** — `/api/health`, `/api/sync`, `/api/config`, `/api/agents`
 
 Push updates go over a **WebSocket event bus** (`events.ts`), not SSE. The
@@ -582,9 +619,18 @@ Agents, runs and people talk over one persistent bus
 
 ## Clients
 
-**Desktop** (`apps/desktop`, ~67.4k lines) is the primary surface: ~25 views
-covering board, tasks, task detail, PR review, diffs, branches, milestones,
-plans, sessions, agents, impact, inbox/brain-dump, threads, settings, gallery.
+**Desktop** (`apps/desktop`, ~105.5k lines of TypeScript) is the primary
+surface. Its sidebar lists the destinations
+(`apps/desktop/src/lib/shellRoutes.ts`): Overseer, Issues (list and board),
+Needs you, Timeline, Graph, Threads, Docs, Runs (Settings' runs page) and
+Settings, which opens as a page in the main column. Live opens from the Runs
+page and sits under it: the sidebar marks Runs current there, and Escape or the
+"Runs" chip goes back to it. The Projects register (also the sidebar Projects
+section's "All"), Files, Terminals and Live also open from the command menu
+(`apps/desktop/src/lib/paletteEntries.ts`), and the quick-open chord (⌘P on
+macOS, Ctrl+P elsewhere) opens quick open over the project's files. Every view
+is built from `@dispatch/ui`; the rules it follows are under
+[Desktop design system](#desktop-design-system).
 
 **CLI** (`packages/cli`) — commands include `init`, `mcp`, `task`, `plan`,
 `milestone`, `serve`, `ui`, `doctor`, `run`, `runs`, `approve`, `message`,
@@ -598,6 +644,254 @@ plans, sessions, agents, impact, inbox/brain-dump, threads, settings, gallery.
 directly and need no daemon; the other sixteen require a running `dispatchd` and
 return a clear error without one. A `workflow://onboarding` resource briefs a
 connecting agent on the conventions.
+
+## Desktop design system
+
+The desktop has one UI layer, `@dispatch/ui` (`packages/ui`): Gr8r Studio's
+layout and look with a purple accent, ported from Better-Tracker, whose
+`docs/architecture.md` §8.2 was its spec. This section holds the rules Dispatch
+follows. `packages/ui/README.md` is the API reference (every component, prop and
+behaviour), and `.agents/skills/desktop-ui/SKILL.md` tells a contributor what to
+reach for. Checked against the tree on 2026-11-03.
+
+Two tests hold most of it. `packages/ui/test/styles-contrast.test.ts` checks
+every text token at 4.5:1 and every mark and control edge at 3:1 on every
+surface in both themes, the tone hook's mapping, the dark floor and that no
+library file reads a retired token. `apps/desktop/src/styles/gr8r-rules.test.ts`
+scans every file under `apps/desktop/src` for hex values, retired tokens,
+unresolved `var()` reads, utility classes, removed focus outlines and uppercase
+text.
+
+**Layout.** A sidebar shell (`AppShell`) with a command palette; tasks in
+grouped lists (`TaskGroupTable`) with a Kanban board as the Issues list's other
+mode; a Gantt Timeline; a dependency Graph; a Projects register; a slide-over
+drawer and a full page for a task; Flight Plan inside container pages (projects
+and milestones); Live under Runs. Live's and Flight Plan's headers use the
+compact `StatsStrip` (one 26px row of inline cells that scrolls sideways inside
+itself on a narrow column: edge fades, a tab stop only while it overflows or
+holds focus, a vertical wheel turned sideways), with the header's controls in
+its `end`, so the bands and the canvas keep their height. Their keys and notes
+stay short, so the cells and the controls share the row at common widths, but
+each still says what it counts; a cell's `title` adds detail and never holds the
+only copy of a fact. While a fan-out runs, Flight Plan puts Running, the ETA and
+the critical path first, since its controls leave the strip little room and the
+fade hides the end. Its fan-out's slots picker (in the Running cell, after the
+slots in use), spend and waves are cells, so its `end` holds only the verbs
+(Pause and Stop, or the paused pill, Resume, Raise ceiling… and Stop); a spend
+near its ceiling comes straight after Running, and a paused session's spend
+leads the strip, so neither is ever behind the fade. While a fan-out runs or is
+paused (owner decision 2026-11-04), Pause and Stop there are icon-only (named
+Pause and Stop, each with a Tooltip saying what it does; Stop then confirms in a
+`ConfirmDialog`, since only its glyph sets it apart from Pause) and the cells'
+notes move into their hints (`StatsStrip` `notes="hint"`: a Tooltip on hover and
+keyboard focus; the note stays in the cell's text for a screen reader). Live's
+spend note does the same, its key saying which amount the value is ("Today" for
+today's spend, else "Spend" for the live fan-outs' settled spend), so Live's
+cells fit beside Pause all at 1024px. A touch screen opens no Tooltip, so there
+both strips keep their notes on the row and Pause and Stop keep their words
+(`useTouchScreen`). That still left Plan at 1440px (a Plan column of about 654px
+beside the Properties panel) 178px too wide while a fan-out ran and 304px while
+paused, so (owner decision 2026-11-04, the owner's "just figure it out") Plan's
+header, while a fan-out runs or is paused, has no Queued or Landed cell: their
+counts are the Running cell's note ("3 queued · 5 of 12 landed", in words since
+the note is what a screen reader hears; a part with nothing to say dropped: no
+queued part with nothing queued, no landed part with nothing in the plan), so
+every count stays in its hint, in its text for a screen reader and on the row on
+a touch screen, where the note takes Running's blue as any toned cell's note
+does. That cell keeps one React key in every mode, so keyboard focus on it
+survives the fan-out's end. It draws its slots in use as text ("2/4", read as "2
+of 4 agent slots in use") with no meter track, so all slots taken no longer
+turns it amber ("4/4" says so); a Slots cell split off by runs past the slots
+keeps the warning tone. The slots picker after the text has a library Tooltip,
+and the cell's hint keeps away from the picker and its menu (`StatsStrip`). The
+paused verbs Resume and Raise ceiling… are icon-only like Pause and Stop (named,
+each with a Tooltip, words kept on a touch screen); Resume's tip follows why the
+session paused, since after a run or spend ceiling it pauses again at once and
+only Raise ceiling… goes on. Every cell is then on screen at 1440px, running,
+near the spend ceiling and paused, with a spend under $1,000 and a short pause
+reason (65px, 47px and 81px to spare, measured on 2026-11-04); a four-digit
+spend near its ceiling, or beside the "auto-dispatch failed" pill, is 1–2px over
+and its last cell goes behind the fade. With no fan-out Plan keeps its Ready and
+Landed cells; the milestone bands, the Milestones page and Live keep their
+worded verbs, and Live its slots meter. A review diff (`PierreReviewDiff` for a
+settled run, `RunDiffView` for a live one, both through `useFittedDiffLayout`)
+draws a split setting unified while its column is under 980px.
+
+### Tokens only
+
+- Every colour, size, radius, shadow and motion value is a token from
+  `packages/ui/src/styles/tokens.css`. No hex anywhere else; the one exemption
+  is `apps/desktop/src/lib/terminalPalette.ts` (the 16 ANSI colours). A tint the
+  tokens do not cover is added to `tokens.css` first, then used.
+- The pre-Gr8r names (`--paper`, `--ink`, `--background`, `--foreground`,
+  `--muted`, `--grey*`, `--tint`, `--hatch`, the `-ink` steps and the rest of
+  `RETIRED` in `packages/ui/test/contrast-helpers.ts`) are removed and never
+  come back.
+- **Surfaces**, back to front: `--bg` (behind everything), `--bg-side` (the
+  sidebar), `--surface` (main column, panels, drawer, menus), `--surface-2`
+  (hover), `--surface-3` (pressed, tracks), `--sunken` (recessed wells),
+  `--overlay` (the scrim). Light is
+  `#fbfaf8 / #f4f3f0 / #ffffff / #f6f5f2 / #eeede9 / #f7f6f3`. Dark is a soft
+  warm charcoal, redefined rather than inverted, and nothing is darker than
+  `#1a1a19` (the sidebar):
+  `#1c1c1b / #1a1a19 / #20201f / #272726 / #2e2e2c / #1c1c1b`.
+- **Lines**: `--divider` < `--border` < `--border-strong` are decoration. The
+  edge of anything a person types in or toggles is `--control-border` (`#8c8880`
+  light, `#7c7974` dark), 3:1 on every surface.
+- **Text**: `--text`, `--text-2` and `--text-3` hold 4.5:1 on every surface in
+  both themes; `--text-4` is for idle icons only, never words; `--text-inv` is
+  text on an inverted fill (a toast, a tooltip, the bulk bar).
+- **Accent** `#9747ff` in both themes, in Gr8r's accent role only: the primary
+  button (one per view), focus rings, selection, progress fills, the timeline's
+  today, unread dots and counts, query highlights and links. It never means a
+  status. Purple text is `--accent-ink` (`#7c33ea` light, `#b385ff` dark).
+- **Elevation** only on things that float or can be picked up: popovers, menus,
+  pickers, dialogs, the palette, toasts and the bulk bar (`--shadow-pop`), the
+  drawer (`--shadow-drawer`), a dragged card or row (`--shadow-drag`). Panels,
+  rows, banners, chips and inputs have none.
+- **Shape**: radius from `--r-xs` (4px) to `--r-xl` (12px); row heights,
+  paddings and text sizes come from the primitives, so neighbouring surfaces
+  line up. A missing variant is added to `packages/ui` with a test and a README
+  line, never restyled locally.
+
+### Status colours
+
+The hue table (owner decision Q6, the same as Better-Tracker's): **red** is
+overdue and failed; **amber** is at risk, blocked, a missing input and waiting
+on you; **green** is on track and succeeded, which includes review (the agent's
+work succeeded and waits on a person); **blue** is in progress and live
+(working, landing, an active session); **grey** is paused and inactive. Done,
+landed and merged are the filled neutral mark, never green beside a red. The
+purple accent is never a status.
+
+A status is coloured only through a `UiTone` (`default`, `muted`, `accent`,
+`danger`, `warning`, `success`, `info`). A component renders its tone as
+`data-tone`, and the hook in `tokens.css` gives that element `--tone` (the hue:
+fills, dots, outlines), `--tone-ink` (its text, 4.5:1), `--tone-soft` (the
+tint), `--tone-line` (a tinted border) and `--on-tone` (text on a solid fill). A
+status word in a host's own markup is `<span class="toneText" data-tone="…">`;
+never `color: var(--red)`. Dispatch's states map through these helpers (paths
+under `apps/desktop/src/`; the skill lists the rest):
+
+| States                                                                 | `danger` | `warning`                             | `success`    | `info`                                    | `muted`                                                | neutral mark                      |
+| ---------------------------------------------------------------------- | -------- | ------------------------------------- | ------------ | ----------------------------------------- | ------------------------------------------------------ | --------------------------------- |
+| task status (`statusTone`, `lib/statusTone.ts`)                        | —        | held by a dependency (`BLOCKED_TONE`) | review       | working, landing, a started custom status | draft, ready, dropped, triage, backlog, todo, canceled | landed, a completed custom status |
+| feed state (`feedStateTone`, `lib/feedState.ts`)                       | broken   | your move, blocked                    | review       | the machine's move                        | resting                                                | —                                 |
+| milestone child (`phaseTone`, `lib/milestoneSession.ts`)               | failed   | capped, held, waiting, blocked        | needs review | working, reviewing, fixing, landing       | —                                                      | the rest                          |
+| session (`sessionStatusTone`, `components/sessions/sessionDisplay.ts`) | —        | —                                     | —            | active                                    | ended                                                  | —                                 |
+
+- **Four looks, loud to quiet**: the tinted badge (`Chip filled`, `Notice`,
+  `AlertStrip`, a count) for the stronger claim or a call to action; the dot
+  pill (an unfilled status `Chip`: neutral, a 6px dot in the hue) for a
+  lifecycle status that is not a problem; toned text (`.toneText`) for a bare
+  word, number or date; plain quiet text for muted. No solid status slab, and no
+  row rule: a row that needs action says so with a tinted chip or a toned cell.
+- **Colour is never the only cue.** Every status keeps its shape and its words
+  (a visible label, an `aria-label` or a tooltip). Milestone statuses are
+  diamonds and task states circles (`StateGlyph`), so the two never look alike;
+  done is the neutral fill with a knocked-out tick, because a green fill is as
+  light as the red one.
+
+### Contrast, forced colours and motion
+
+- Text holds 4.5:1; marks, control edges and the focus ring hold 3:1, in both
+  themes. A pressed toggle (`Button` or `ChipButton` with `aria-pressed`) is the
+  accent tint in a full `--accent` edge, which holds 3:1 on `--bg`, `--bg-side`,
+  `--surface`, `--surface-2` and `--sunken` (not on `--surface-3`, so toggles
+  stay off that ground).
+- Code fences in Markdown are highlighted by Shiki with GitHub's high-contrast
+  themes (`github-light-high-contrast`, `github-dark-high-contrast`): every
+  token colour holds 4.5:1 on the fence's `--sunken`, `--surface` and
+  `--surface-2` in its theme
+  (`apps/desktop/src/components/runs/markdown/highlight.test.ts`).
+- Focus is a 2px `--focus-ring` outline, never `outline: none`.
+- Forced colours keep every shape: anything drawn with backgrounds alone takes
+  `forced-color-adjust: none` and system colours, and edges are borders.
+- Reduced motion is a designed state: transitions off, no scale, lift or
+  shimmer. Hover styles apply only under `(hover: hover)` at 901px and wider. A
+  theme change never animates.
+
+### Type
+
+Geist (`--font-sans`) for every word, in sentence case, at weights 400, 450, 500
+and 600 on the `--fs-2xs` to `--fs-2xl` scale. The one uppercase voice is the
+library's `.eyebrow` (sidebar, menu and palette section headings). Geist Mono
+(`--font-mono`, `.mono`) is only for machine-read strings: task ids, keys,
+paths, commands and code. Counts and dates are Geist with tabular figures
+(`.num`). Icons are Lucide. The fonts come from `@fontsource-variable/geist` and
+`@fontsource/geist-mono`.
+
+### Theme
+
+Light, dark or System. `html[data-theme]` is `light`, `dark` or `system` (which
+follows the OS live through `prefers-color-scheme`). A choice of Light or Dark
+is stored in `localStorage` under `dispatch:theme`; nothing stored means System.
+The inline `themeScript` (injected by `apps/desktop/vite.config.ts`) applies it
+before first paint. The sidebar footer's toggle flips between light and dark,
+Settings → General → Appearance offers all three, and the palette's "Follow the
+system theme" goes back to System. Storage is per origin: one for the Tauri app,
+one per daemon port in a browser. In the Tauri app, `followThemeInNativeWindow`
+(`apps/desktop/src/lib/nativeTheme.ts`) sets the window's native appearance (its
+background where the page has not painted, the area a resize exposes, native
+menus) from `html[data-theme]` at startup and on every change, through
+`getCurrentWindow().setTheme` (`null` for System) and the
+`core:window:allow-set-theme` capability. The choice is also remembered natively
+(`remember_window_theme`, a `window-theme` file in the app config dir), and
+setup builds the window (`create: false` in tauri.conf.json) with that theme, so
+a launch opens in the chosen appearance from its first frame.
+
+### Overlays: one layer stack
+
+Every overlay renders in place on the layer stack
+(`packages/ui/src/shell/layer.ts`), never in a portal. The floating layers
+(`Popover`, `PickerPopover`, `Menu`, `Tooltip`, `Dialog`, `ConfirmDialog`) use
+the browser's top layer; a modal panel over a scrim (a modal `SlideOver`, a host
+panel on `useModalSurface`) stays out of it. Escape closes the topmost layer
+only, one per press: its handler calls `preventDefault()` and
+`stopPropagation()`, document listeners check `defaultPrevented`, and focus
+returns to each opener in turn. A modal surface sets `aria-modal="true"`, so
+`useGlobalKeyboard` stays quiet while it is open.
+
+### Slide-over or full page
+
+A task opens two ways, with the same sections in the same order (Gr8r's task
+drawer):
+
+- **Slide-over** (`TaskSlideOver`, 620px from the right): a row click or Space.
+  On a desktop it has no scrim, so the list beside it stays usable; on a phone
+  it covers the page over the scrim. Escape closes the nearest thing first (an
+  open picker, a field being edited), then the drawer.
+- **Full page** (`TaskDetail` with `layout="page"`): Enter or `o` on a focused
+  row, or Open page in the slide-over. Escape or Back returns to the list with
+  focus on the row it came from.
+
+A form over a page (the task composer) is a modal `SlideOver`, a short focused
+form a `Dialog`, a destructive confirm a `ConfirmDialog`.
+
+### Keyboard map
+
+Resolved in `apps/desktop/src/lib/keyboard.ts` (pure) and wired by
+`hooks/useGlobalKeyboard.ts`; `?` shows the shortcuts sheet. "Mod" is ⌘ on macOS
+and Ctrl elsewhere.
+
+- **Command palette**: Mod+K anywhere, or `/` outside a text field.
+- **Quick open** (go to file): ⌘P on macOS, Ctrl+P on other platforms. It works
+  while typing. On macOS, Ctrl+P is never claimed: it keeps Cocoa's "previous
+  line" in every text field. Over a modal the chord is claimed and does nothing,
+  so the browser's print dialog never opens in its place.
+- **Modifier chords** (work while typing): Mod+, Settings; Mod+[ and Mod+] back
+  and forward; Mod+1 Overseer, Mod+2 Issues, Mod+3 to Mod+9 the Issues presets
+  in chip order; Mod+= / Mod+- / Mod+0 zoom. Mod+D (Drop a thought) and Mod+B
+  (sidebar) stay dead while typing or under a modal.
+- **Bare keys** (never while typing or under a modal): `c` new task, `[`
+  sidebar, `?` shortcuts, and the `g` chords: `g a` or `g o` Overseer, `g t`
+  Issues, `g i` Needs you, `g l` Timeline, `g g` Graph, `g m` Threads, `g s`
+  Settings, `g f` and `g r` the in-flight and review presets.
+- **On a focused list** (`resolveListKeyCommand`; each view takes the subset it
+  handles, the Issues list all of them): `j`/`k` or the arrows move, Enter or
+  `o` opens the page, Space the slide-over, `x` selects, `s` `p` `a` `l` `m` set
+  status, priority, assignee, labels and milestone, `d` dispatches, `f` filters,
+  ⇧V opens display options, Escape clears the selection.
 
 ## Team collaboration
 
@@ -631,7 +925,69 @@ multiplayer needs the run half to cross machines.
 - **GitHub** — PR listing, diffs, comments, review submission, and a poll that
   caches the repo's PR set. Dispatch can synthesize a task to anchor a review of
   someone else's PR (`derivedFrom`).
-- **Linear** — two-way sync, team/state mapping, import (`linear/`).
+- **Linear** — two-way sync, team/state mapping, import (`linear/`). The project
+  connection is an API key (per project in `credentials.json`, or
+  `LINEAR_API_KEY`); background sync, imports, webhooks, labels, projects,
+  milestones, every read, and anything an agent, a run, the CLI's agent token, a
+  teammate or board sync changes go through it.
+  - **Sign in with Linear.** The person running Dispatch can also sign in with
+    their own Linear account (OAuth 2 with PKCE S256, no client secret, scopes
+    `read,write`; `linear/oauth.ts`). The desktop opens Linear's consent page in
+    the system browser; Linear redirects to the daemon's loopback listener,
+    which exchanges the code, checks that the token's workspace is the
+    connection's (a token for another workspace is revoked at once and nothing
+    is stored), and stores the pair in `credentials.json`. The client ID comes
+    from `DISPATCH_LINEAR_CLIENT_ID`, then `linear.oauthClientId` in
+    `config.yml`, then Dispatch's own public OAuth app
+    (`BUILT_IN_LINEAR_CLIENT_ID` in `linear/signIn.ts`, always on port 47823). A
+    project's own app's callback URL must be exactly
+    `http://127.0.0.1:<linear.oauthCallbackPort>/linear/callback`.
+  - **Which credential each write uses.** Issue updates and creates (with their
+    relations, links and archive follow-ups), comments and "Share to Linear" go
+    out with the person's token, as `Authorization: Bearer`, when they are
+    signed in for the project's workspace with `write` granted and the value is
+    theirs; everything else uses the connection exactly as before. "Theirs" is
+    decided by an in-memory ledger (`linear/personEdits.ts`): the task routes
+    record, only for requests on the owner's app token, which task parts the
+    owner set and a digest of each value, and every other write the daemon sees
+    (each `task.changed`, and each local write a sync pass makes) drops the
+    entries it moved, so a value someone else sets back later is theirs. A push
+    splits by writer: the fields the owner owns go with their token, the rest
+    with the connection, so neither is credited for the other's values. A new
+    issue is created by whoever wrote its title, and the other side's fields
+    follow on the next push. A comment goes with the person's token only for a
+    body or a delete the owner sent through this daemon's API (the ledger keeps
+    a digest), and an edit or delete only when Linear also says the signed-in
+    user wrote it (the comment link's fourth element); a comment file that
+    arrived by git or board sync, even one authored as the owner, goes through
+    the connection. Edits made with the `dispatch` CLI use the shared agent
+    token, so they are not credited.
+  - **Tokens.** Refresh starts 5 minutes before expiry and runs one at a time
+    across processes (`credentials.json.linear-refresh.lock`, re-read, then a
+    compare-and-set on the old refresh token). A refresh that cannot finish (no
+    answer, a throttle, a 5xx) keeps the record and, while it has not expired,
+    the current token. Any other refusal from the token endpoint
+    (`invalid_grant`, `invalid_client`, another 4xx) deletes the record, revokes
+    it unless the grant is already dead, and the account view names the reason;
+    the next pass uses the connection. A refreshed `scope` Linear leaves out
+    keeps the stored one. Only a token Linear did not accept (401, or
+    `AUTHENTICATION_ERROR`) refreshes once and retries once; a refusal of the
+    write itself (403, a permission) does neither. A write Linear refuses with
+    the person's token is recorded like any failed push, stays theirs, and is
+    retried with their token, never with the project key. Sign-out deletes the
+    record first, then revokes the grant at Linear. Token requests and the
+    person's GraphQL requests never follow a redirect.
+  - **The client secret.** `DISPATCH_LINEAR_CLIENT_SECRET`, the escape hatch for
+    an app that turns out to want one, is read once at boot and removed from the
+    daemon's environment, and `childEnv` drops every `DISPATCH_*SECRET*` as it
+    does `DISPATCH_*TOKEN*`, so no agent run or terminal inherits it.
+  - **Guests** sign in like anyone: Linear lets them act as members in their own
+    teams, and what it refuses is recorded with its reason. Dispatch adds no
+    block of its own.
+  - **Board sync.** Edits that arrive from another machine are never in this
+    daemon's ledger, so they never use this machine's token; with Linear sync on
+    several machines, an edit may reach Linear first through another machine's
+    connection.
 - **Carto** — optional dependency-graph backend that narrows review scope to a
   change's real blast radius. Without it there's a built-in TypeScript-only
   scanner; on a Go, Python or Rust repo that finds nothing and review scope

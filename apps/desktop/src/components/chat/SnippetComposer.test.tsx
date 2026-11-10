@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, mock, test } from 'bun:test';
 
 import type { ChatTarget } from './SnippetComposer';
@@ -43,7 +43,7 @@ describe('SnippetComposer', () => {
     expect(onRemove).toHaveBeenCalledWith(1);
   });
 
-  it('sends the body, the attachments and the chosen target', () => {
+  it('sends the body, the attachments and the chosen target', async () => {
     const onSend = mock(async () => {});
     render(
       <SnippetComposer
@@ -56,8 +56,14 @@ describe('SnippetComposer', () => {
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'why?' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    // The send settles inside act: once it lands the body clears and Send
+    // comes back, which are React updates of their own.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
     expect(onSend).toHaveBeenCalledWith('why?', [SNIPPET], 'run-agent');
+    expect(screen.getByRole<HTMLTextAreaElement>('textbox').value).toBe('');
   });
 
   it('withholds send on an empty body, so an accidental click cannot post nothing', () => {
@@ -89,9 +95,9 @@ describe('SnippetComposer', () => {
   });
 });
 
-// The frame is the prompt bar's: a quaternary card with a half-pixel border, and the
-// attachment chips are pills.
-test('attachments render as pills on the prompt-bar frame', () => {
+// The attachments are the library's removable Chips: the label is the chip's
+// words and the × is its only button, named for the snippet it takes back.
+test('attachments render as removable chips', () => {
   render(
     <SnippetComposer
       targets={[{ id: 'a', label: 'Agent', canAct: true }]}
@@ -100,6 +106,26 @@ test('attachments render as pills on the prompt-bar frame', () => {
       onSend={() => Promise.resolve()}
     />
   );
-  const chip = screen.getByText('src/a.ts (2-4)').closest('[data-slot=pill]');
-  expect(chip).not.toBeNull();
+  const remove = screen.getByRole('button', { name: 'Remove src/a.ts (2-4)' });
+  const chip = remove.closest('[data-tone]');
+  expect(chip?.textContent).toBe('src/a.ts (2-4)');
+  expect(chip?.querySelectorAll('button')).toHaveLength(1);
+});
+
+// A native select, so every offered target is an option from the first
+// render, without opening anything.
+test('the targets are options of the "Send to" select on mount', () => {
+  render(
+    <SnippetComposer
+      targets={TARGETS}
+      attachments={[]}
+      onRemoveAttachment={() => {}}
+      onSend={() => Promise.resolve()}
+    />
+  );
+  const select = screen.getByRole('combobox', { name: 'Send to' });
+  expect(select.tagName).toBe('SELECT');
+  expect(
+    screen.getAllByRole('option').map((option) => option.textContent)
+  ).toEqual(["This run's agent", 'Side conversation']);
 });

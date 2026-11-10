@@ -1,0 +1,82 @@
+/* The Autonomy page: the override rows' ruling, the hard stops and the receipts list.
+   The level slider has its own module (AutonomySlider.module.css). */
+
+/* What a gate does right now: accent when automatic, quiet when it waits. */
+.ruling {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--tone-ink);
+}
+
+.pin {
+  width: 140px;
+}
+
+/* A hard stop: fixed, visibly not a control. */
+.floor {
+  flex-direction: row;
+  align-items: center;
+  min-height: 36px;
+  padding-top: var(--s-1);
+  padding-bottom: var(--s-1);
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+.floorText {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.meta {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+/* A receipt: title, task id and age on one line, the detail under it. */
+.receipt {
+  gap: 2px;
+  min-height: 0;
+  padding-top: var(--s-2);
+  padding-bottom: var(--s-2);
+}
+
+.receipt[data-clickable] {
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .receipt[data-clickable] {
+    transition: background-color var(--dur) ease;
+  }
+}
+
+.receipt[data-clickable]:hover {
+  background: var(--surface-2);
+}
+
+.receiptLine {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+}
+
+.receiptTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.receiptDetail {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}

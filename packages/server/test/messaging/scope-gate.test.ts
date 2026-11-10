@@ -5,11 +5,7 @@ import { join } from 'node:path';
 
 import { LedgerStore } from '../../src/ledger.js';
 import { closeOrphanedGates } from '../../src/messaging/gates.js';
-import {
-  expireScopeGates,
-  SCOPE_GATE_TTL_MS,
-  sweepScopeGates,
-} from '../../src/messaging/scopePolicy.js';
+import { sweepScopeGates } from '../../src/messaging/scopePolicy.js';
 import { StallingExecutor } from '../orchestrator/helpers.js';
 import {
   activity,
@@ -171,7 +167,7 @@ describe('scope gates', () => {
   it("the daemon's sweep grants a scope gate whose policy grant did not land", async () => {
     setPolicy('policy:\n  rung: 2\n');
     const { orchestrator, messaging, meta, run } = await liveRun(undefined, {
-      scopeExpiry: { sweepMs: 10 },
+      scopeSweep: { sweepMs: 10 },
     });
     const reply = messaging.engine.reply.bind(messaging.engine);
     let failures = 0;
@@ -307,57 +303,24 @@ describe('scope gates', () => {
     messaging.close();
   });
 
-  it('an undecided scope gate expires as denied after 29 minutes', async () => {
-    const { orchestrator, messaging, meta, run } = await liveRun();
-    const { message: gate } = await askScope(messaging, run);
-    expect(
-      await expireScopeGates(
-        messaging.engine,
-        Date.parse(gate.createdAt) + SCOPE_GATE_TTL_MS - 1
-      )
-    ).toBe(0);
-    expect(
-      await expireScopeGates(
-        messaging.engine,
-        Date.parse(gate.createdAt) + SCOPE_GATE_TTL_MS + 1
-      )
-    ).toBe(1);
-    expect(messaging.engine.answerOf(gate.id)).toMatchObject({
-      from: 'agent:dispatch',
-      choice: 'deny',
-      data: { type: 'x-expired' },
-    });
-    expect(messaging.engine.answerOf(gate.id)?.body).toStartWith(
-      `Expired: no one decided within ${SCOPE_GATE_TTL_MS / 60_000} minutes.`
-    );
-    expect(ledger()).toEqual([]);
-    await orchestrator.cancel(meta.id);
-    messaging.close();
-  });
-
-  it("the daemon's own sweep denies a scope gate once its clock passes the TTL", async () => {
+  // An undecided gate keeps its run paused until a human answers: a deny on a
+  // timer ended runs half-done (t-5d3dfd8f).
+  it("the daemon's sweep never denies an undecided scope gate", async () => {
     const { orchestrator, messaging, meta, run } = await liveRun(undefined, {
-      scopeExpiry: {
-        sweepMs: 10,
-        now: () => Date.now() + SCOPE_GATE_TTL_MS + 1000,
-      },
+      scopeSweep: { sweepMs: 10 },
     });
     const { message: gate } = await askScope(messaging, run);
-    await waitFor(() => messaging.engine.answerOf(gate.id) !== null);
-    expect(messaging.engine.answerOf(gate.id)?.data).toEqual({
-      type: 'x-expired',
-    });
+    await Bun.sleep(100);
+    expect(messaging.engine.answerOf(gate.id)).toBeNull();
+    expect(messaging.engine.openBlocking().map((m) => m.id)).toContain(gate.id);
     await orchestrator.cancel(meta.id);
     messaging.close();
   });
 
-  it('a policy lookup that throws is logged, and the sweep still expires the gate', async () => {
+  it('a policy lookup that throws is logged, and the gate stays open', async () => {
     setPolicy('policy:\n  rung: 2\n');
     const { orchestrator, messaging, meta, run } = await liveRun(undefined, {
-      scopeExpiry: {
-        sweepMs: 10,
-        now: () => Date.now() + SCOPE_GATE_TTL_MS + 1000,
-      },
+      scopeSweep: { sweepMs: 10 },
     });
     const unhandled: unknown[] = [];
     const onUnhandled = (err: unknown) => unhandled.push(err);
@@ -368,12 +331,9 @@ describe('scope gates', () => {
     const logged = spyOn(console, 'error').mockImplementation(() => {});
     try {
       const { message: gate } = await askScope(messaging, run);
-      await waitFor(() => messaging.engine.answerOf(gate.id) !== null);
-      expect(messaging.engine.answerOf(gate.id)?.data).toEqual({
-        type: 'x-expired',
-      });
+      await waitFor(() => logged.mock.calls.length > 1);
+      expect(messaging.engine.answerOf(gate.id)).toBeNull();
       expect(unhandled).toEqual([]);
-      expect(logged).toHaveBeenCalled();
     } finally {
       process.off('unhandledRejection', onUnhandled);
       lookups.mockRestore();
@@ -383,58 +343,27 @@ describe('scope gates', () => {
     messaging.close();
   });
 
-  it('a sweep whose grant phase throws still expires an overdue gate', async () => {
+  it('a sweep whose grant phase throws logs once and resolves', async () => {
     const { orchestrator, messaging, meta, run } = await liveRun();
     const { message: gate } = await askScope(messaging, run);
-    const openBlocking = messaging.engine.openBlocking.bind(messaging.engine);
-    let reads = 0;
     const reading = spyOn(messaging.engine, 'openBlocking').mockImplementation(
       () => {
-        reads++;
-        if (reads === 1) throw new Error('database is locked');
-        return openBlocking();
+        throw new Error('database is locked');
       }
     );
     const logged = spyOn(console, 'error').mockImplementation(() => {});
     try {
-      await sweepScopeGates(
-        messaging.engine,
-        { rootDir: project.root(), runOf: () => null, taskOf: () => null },
-        () => Date.parse(gate.createdAt) + SCOPE_GATE_TTL_MS + 1
-      );
-      expect(messaging.engine.answerOf(gate.id)?.data).toEqual({
-        type: 'x-expired',
+      await sweepScopeGates(messaging.engine, {
+        rootDir: project.root(),
+        runOf: () => null,
+        taskOf: () => null,
       });
       expect(logged).toHaveBeenCalledTimes(1);
     } finally {
       reading.mockRestore();
       logged.mockRestore();
     }
-    await orchestrator.cancel(meta.id);
-    messaging.close();
-  });
-
-  it('a scope gate that cannot be denied does not stop the rest expiring', async () => {
-    const { orchestrator, messaging, meta, run } = await liveRun();
-    const { message: first } = await askScope(messaging, run, ['a.ts']);
-    const { message: second } = await askScope(messaging, run, ['b.ts']);
-    const reply = messaging.engine.reply.bind(messaging.engine);
-    const replies = spyOn(messaging.engine, 'reply').mockImplementation(
-      (id, input, sender) =>
-        id === first.id
-          ? Promise.reject(new Error('disk full'))
-          : reply(id, input, sender)
-    );
-    const expired = await expireScopeGates(
-      messaging.engine,
-      Date.parse(second.createdAt) + SCOPE_GATE_TTL_MS + 1
-    );
-    replies.mockRestore();
-    expect(expired).toBe(1);
-    expect(messaging.engine.answerOf(first.id)).toBeNull();
-    expect(messaging.engine.answerOf(second.id)?.data).toEqual({
-      type: 'x-expired',
-    });
+    expect(messaging.engine.answerOf(gate.id)).toBeNull();
     await orchestrator.cancel(meta.id);
     messaging.close();
   });

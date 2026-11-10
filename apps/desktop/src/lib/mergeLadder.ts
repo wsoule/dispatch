@@ -1,4 +1,5 @@
 import type { RunMeta } from '@dispatch/client';
+import type { UiTone } from '@dispatch/ui';
 
 /**
  * Where a run's work sits on the merge ladder, derived from `RunMeta` rather
@@ -43,19 +44,19 @@ function prNumberFrom(prUrl: string | undefined): string | undefined {
   return prUrl?.match(/\/(\d+)\/?$/)?.[1];
 }
 
-// The run-state role each rung paints with: resting grey until something
-// merges, amber while a push to origin is still owed, the landing teal once
-// the work is where it is going (origin, or local when there is no remote).
-const MERGE_LADDER_TINT: Record<MergeLadderState, string> = {
-  unmerged: 'var(--state-ready-fg)',
-  'merged-local': 'var(--state-waiting-fg)',
-  'local-only': 'var(--state-landing-fg)',
-  'on-origin': 'var(--state-landing-fg)',
+// The status tone each rung takes (docs/architecture.md §8.2): resting grey until something
+// merges, amber while a push to origin is still owed (missing input, the person's move), and
+// green once the work is where it is going (origin, or local when there is no remote).
+const MERGE_LADDER_TONE: Record<MergeLadderState, UiTone> = {
+  unmerged: 'muted',
+  'merged-local': 'warning',
+  'local-only': 'success',
+  'on-origin': 'success',
 };
 
-/** The `--state-*` colour for a ladder state, as a CSS value a `LabelPill` dot can take. */
-export function mergeLadderTint(state: MergeLadderState): string {
-  return MERGE_LADDER_TINT[state];
+/** The `UiTone` for a ladder state, for a Chip's `tone` or a `data-tone` hook. */
+export function mergeLadderTone(state: MergeLadderState): UiTone {
+  return MERGE_LADDER_TONE[state];
 }
 
 const MERGE_LADDER_PILL_LABEL: Record<MergeLadderState, string> = {

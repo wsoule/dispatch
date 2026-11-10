@@ -89,12 +89,7 @@ export function taskPageModes(isContainer: boolean): TaskPageMode[] {
 
 /** How far the task has got through one stage of its lifecycle; `skipped` is a stage the
  * task moved past without using (landed with no agent run, say). */
-export type StageProgress =
-  | 'done'
-  | 'current'
-  | 'failed'
-  | 'pending'
-  | 'skipped';
+type StageProgress = 'done' | 'current' | 'failed' | 'pending' | 'skipped';
 
 export interface LifecycleStage {
   mode: TaskPageMode;
@@ -145,11 +140,10 @@ function specCaption(input: StageInput): string {
     return `Waits on ${plural(input.unmetBlockers, 'task')}`;
   }
   const parts: string[] = [];
+  // No criteria says nothing here: the Work card's spec check is the one place that asks.
   const n = input.criteriaCount;
-  if (n !== null) {
-    parts.push(
-      n === 0 ? 'No criteria' : n === 1 ? '1 criterion' : `${n} criteria`
-    );
+  if (n !== null && n > 0) {
+    parts.push(n === 1 ? '1 criterion' : `${n} criteria`);
   }
   if (input.writesCount > 0) parts.push(plural(input.writesCount, 'write'));
   return parts.join(' · ');

@@ -1,0 +1,46 @@
+/* ErrorBoundary's fallback (components/shell/ErrorBoundary.tsx): a pane that fills the
+   crashed view's height and centres the library EmptyState in it. This module adds the
+   toned icon, the action column and the stale-module hint; the thrown message prints in
+   RawDetails (components/gr8r/RawText.tsx). */
+
+.root {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  padding: var(--s-6);
+  text-align: center;
+}
+
+/* The OctagonAlert in the danger hue (--tone from data-tone="danger"); the words carry the
+   meaning, the colour only reinforces it. */
+.icon {
+  display: grid;
+  place-items: center;
+  color: var(--tone);
+}
+
+/* The buttons row, the hint and the Details fold, stacked and centred. */
+.actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-2);
+  max-width: min(560px, 100%);
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--s-2);
+}
+
+.hint {
+  max-width: 340px;
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}

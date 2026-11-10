@@ -86,7 +86,10 @@ test('a failed Sync now says why instead of failing silently', async () => {
     Promise.reject(new Error('remote hung up'))
   );
   fireEvent.click(await screen.findByRole('button', { name: /Sync now/ }));
-  expect(await screen.findByText(/sync: remote hung up/)).toBeTruthy();
+  const failure = await screen.findByText(/sync: remote hung up/);
+  // The failure reads in the danger tone's text colour, and its words say so.
+  expect(failure.getAttribute('data-tone')).toBe('danger');
+  expect(failure.classList.contains('toneText')).toBe(true);
   expect(
     screen.getByRole<HTMLButtonElement>('button', { name: /Sync now/ }).disabled
   ).toBe(false);
@@ -94,8 +97,11 @@ test('a failed Sync now says why instead of failing silently', async () => {
 
 test('an unreachable remote and waiting changes are said plainly', async () => {
   mount({ ...on, lastError: 'Could not resolve host', pending: 2 });
-  expect(await screen.findByText(/Could not resolve host/)).toBeTruthy();
-  expect(screen.getByText(/2 changes waiting/)).toBeTruthy();
+  const unreachable = await screen.findByText(/Could not resolve host/);
+  expect(unreachable.getAttribute('data-tone')).toBe('warning');
+  const waiting = screen.getByText(/2 changes waiting/);
+  // A plain count of queued changes is not a status: no tone.
+  expect(waiting.hasAttribute('data-tone')).toBe(false);
 });
 
 test('a clash is shown as something that needs a person', async () => {

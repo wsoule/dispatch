@@ -1,4 +1,5 @@
 import type { RunMeta } from '@dispatch/client';
+import { Button, cx, type UiTone } from '@dispatch/ui';
 import {
   CircleCheck,
   CircleSlash,
@@ -9,27 +10,17 @@ import {
   RotateCcw,
   TriangleAlert,
 } from 'lucide-react';
-import type { ComponentType, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 
 import { modelLabel } from '../../../lib/models';
 import { formatShortDate } from '../../../lib/taskDates';
 import type { TaskOutcome } from '../../../lib/taskOutcome';
 import { LandedAs } from '../../runs/LandedAs';
+import styles from './pageBlocks.module.css';
 import type { TaskPageModel } from './pageModel';
-import { cn } from '@/lib/utils';
-import { Button } from '@/ui/button';
 
-type Tone = 'landing' | 'waiting' | 'failed' | 'review' | 'ready';
-
-// Each tone is one of the run-state roles, so the card reads in the same
-// colour as the status icons and pills around it.
-const TONE: Record<Tone, string> = {
-  landing: 'bg-(--state-landing-surface) text-(--state-landing-fg)',
-  waiting: 'bg-(--state-waiting-surface) text-(--state-waiting-fg)',
-  failed: 'bg-(--state-failed-surface) text-(--state-failed-fg)',
-  review: 'bg-(--state-review-surface) text-(--state-review-fg)',
-  ready: 'bg-(--state-ready-surface) text-(--state-ready-fg)',
-};
+// The 14px lucide glyph of an outcome, drawn in the mark's tone.
+type OutcomeIcon = typeof CircleCheck;
 
 /** "claude · Opus 5 · 9 turns · $1.50 · Jul 20", from whatever the run recorded. */
 function runFacts(run: RunMeta | undefined, at?: string): string {
@@ -43,8 +34,11 @@ function runFacts(run: RunMeta | undefined, at?: string): string {
 }
 
 interface Shape {
-  tone: Tone;
-  icon: ComponentType<{ className?: string }>;
+  /** The mark's status colour: default (a filled neutral done mark) for landed work,
+   * warning for merged but not on origin, info while a PR is open, danger for a failure,
+   * success for work that finished and waits on review, muted for dropped. */
+  tone: UiTone;
+  icon: OutcomeIcon;
   title: string;
   detail: ReactNode;
   actions: ReactNode;
@@ -79,7 +73,7 @@ export function OutcomeCard({
   const openRun = (run: RunMeta) => (
     <Button
       size="sm"
-      variant="ghost"
+      variant="quiet"
       onClick={() => {
         page.selectRun(run.id);
         page.selectMode('run');
@@ -93,7 +87,7 @@ export function OutcomeCard({
   switch (outcome.kind) {
     case 'landed':
       shape = {
-        tone: 'landing',
+        tone: 'default',
         icon: CircleCheck,
         title:
           outcome.where === 'origin'
@@ -118,7 +112,7 @@ export function OutcomeCard({
       break;
     case 'merged-local':
       shape = {
-        tone: 'waiting',
+        tone: 'warning',
         icon: TriangleAlert,
         title: 'Merged locally, not on origin yet',
         detail: landedAs(outcome.run),
@@ -127,7 +121,7 @@ export function OutcomeCard({
       break;
     case 'pr-open':
       shape = {
-        tone: 'landing',
+        tone: 'info',
         icon: GitPullRequest,
         title: 'Waiting on the pull request',
         detail: <span>It lands when the PR merges on GitHub.</span>,
@@ -135,9 +129,9 @@ export function OutcomeCard({
           <Button
             size="sm"
             variant="secondary"
+            icon={<GitPullRequest size={14} strokeWidth={1.8} aria-hidden />}
             onClick={() => page.host.openPr(outcome.run.id)}
           >
-            <GitPullRequest />
             Review PR
           </Button>
         ),
@@ -145,20 +139,21 @@ export function OutcomeCard({
       break;
     case 'land-failed':
       shape = {
-        tone: 'failed',
+        tone: 'danger',
         icon: CircleX,
         title: 'Landing failed',
-        detail: <span className="break-words">{outcome.reason}</span>,
+        detail: <span className={styles.outcomeReason}>{outcome.reason}</span>,
         actions: (
           <Button
             size="sm"
+            variant="primary"
+            icon={<GitMerge size={14} strokeWidth={1.8} aria-hidden />}
             onClick={() =>
               void project
                 .handleReview(outcome.run.id, 'merge')
                 .catch((err: unknown) => page.fail('Landing failed again', err))
             }
           >
-            <GitMerge />
             Retry landing
           </Button>
         ),
@@ -166,11 +161,11 @@ export function OutcomeCard({
       break;
     case 'run-failed':
       shape = {
-        tone: 'failed',
+        tone: 'danger',
         icon: CircleX,
         title: 'The run failed',
         detail: (
-          <span className="break-words">
+          <span className={styles.outcomeReason}>
             {outcome.reason ?? 'It stopped before finishing. Nothing landed.'}
           </span>
         ),
@@ -179,13 +174,14 @@ export function OutcomeCard({
             {openRun(outcome.run)}
             <Button
               size="sm"
+              variant="primary"
+              icon={<RotateCcw size={14} strokeWidth={1.8} aria-hidden />}
               onClick={() =>
                 void page
                   .dispatch()
                   .catch((err: unknown) => page.fail('Could not re-run', err))
               }
             >
-              <RotateCcw />
               Re-run
             </Button>
           </>
@@ -194,14 +190,18 @@ export function OutcomeCard({
       break;
     case 'ready':
       shape = {
-        tone: 'review',
+        tone: 'success',
         icon: Eye,
         title: 'Ready for review',
         detail: <span>The agent finished. Land it, or ask for changes.</span>,
         actions:
           place === 'summary' ? (
-            <Button size="sm" onClick={() => page.selectMode('review')}>
-              <Eye />
+            <Button
+              size="sm"
+              variant="primary"
+              icon={<Eye size={14} strokeWidth={1.8} aria-hidden />}
+              onClick={() => page.selectMode('review')}
+            >
               Review
             </Button>
           ) : null,
@@ -209,7 +209,7 @@ export function OutcomeCard({
       break;
     case 'dropped':
       shape = {
-        tone: 'ready',
+        tone: 'muted',
         icon: CircleSlash,
         title: 'Dropped',
         detail: <span>Nothing landed. The history stays below.</span>,
@@ -226,32 +226,25 @@ export function OutcomeCard({
       data-slot="outcome-card"
       data-outcome={outcome.kind}
       aria-label={shape.title}
-      className="border-border rounded-card flex flex-col gap-3 border-[0.5px] p-3 sm:flex-row sm:items-center"
+      className={styles.outcome}
     >
       <span
-        className={cn(
-          'grid size-9 shrink-0 place-items-center rounded-full',
-          TONE[shape.tone]
-        )}
+        className={styles.outcomeMark}
+        data-tone={shape.tone}
+        aria-hidden="true"
       >
-        <Icon className="size-[18px]" />
+        <Icon size={16} strokeWidth={1.8} aria-hidden />
       </span>
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <h3 className="text-foreground text-[15px] font-semibold">
-          {shape.title}
-        </h3>
-        <div className="font-book flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] text-(--text-secondary)">
-          {shape.detail}
-        </div>
+      <div className={styles.outcomeBody}>
+        <h3 className={styles.outcomeTitle}>{shape.title}</h3>
+        <div className={styles.outcomeDetail}>{shape.detail}</div>
         {facts !== '' && (
-          <p className="text-muted-foreground font-book text-[12px] tabular-nums">
-            {facts}
-          </p>
+          <p className={cx(styles.outcomeFacts, 'num')}>{facts}</p>
         )}
       </div>
       {/* On Review the run strip below carries the actions already. */}
       {place === 'summary' && shape.actions !== null && (
-        <div className="flex shrink-0 items-center gap-2">{shape.actions}</div>
+        <div className={styles.outcomeActions}>{shape.actions}</div>
       )}
     </section>
   );

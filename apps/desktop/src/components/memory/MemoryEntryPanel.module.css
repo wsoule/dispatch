@@ -1,0 +1,80 @@
+/* One memory entry (MemoryEntryPanel.tsx): its title over the handle and
+   provenance, the body, the recall count and revisions, then the actions
+   and the retire reason. The handle is a machine-read string, so it is set
+   in Geist Mono. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+  padding: var(--s-4) 0;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+.body {
+  margin: 0;
+  font-size: var(--fs);
+  line-height: var(--lh-long);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.revisions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.retire {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.reason {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.error {
+  font-size: var(--fs-xs);
+}

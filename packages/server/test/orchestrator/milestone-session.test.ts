@@ -160,6 +160,39 @@ function pausedEvents(h: Harness) {
   return h.received.filter((e) => e.type === 'milestone.paused');
 }
 
+describe('MilestoneEngine auto-fill attribution', () => {
+  it('names the epic and the blocker that released a task, never `— none`', async () => {
+    const h = makeHarness();
+    const { milestoneId, childIds } = createMilestoneWithChildren(
+      h.store,
+      2,
+      (i, ids) => (i === 1 ? [ids[0]] : [])
+    );
+    h.cache.rebuild(h.store);
+    const [first, second] = childIds;
+
+    await h.milestones.start(milestoneId, { executor: 'fake', concurrency: 2 });
+    await waitFor(() => awaiting(h, [first]).length === 1);
+    expect(h.store.get(first)!.body).toMatch(
+      new RegExp(
+        `dispatched \\(fake, branch [^)]+\\) — auto: milestone ${milestoneId} auto-fill\n`
+      )
+    );
+
+    const run = awaiting(h, [first])[0];
+    h.orchestrator.approve(run.id, 'go', true);
+    await waitFor(() => h.store.get(first)?.meta.status === 'review');
+    h.orchestrator.review(run.id, 'merge');
+    await waitFor(() => awaiting(h, [second]).length === 1);
+
+    const body = h.store.get(second)!.body;
+    expect(body).toContain(
+      `— auto: milestone ${milestoneId} auto-fill, unblocked by ${first}\n`
+    );
+    expect(body).not.toContain('— none');
+  });
+});
+
 describe('MilestoneEngine run ceiling', () => {
   it('pauses with `runs` once maxRuns runs exist and never starts run N+1', async () => {
     const h = makeHarness();
@@ -356,6 +389,37 @@ describe('MilestoneEngine spend ceiling', () => {
     expect(activity(h, milestoneId)).toContain(
       'milestone dispatch resumed (concurrency 2, ceiling $100.00)'
     );
+  }, 20_000);
+
+  // The switch waives ceilings a session already carries, so turning it on
+  // mid-flight (or a CLI start that still sends ceilings) never pauses.
+  it('ignores both ceilings while orchestrator.unlimitedSpend is on', async () => {
+    const h = makeHarness({ costUsd: 10 });
+    writeFileSync(
+      join(repo, '.dispatch', 'config.yml'),
+      'orchestrator:\n  unlimitedSpend: true\n'
+    );
+    const { milestoneId, childIds } = createMilestoneWithChildren(h.store, 3);
+
+    // $15 fits one $10 run and maxRuns allows one; unlimited starts all three.
+    await h.milestones.start(milestoneId, {
+      executor: 'fake',
+      concurrency: 3,
+      maxSpendUsd: 15,
+      maxRuns: 1,
+    });
+    await waitFor(() => awaiting(h, childIds).length === 3);
+    for (const run of awaiting(h, childIds)) {
+      h.orchestrator.approve(run.id, 'go', true);
+    }
+    await waitFor(
+      () => h.milestones.progress(milestoneId).spend.settledUsd === 30
+    );
+    await sleep(60);
+    expect(h.milestones.progress(milestoneId).session?.state).not.toBe(
+      'paused'
+    );
+    expect(pausedEvents(h)).toHaveLength(0);
   }, 20_000);
 });
 

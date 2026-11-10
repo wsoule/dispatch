@@ -17,9 +17,10 @@ import {
   PHASE_CHIP_ORDER,
   PHASE_LABEL,
   phaseCounts,
-  phaseTint,
+  phaseTone,
   rulingsWaiting,
   showsPhasePill,
+  spendCellWords,
   spendPillLabel,
   spendTitle,
   spendTone,
@@ -118,23 +119,26 @@ describe('PHASE_LABEL', () => {
   });
 });
 
-describe('phaseTint', () => {
-  test('groups the phases onto the state tokens', () => {
-    expect(phaseTint('working')).toBe('var(--state-working-fg)');
-    expect(phaseTint('reviewing')).toBe('var(--state-working-fg)');
-    expect(phaseTint('fixing')).toBe('var(--state-working-fg)');
-    expect(phaseTint('capped')).toBe('var(--state-waiting-fg)');
-    expect(phaseTint('held')).toBe('var(--state-waiting-fg)');
-    expect(phaseTint('waiting')).toBe('var(--state-waiting-fg)');
-    expect(phaseTint('failed')).toBe('var(--state-failed-fg)');
-    expect(phaseTint('blocked')).toBe('var(--state-failed-fg)');
-    expect(phaseTint('needs-review')).toBe('var(--state-review-fg)');
-    expect(phaseTint('landing')).toBe('var(--state-landing-fg)');
+describe('phaseTone', () => {
+  test('groups the phases onto the status tones', () => {
+    expect(phaseTone('working')).toBe('info');
+    expect(phaseTone('reviewing')).toBe('info');
+    expect(phaseTone('fixing')).toBe('info');
+    expect(phaseTone('landing')).toBe('info');
+    // Amber for waiting on someone and for blocked (the status hue table).
+    expect(phaseTone('capped')).toBe('warning');
+    expect(phaseTone('held')).toBe('warning');
+    expect(phaseTone('waiting')).toBe('warning');
+    expect(phaseTone('blocked')).toBe('warning');
+    // Its work passed; only a person's review is left.
+    expect(phaseTone('needs-review')).toBe('success');
+    // Red only for a failure.
+    expect(phaseTone('failed')).toBe('danger');
   });
 
-  test('leaves the glyph-only phases untinted', () => {
+  test('leaves the glyph-only phases untoned', () => {
     for (const phase of ['draft', 'queued', 'landed', 'dropped'] as const) {
-      expect(phaseTint(phase)).toBeNull();
+      expect(phaseTone(phase)).toBeNull();
     }
   });
 });
@@ -254,6 +258,35 @@ describe('spend copy', () => {
     expect(spendTone(spend({ settledUsd: 9999, maxSpendUsd: null }))).toBe(
       'working'
     );
+  });
+
+  test('spendCellWords: the settled amount, the ceiling as its note, and the pill hint', () => {
+    expect(
+      spendCellWords(
+        spend({ settledUsd: 9.81, liveCount: 0, estimatedLiveUsd: 0 })
+      )
+    ).toEqual({
+      value: '$9.81',
+      note: 'of $60',
+      title: '$9.81 settled of the $60 ceiling · 7/20 runs',
+      nearCeiling: false,
+    });
+    // Near the ceiling counts the in-flight estimate, and the hint says so in words.
+    expect(spendCellWords(spend())).toEqual({
+      value: '$41.20',
+      note: 'of $60',
+      title:
+        '$41.20 settled of the $60 ceiling, near it · +~$30.00 in flight · 7/20 runs',
+      nearCeiling: true,
+    });
+    expect(
+      spendCellWords(spend({ maxSpendUsd: null, maxRuns: null, liveCount: 0 }))
+    ).toEqual({
+      value: '$41.20',
+      note: 'no ceiling',
+      title: '$41.20 settled, with no ceiling · 7 runs',
+      nearCeiling: false,
+    });
   });
 });
 

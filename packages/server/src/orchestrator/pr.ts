@@ -42,6 +42,10 @@ export interface CommandResult {
   ok: boolean;
   stdout: string;
   stderr: string;
+  // Set only when the runner killed the command at `opts.timeoutMs`. The
+  // command's own output can say "timed out" (a test runner's per-test limit)
+  // without the command having run out of time.
+  timedOut?: true;
 }
 
 // The command-runner seam (mirrors worktree.ts's private `runGit`, but
@@ -178,6 +182,7 @@ export async function defaultCommandRunner(
           ok: false,
           stdout: '',
           stderr: `timed out after ${timeoutMs}ms`,
+          timedOut: true,
         };
       }
       const [stdout, stderr, exitCode] = outcome;
@@ -547,11 +552,39 @@ export class PrManager {
   // Set once refreshCache() has succeeded at least once — see cacheReady().
   private cacheFilled = false;
 
+  // The `pr` capability as known right now: false until a pending probe
+  // settles. Async paths await `capabilityKnown` instead.
+  private capability: boolean;
+  private readonly capabilityKnown: Promise<boolean>;
+
+  // `capability` may still be probing (detectPrCapability runs after the
+  // daemon starts listening, so boot does not wait on `gh --version`).
   constructor(
     private readonly ctx: PrManagerContext,
-    private readonly capability: boolean,
+    capability: boolean | Promise<boolean>,
     private readonly run: CommandRunner = defaultCommandRunner
-  ) {}
+  ) {
+    if (typeof capability === 'boolean') {
+      this.capability = capability;
+      this.capabilityKnown = Promise.resolve(capability);
+    } else {
+      this.capability = false;
+      this.capabilityKnown = capability.then(
+        (known) => (this.capability = known),
+        () => false
+      );
+    }
+  }
+
+  /** Whether this project can open PRs, as far as the boot probe has told. */
+  get capable(): boolean {
+    return this.capability;
+  }
+
+  /** The `pr` capability once its boot probe has settled. */
+  whenCapabilityKnown(): Promise<boolean> {
+    return this.capabilityKnown;
+  }
 
   // POST /api/runs/:id/review { action: 'pr' }. Pushes the run's branch and
   // opens a PR — the run itself stays un-reviewed (reviewedAt unset) until
@@ -559,7 +592,7 @@ export class PrManager {
   // the `pr` capability, matching the plan's "no remote/gh -> 409 with clear
   // message".
   async openPr(runId: string): Promise<RunMeta> {
-    if (!this.capability) {
+    if (!(await this.capabilityKnown)) {
       throw new OrchestratorConflictError(
         'PR review requires the gh CLI and a configured git remote'
       );
@@ -705,7 +738,7 @@ export class PrManager {
   // sorted by updatedAt desc. 409s outright when this project lacks the `pr`
   // capability, same as listRepoPrs — there's no gh/remote to list against.
   async listMergedPrs(limit = 20): Promise<RepoPr[]> {
-    if (!this.capability) {
+    if (!(await this.capabilityKnown)) {
       throw new OrchestratorConflictError(
         'PR review requires the gh CLI and a configured git remote'
       );
@@ -787,7 +820,7 @@ export class PrManager {
    * partially-done milestone gets the same refusal the local-merge path gives.
    */
   async openMilestonePr(milestoneId: string): Promise<string> {
-    if (!this.capability) {
+    if (!(await this.capabilityKnown)) {
       throw new OrchestratorConflictError(
         'PR review requires the gh CLI and a configured git remote'
       );
@@ -922,7 +955,7 @@ export class PrManager {
   // under "Other open PRs". 409s outright when this project lacks the `pr`
   // capability, same as openPr — there's no gh/remote to list against.
   async listRepoPrs(): Promise<RepoPr[]> {
-    if (!this.capability) {
+    if (!(await this.capabilityKnown)) {
       throw new OrchestratorConflictError(
         'PR review requires the gh CLI and a configured git remote'
       );
@@ -1001,7 +1034,14 @@ export class PrManager {
   // `prPollIntervalMs`). A no-op if this project lacks the `pr` capability —
   // nothing was ever opened, so nothing needs polling.
   startPolling(intervalMs = 60000): void {
-    if (!this.capability) return;
+    this.pollingStopped = false;
+    void this.capabilityKnown.then((capable) => {
+      if (capable && !this.pollingStopped) this.schedulePolls(intervalMs);
+    });
+  }
+
+  // startPolling's timer chain, armed once the capability probe says yes.
+  private schedulePolls(intervalMs: number): void {
     // A self-rearming setTimeout chain rather than a fixed setInterval: the
     // delay before each tick is chosen fresh (15s vs the configured
     // interval, via hasGithubHolds) right before that tick is scheduled, so
@@ -1011,7 +1051,6 @@ export class PrManager {
     // its own rejection handler — a single poll pass failing outright (as
     // opposed to one run's check failing, which pollOnce already isolates)
     // must never crash the chain or the process.
-    this.pollingStopped = false;
     const scheduleNext = (): void => {
       // A tick's pollOnce() can still be in flight when stopPolling() runs;
       // this stops that tick's `.finally` from rearming a new timer once it
@@ -1085,7 +1124,7 @@ export class PrManager {
   // `cacheDeltaKey` untouched: a flaky `gh` must not blank the landing table
   // or fire a spurious event on its next successful poll.
   private async refreshCache(): Promise<void> {
-    if (!this.capability) return;
+    if (!(await this.capabilityKnown)) return;
     const result = await this.run(this.ctx.rootDir, this.listRepoPrsArgv());
     if (!result.ok) return;
     let raw: Array<Record<string, unknown>>;

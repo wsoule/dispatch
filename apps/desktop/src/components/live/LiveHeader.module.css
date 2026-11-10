@@ -1,0 +1,9 @@
+/* The Live view's header (LiveHeader): the compact stats strip, which
+   carries the fleet's Pause all or Resume all at the end of its own row.
+   A soft rule closes it off from the bands. */
+.header {
+  flex: none;
+  /* 8px above and below the compact strip's 26px row: a 43px header. */
+  padding: var(--s-2) var(--s-4);
+  border-bottom: 1px solid var(--border);
+}

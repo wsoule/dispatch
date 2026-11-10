@@ -40,9 +40,13 @@ reqwest = { version = "0.12", features = [
 ], default-features = false }
 tokio = { version = "1", features = [
   "rt-multi-thread",
+  "sync",
   "time",
   "fs",
   "macros",
+  # loopback.rs's tests serve fake daemons and proxies; reqwest and tauri enable both anyway.
+  "net",
+  "io-util",
 ] }
 dirs = "5"
 similar = "2"

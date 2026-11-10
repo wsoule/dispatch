@@ -1,6 +1,14 @@
 import type { EffortLevel } from '@dispatch-foo/core/browser';
 import type { ExecutorsResponse } from '@dispatch/client';
 import {
+  Button,
+  cx,
+  Kbd,
+  type PickerOption,
+  PickerPopover,
+  type UiTone,
+} from '@dispatch/ui';
+import {
   Check,
   CircleSlash,
   Loader2,
@@ -26,29 +34,34 @@ import {
   MODELS,
   readDefaultModel,
 } from '../../../lib/models';
-import { cn } from '@/lib/utils';
-import { PillButton, SelectPill } from '@/ui/ai/pill';
-import { Button } from '@/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/ui/dropdown-menu';
-import { Kbd } from '@/ui/kbd';
+import styles from './DispatchCard.module.css';
 
-const TONE_ICON: Record<CheckTone, typeof Check> = {
+/** The card's state: what dispatching would do right now (`data-state` on the card). */
+type CardState = 'ready' | 'warn' | 'blocked' | 'live' | 'closed';
+
+// Each state's status colour. Blocked is amber (a missing input, not a failure).
+const CARD_TONE: Record<CardState, UiTone> = {
+  ready: 'success',
+  warn: 'warning',
+  blocked: 'warning',
+  live: 'info',
+  closed: 'muted',
+};
+
+const CHECK_ICON: Record<CheckTone, typeof Check> = {
   pass: Check,
   warn: TriangleAlert,
   block: CircleSlash,
   pending: Loader2,
 };
 
-const TONE_CLASS: Record<CheckTone, string> = {
-  pass: 'text-state-review',
-  warn: 'text-state-waiting',
-  block: 'text-state-failed',
-  pending: 'text-muted-foreground animate-spin',
+// A check's status colour. Warn and block share amber; the glyph (a triangle or a slashed
+// circle) and the words tell them apart.
+const CHECK_TONE: Record<CheckTone, UiTone> = {
+  pass: 'success',
+  warn: 'warning',
+  block: 'warning',
+  pending: 'muted',
 };
 
 /** The sentence that heads the card: what dispatching would do right now. */
@@ -67,6 +80,14 @@ function headline(
   return 'Ready to dispatch';
 }
 
+/** The card's state, in the order the headline reads it. */
+function cardState(readiness: DispatchReadiness, live: boolean): CardState {
+  if (live) return 'live';
+  if (readiness.closed) return 'closed';
+  if (readiness.blocked) return 'blocked';
+  return readiness.warnings > 0 ? 'warn' : 'ready';
+}
+
 function CheckChip({
   check,
   onOpenTask,
@@ -76,25 +97,28 @@ function CheckChip({
   onOpenTask: (taskId: string) => void;
   action?: ReactNode;
 }) {
-  const Icon = TONE_ICON[check.tone];
+  const Icon = CHECK_ICON[check.tone];
   return (
     <li
       data-slot="readiness-check"
       data-check={check.id}
-      data-tone={check.tone}
-      className="font-book flex min-w-0 items-center gap-1.5 text-[12px] leading-5 text-(--text-secondary)"
+      data-state={check.tone}
+      data-tone={CHECK_TONE[check.tone]}
+      className={styles.check}
     >
       <Icon
         aria-hidden
-        className={cn('size-3.5 shrink-0', TONE_CLASS[check.tone])}
+        size={14}
+        strokeWidth={1.8}
+        className={styles.checkIcon}
       />
-      <span className="truncate">{check.label}</span>
+      <span className={styles.checkLabel}>{check.label}</span>
       {check.taskIds?.slice(0, 3).map((id) => (
         <button
           key={id}
           type="button"
           onClick={() => onOpenTask(id)}
-          className="text-muted-foreground hover:text-foreground shrink-0 tracking-(--id-tracking) underline-offset-2 outline-none hover:underline focus-visible:underline"
+          className={cx(styles.taskLink, 'mono')}
         >
           {id}
         </button>
@@ -123,6 +147,12 @@ export interface DispatchCardProps {
   /** Scrolls to the writes editor. */
   onAddWrites: () => void;
 }
+
+// The model picker's choices: every known model id under its label.
+const MODEL_OPTIONS: readonly PickerOption[] = MODELS.map((m) => ({
+  value: m.id,
+  label: m.label,
+}));
 
 /**
  * The Spec mode's call to action: a card that says in one line whether the task can go,
@@ -159,16 +189,13 @@ export function DispatchCard({
       ),
     [executors]
   );
+  const executorOptions = useMemo<PickerOption[]>(
+    () => choices.map((e) => ({ value: e.name, label: e.name })),
+    [choices]
+  );
+  const effortChoices = efforts.map((e) => ({ value: e.id, label: e.label }));
   const runsOn = executor ?? executors?.default ?? 'claude';
-  const tone = live
-    ? 'live'
-    : readiness.closed
-      ? 'closed'
-      : readiness.blocked
-        ? 'blocked'
-        : readiness.warnings > 0
-          ? 'warn'
-          : 'ready';
+  const state = cardState(readiness, live);
 
   function dispatch(explicit?: string) {
     const chosen = explicit ?? executor;
@@ -184,114 +211,102 @@ export function DispatchCard({
   return (
     <section
       data-slot="dispatch-card"
-      data-tone={tone}
+      data-state={state}
+      data-tone={CARD_TONE[state]}
       aria-label="Dispatch"
-      className={cn(
-        'rounded-card border-border-strong bg-surface-quaternary mx-4 flex flex-col gap-2.5 border-[0.5px] px-3.5 py-3',
-        tone === 'ready' && 'shadow-[inset_2px_0_0_var(--state-review-fg)]',
-        tone === 'warn' && 'shadow-[inset_2px_0_0_var(--state-waiting-fg)]',
-        tone === 'blocked' && 'shadow-[inset_2px_0_0_var(--state-failed-fg)]',
-        tone === 'live' && 'shadow-[inset_2px_0_0_var(--state-working-fg)]'
-      )}
+      className={styles.card}
     >
       {/* The headline keeps a readable width; the pickers wrap below it
           in a narrow pane instead of squeezing it to a word per line. */}
-      <div className="flex flex-wrap items-center gap-2">
-        <p className="text-foreground min-w-40 flex-1 text-[13px] font-semibold">
-          {headline(readiness, live, starting)}
-        </p>
+      <div className={styles.head}>
+        <p className={styles.headline}>{headline(readiness, live, starting)}</p>
         {live ? (
-          <Button size="sm" onClick={onOpenRun}>
-            <SquareTerminal />
+          <Button
+            size="sm"
+            variant="primary"
+            icon={<SquareTerminal size={14} strokeWidth={1.8} aria-hidden />}
+            onClick={onOpenRun}
+          >
             Open run
           </Button>
         ) : (
-          <>
+          <div className={styles.controls}>
             {choices.length > 1 && (
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={<SelectPill aria-label="Executor" />}
-                >
-                  {runsOn}
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {choices.map((e) => (
-                    <DropdownMenuItem
-                      key={e.name}
-                      onClick={() =>
-                        setExecutor(
-                          e.name === executors?.default ? undefined : e.name
-                        )
-                      }
-                    >
-                      <span className="flex-1">{e.name}</span>
-                      {e.name === runsOn && (
-                        <Check className="ml-auto size-3" />
-                      )}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <PickerPopover
+                label="Executor"
+                appearance="mono"
+                searchable={false}
+                align="end"
+                options={executorOptions}
+                value={runsOn}
+                onChange={(next) =>
+                  // Picking the daemon's default sends none, as an untouched picker does.
+                  setExecutor(
+                    next === null || next === executors?.default
+                      ? undefined
+                      : next
+                  )
+                }
+              />
             )}
             {runsOn === 'claude' && (
-              <DropdownMenu>
-                <DropdownMenuTrigger render={<SelectPill aria-label="Model" />}>
-                  {modelLabel(model)}
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {MODELS.map((m) => (
-                    <DropdownMenuItem key={m.id} onClick={() => setModel(m.id)}>
-                      <span className="flex-1">{m.label}</span>
-                      {m.id === model && <Check className="ml-auto size-3" />}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <PickerPopover
+                label="Model"
+                appearance="mono"
+                searchable={false}
+                align="end"
+                options={MODEL_OPTIONS}
+                value={model}
+                valueLabel={modelLabel(model)}
+                onChange={(next) => {
+                  if (next !== null) setModel(next);
+                }}
+              />
             )}
             {runsOn === 'claude' && (
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={<SelectPill aria-label="Effort" />}
-                >
-                  {efforts.find((e) => e.id === effortId)?.label}
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {efforts.map((e) => (
-                    <DropdownMenuItem
-                      key={e.id}
-                      onClick={() => setEffortId(e.id)}
-                    >
-                      <span className="flex-1">{e.label}</span>
-                      {e.id === effortId && (
-                        <Check className="ml-auto size-3" />
-                      )}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <PickerPopover
+                label="Effort"
+                appearance="quiet"
+                searchable={false}
+                align="end"
+                options={effortChoices}
+                value={effortId}
+                onChange={(next) => {
+                  if (next !== null) setEffortId(next);
+                }}
+              />
             )}
             {isFakeExecutorDevToolEnabled() && runsOn !== 'fake' && (
-              <PillButton disabled={starting} onClick={() => dispatch('fake')}>
+              <Button
+                size="sm"
+                variant="quiet"
+                disabled={starting}
+                onClick={() => dispatch('fake')}
+              >
                 Dispatch (fake)
-              </PillButton>
+              </Button>
             )}
             <Button
               size="sm"
-              variant={readiness.blocked ? 'secondary' : 'default'}
+              variant={readiness.blocked ? 'secondary' : 'primary'}
               disabled={starting || !readiness.canDispatch}
               onClick={() => dispatch()}
+              iconAfter={
+                dispatchesOnKey(readiness) ? (
+                  <Kbd className={styles.kbd}>D</Kbd>
+                ) : undefined
+              }
             >
               {readiness.blocked ? 'Dispatch anyway' : 'Dispatch'}
+              {/* The keycap is visual (iconAfter is aria-hidden); the name carries the key. */}
               {dispatchesOnKey(readiness) && (
-                <Kbd className="bg-primary-foreground/15 text-primary-foreground ml-0.5 border-transparent">
-                  D
-                </Kbd>
+                <span className="srOnly"> (D)</span>
               )}
             </Button>
-          </>
+          </div>
         )}
       </div>
-      <ul className="flex flex-wrap items-center gap-x-4 gap-y-1">
+      <ul className={styles.checks}>
         {readiness.checks.map((check) => (
           <CheckChip
             key={check.id}
@@ -301,23 +316,25 @@ export function DispatchCard({
               check.id === 'spec' &&
               check.tone === 'warn' &&
               onEnrich !== undefined ? (
-                <button
-                  type="button"
+                <Button
+                  size="sm"
+                  variant="quiet"
+                  className={styles.fix}
                   disabled={enriching}
+                  icon={<Sparkles size={14} strokeWidth={1.8} aria-hidden />}
                   onClick={onEnrich}
-                  className="text-primary hover:text-foreground flex shrink-0 items-center gap-1 font-medium outline-none focus-visible:underline disabled:opacity-60"
                 >
-                  <Sparkles className="size-3" />
                   {enriching ? 'Reading the repo…' : 'Add detail'}
-                </button>
+                </Button>
               ) : check.id === 'writes' && check.tone === 'warn' ? (
-                <button
-                  type="button"
+                <Button
+                  size="sm"
+                  variant="quiet"
+                  className={styles.fix}
                   onClick={onAddWrites}
-                  className="text-primary hover:text-foreground shrink-0 font-medium outline-none focus-visible:underline"
                 >
                   Declare
-                </button>
+                </Button>
               ) : undefined
             }
           />

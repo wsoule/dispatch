@@ -2,8 +2,12 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import { accessFor, SettingsAccessProvider } from './access';
-import { AgentsSection } from './AgentsSection';
-import { testConfig as config } from './fixtures.test-helper';
+import { AgentsSection, AgentStreamingGroup } from './AgentsSection';
+import {
+  chooseOption,
+  testConfig as config,
+  selectTrigger,
+} from './fixtures.test-helper';
 
 type Props = Parameters<typeof AgentsSection>[0];
 
@@ -19,20 +23,25 @@ function renderAgents(overrides: Partial<Props> = {}) {
   );
 }
 
+// The Streaming group, which the page folds under Advanced.
+function renderStreaming(
+  overrides: Partial<Parameters<typeof AgentStreamingGroup>[0]> = {}
+) {
+  return render(
+    <AgentStreamingGroup
+      config={config}
+      onSave={async () => {}}
+      {...overrides}
+    />
+  );
+}
+
 function recorder() {
   const saved: unknown[] = [];
   return {
     saved,
     onSave: (p: unknown) => Promise.resolve(void saved.push(p)),
   };
-}
-
-// Base UI commits a select item on a click that began on it (a bare click is
-// treated as one that opened the list under the pointer), so press first.
-function chooseOption(name: string) {
-  const option = screen.getByRole('option', { name });
-  fireEvent.pointerDown(option);
-  fireEvent.click(option);
 }
 
 // The default config says 'auto'; before this was offered, a stock project
@@ -149,33 +158,33 @@ test('clearing an already-absent budget cap saves nothing', () => {
 
 test('a model role select carries its accessible name', () => {
   renderAgents();
-  expect(screen.getByLabelText('Coding runs model')).toBeTruthy();
-  expect(screen.getByLabelText('Coding runs effort')).toBeTruthy();
+  expect(selectTrigger('Coding runs model')).toBeTruthy();
+  expect(selectTrigger('Coding runs effort')).toBeTruthy();
 });
 
-test('choosing an effort level saves it for that role', () => {
+test('choosing an effort level saves it for that role', async () => {
   const r = recorder();
   renderAgents({ onSave: r.onSave });
-  fireEvent.click(screen.getByRole('combobox', { name: 'Coding runs effort' }));
-  chooseOption('Max');
+  fireEvent.click(selectTrigger('Coding runs effort'));
+  await chooseOption('Max');
   expect(r.saved).toEqual([{ effort: { execute: 'max' } }]);
 });
 
 // Default is not an effort level: choosing it clears the key so the model
 // decides, rather than saving the word "default".
-test('choosing Default effort clears the role', () => {
+test('choosing Default effort clears the role', async () => {
   const r = recorder();
   renderAgents({
     config: { ...config, effort: { execute: 'high' } },
     onSave: r.onSave,
   });
-  fireEvent.click(screen.getByRole('combobox', { name: 'Coding runs effort' }));
-  chooseOption('Default');
+  fireEvent.click(selectTrigger('Coding runs effort'));
+  await chooseOption('Default');
   expect(r.saved).toEqual([{ effort: { execute: null } }]);
 });
 
-// Models first, then how their chats stream, the limits runs work under,
-// what they may do, then which agent a dispatch uses.
+// Models first, then the limits runs work under, what they may do, then
+// which agent a dispatch uses. Streaming sits apart, under Advanced.
 test('the page is sentence-case groups in order', () => {
   renderAgents();
   expect(
@@ -183,7 +192,6 @@ test('the page is sentence-case groups in order', () => {
   ).toEqual([
     'Models',
     'Judgments',
-    'Streaming',
     'Limits',
     'Permissions',
     'Defaults',
@@ -191,57 +199,58 @@ test('the page is sentence-case groups in order', () => {
   ]);
 });
 
-// Numeric inputs are sans with tabular digits — no code face on a number.
-test('numeric inputs are not monospaced', () => {
+// Numeric inputs ask for a decimal keypad, not free text.
+test('numeric inputs take decimals', () => {
   renderAgents();
   const input = screen.getByLabelText('Turns per run');
-  expect(input.className).not.toContain('font-mono');
-  expect(input.className).toContain('tabular-nums');
+  expect(input.getAttribute('inputmode')).toBe('decimal');
 });
 
-// The permission radios paint on Linear's indigo (`--color-primary` → `--accent`), not the
-// `accent-accent` alias that resolves to the near-transparent hover wash.
-test('the permission radios paint with the primary accent', () => {
+// The permission modes are one named group of native radios.
+test('the permission modes are native radios in one named group', () => {
   renderAgents();
-  const radios = screen.getAllByRole('radio');
-  expect(radios.length).toBeGreaterThan(0);
+  const group = screen.getByRole('radiogroup', {
+    name: 'When an agent wants to run a command or edit a file',
+  });
+  const radios = within(group).getAllByRole('radio');
+  expect(radios).toHaveLength(4);
   for (const radio of radios) {
-    expect(radio.className).toContain('accent-primary');
-    expect(radio.className).not.toContain('accent-accent');
+    expect((radio as HTMLInputElement).type).toBe('radio');
   }
 });
 
-// The two streaming switches: every mode in view, the chosen one pressed,
+// The two streaming switches: every mode in view, the chosen one checked,
 // and the line under each saying what the chosen mode does.
 function streamMode(row: string, mode: string): HTMLElement {
-  return within(screen.getByRole('group', { name: row })).getByRole('button', {
-    name: mode,
-  });
+  return within(screen.getByRole('radiogroup', { name: row })).getByRole(
+    'radio',
+    { name: mode }
+  );
 }
 
 test('both chats stream live when config.yml says nothing', () => {
-  renderAgents();
-  expect(streamMode('Assistant', 'Live').getAttribute('aria-pressed')).toBe(
+  renderStreaming();
+  expect(streamMode('Overseer', 'Live').getAttribute('aria-checked')).toBe(
     'true'
   );
-  expect(streamMode('Runs', 'Live').getAttribute('aria-pressed')).toBe('true');
+  expect(streamMode('Runs', 'Live').getAttribute('aria-checked')).toBe('true');
   expect(
     screen.getByText(
       'Its reply appears as it writes, and what it says between steps stays in the chat.'
     )
   ).toBeTruthy();
-  // Narration is the Assistant's alone.
+  // Narration is the Overseer's alone.
   expect(
-    within(screen.getByRole('group', { name: 'Runs' }))
-      .getAllByRole('button')
+    within(screen.getByRole('radiogroup', { name: 'Runs' }))
+      .getAllByRole('radio')
       .map((b) => b.textContent)
   ).toEqual(['Live', 'Off']);
 });
 
 test('pressing a mode saves it under its own block', () => {
   const r = recorder();
-  renderAgents({ onSave: r.onSave });
-  fireEvent.click(streamMode('Assistant', 'Narration'));
+  renderStreaming({ onSave: r.onSave });
+  fireEvent.click(streamMode('Overseer', 'Narration'));
   fireEvent.click(streamMode('Runs', 'Off'));
   expect(r.saved).toEqual([
     { overseer: { stream: 'narration' } },
@@ -251,11 +260,15 @@ test('pressing a mode saves it under its own block', () => {
 
 test('the configured mode is pressed and described, and pressing it again saves nothing', () => {
   const r = recorder();
-  renderAgents({
-    config: { ...config, overseer: { stream: 'off' }, runs: { stream: 'off' } },
+  renderStreaming({
+    config: {
+      ...config,
+      overseer: { stream: 'off', autonomy: 'balanced' },
+      runs: { stream: 'off' },
+    },
     onSave: r.onSave,
   });
-  expect(streamMode('Assistant', 'Off').getAttribute('aria-pressed')).toBe(
+  expect(streamMode('Overseer', 'Off').getAttribute('aria-checked')).toBe(
     'true'
   );
   expect(
@@ -266,7 +279,7 @@ test('the configured mode is pressed and described, and pressing it again saves 
       "Each part of the agent's text appears once it is finished."
     )
   ).toBeTruthy();
-  fireEvent.click(streamMode('Assistant', 'Off'));
+  fireEvent.click(streamMode('Overseer', 'Off'));
   expect(r.saved).toEqual([]);
 });
 
@@ -274,16 +287,46 @@ test('a viewer who may not save config cannot press a mode', () => {
   const r = recorder();
   render(
     <SettingsAccessProvider access={accessFor('request', false)}>
-      <AgentsSection
-        config={config}
-        executors={null}
-        onSave={r.onSave}
-        canOperate={false}
-      />
+      <AgentStreamingGroup config={config} onSave={r.onSave} />
     </SettingsAccessProvider>
   );
-  const narration = streamMode('Assistant', 'Narration');
+  const narration = streamMode('Overseer', 'Narration');
   expect(narration.hasAttribute('disabled')).toBe(true);
   fireEvent.click(narration);
   expect(r.saved).toEqual([]);
+});
+
+test('the unlimited spend switch saves unlimitedSpend', () => {
+  const r = recorder();
+  renderAgents({ onSave: r.onSave });
+  fireEvent.click(screen.getByRole('switch', { name: 'Unlimited spend' }));
+  expect(r.saved).toEqual([{ unlimitedSpend: true }]);
+});
+
+// The daemon ignores the per-run cap while the switch is on, so offering it
+// would be a field that does nothing.
+test('unlimited spend hides the per-run spend cap', () => {
+  renderAgents({
+    config: {
+      ...config,
+      orchestrator: { ...config.orchestrator, unlimitedSpend: true },
+    },
+  });
+  expect(screen.queryByLabelText('Spend per run')).toBeNull();
+  expect(
+    screen
+      .getByRole('switch', { name: 'Unlimited spend' })
+      .getAttribute('aria-checked')
+  ).toBe('true');
+});
+
+// A stock config has no overseer block, so the control reads the default.
+test('the overseer autonomy shows balanced by default and saves a new level', async () => {
+  const r = recorder();
+  renderAgents({ onSave: r.onSave });
+  const select = selectTrigger('What your agent does without asking');
+  expect(select.textContent).toContain('Balanced');
+  fireEvent.click(select);
+  await chooseOption('Cautious: ask about everything');
+  expect(r.saved).toEqual([{ overseer: { autonomy: 'cautious' } }]);
 });

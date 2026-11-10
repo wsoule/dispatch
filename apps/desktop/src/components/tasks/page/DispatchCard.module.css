@@ -1,0 +1,140 @@
+/* The Spec mode's dispatch card (DispatchCard.tsx): a raised panel with a
+   2px left edge in its state's tone (data-tone: success ready, warning
+   warn or blocked, info live, muted closed), the headline and its
+   pickers and Dispatch on one wrapping row, then the readiness checks.
+   The words say the state; the edge and the check glyphs only echo it. */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+  margin: 0 var(--s-4);
+  padding: var(--s-3) 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  box-shadow: inset 2px 0 0 var(--tone);
+  color: var(--text);
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+/* The headline keeps a readable width; the controls wrap under it in a
+   narrow pane instead of squeezing it to a word per line. */
+.headline {
+  flex: 1 1 160px;
+  min-width: 160px;
+  font-size: var(--fs);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+
+/* The Executor and Model pickers draw their bordered pill 6px outside the
+   button (and 4px above and below), so the gaps leave room for two pills
+   side by side, or a pill over a wrapped row, without them touching (the
+   composer's property row spaces them the same way). */
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3) var(--s-4);
+  min-width: 0;
+}
+
+/* The D keycap on Dispatch's purple fill: a quiet cap that lets the fill
+   show through its face, in the button's own ink. */
+.controls .kbd {
+  border-color: transparent;
+  background: transparent;
+  color: inherit;
+}
+
+.checks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1) var(--s-4);
+  min-width: 0;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--fs-xs);
+  line-height: 20px;
+  color: var(--text-2);
+}
+
+.checkIcon {
+  flex: none;
+  color: var(--tone);
+}
+
+.checkLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A task the check is about: a quiet text button in the id's mono face,
+   underlined on hover, with the focus ring. */
+.taskLink {
+  flex: none;
+  padding: 0 2px;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.taskLink:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.taskLink:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* The fix beside a warning ("Add detail", "Declare"): a quiet button in
+   the accent's link ink, sized to the check's line. */
+.check .fix {
+  flex: none;
+  height: var(--h-xs);
+  color: var(--accent-ink);
+}
+
+/* A pending check's glyph turns only when motion is welcome. */
+@media (prefers-reduced-motion: no-preference) {
+  .check[data-state='pending'] .checkIcon {
+    animation: dispatch-check-spin 1s linear infinite;
+  }
+}
+
+@keyframes dispatch-check-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Forced colours: the left edge becomes a real border so the state's
+   edge keeps its shape. */
+@media (forced-colors: active) {
+  .card {
+    border-left: 3px solid CanvasText;
+    box-shadow: none;
+  }
+}

@@ -7,6 +7,16 @@ import type {
   ApiClient,
 } from '@dispatch/client';
 import { ApiError } from '@dispatch/client';
+import {
+  Button,
+  Checkbox,
+  Chip,
+  ConfirmDialog,
+  CopyValue,
+  cx,
+  Select,
+  TextField,
+} from '@dispatch/ui';
 import type { UseQueryResult } from '@tanstack/react-query';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -42,36 +52,42 @@ import {
 } from '../../lib/a2a';
 import { isInsufficientTier } from '../../lib/daemonAuth';
 import { formatShortDate } from '../../lib/taskDates';
+import styles from './A2ASection.module.css';
 import { SettingsSwitch } from './fields';
+import shared from './settings.module.css';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
-import { CopyButton } from './TeamSection';
-import { IconButton } from '@/ui/ai/icon-button';
-import { Pill } from '@/ui/ai/pill';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/ui/alert-dialog';
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/ui/select';
 
 interface A2ASectionProps {
   data: DispatchProjectData;
 }
 
 type Api = ApiClient | null;
+
+const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
+
+/** An icon-only row action, named by its label. */
+function RowAction({
+  label,
+  icon,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  icon: ReactNode;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      variant="quiet"
+      size="sm"
+      icon={icon}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+    />
+  );
+}
 
 const OPERATOR_HINT =
   'Changing the listener needs the operator tier. Ask the person running Dispatch for this project.';
@@ -138,7 +154,7 @@ function useA2AQuery<T>(
 function FieldProblem({ message }: { message: string | null }) {
   if (message === null) return null;
   return (
-    <p role="alert" className="text-state-failed text-[12px]">
+    <p role="alert" className={cx('toneText', shared.error)} data-tone="danger">
       {message}
     </p>
   );
@@ -318,29 +334,17 @@ function ListenerGroup({
         subtitle="This machine suits a tunnel or reverse proxy, which does TLS. Every network interface needs TLS and a public URL."
         control={
           <Select
+            id="a2a-host"
+            label="Host"
             value={form.host}
+            options={hostChoices(current.settings.host)}
             disabled={locked}
-            onValueChange={(host) => {
-              if (host === null) return;
+            className={styles.host}
+            onChange={(host) => {
               setDraft(withHost(form, host, current.teamTls));
               setProblem(null);
             }}
-          >
-            <SelectTrigger
-              id="a2a-host"
-              aria-label="Host"
-              className="w-[200px]"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {hostChoices(current.settings.host).map((h) => (
-                <SelectItem key={h.value} value={h.value}>
-                  {h.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          />
         }
       />
       <SettingsRow
@@ -348,14 +352,16 @@ function ListenerGroup({
         htmlFor="a2a-port"
         subtitle="The card's URL needs one that stays put."
         control={
-          <Input
-            id="a2a-port"
-            value={form.port}
-            inputMode="numeric"
-            disabled={locked}
-            className="w-24 text-right tabular-nums"
-            onChange={(e) => update({ port: e.target.value })}
-          />
+          <span className={shared.numberField}>
+            <TextField
+              id="a2a-port"
+              value={form.port}
+              inputMode="numeric"
+              disabled={locked}
+              className={shared.numberInput}
+              onChange={(e) => update({ port: e.target.value })}
+            />
+          </span>
         }
       >
         <FieldProblem message={problemAt('port')} />
@@ -366,13 +372,13 @@ function ListenerGroup({
         subtitle="What the card tells clients to call. Empty on this machine; behind a tunnel, the tunnel's https URL."
         stacked
       >
-        <Input
+        <TextField
           id="a2a-public-url"
           value={form.publicUrl}
           placeholder="https://agent.example.com"
           spellCheck={false}
           disabled={locked}
-          className="font-mono"
+          className={shared.monoInput}
           onChange={(e) => update({ publicUrl: e.target.value })}
         />
         <FieldProblem message={problemAt('publicUrl')} />
@@ -383,25 +389,25 @@ function ListenerGroup({
         subtitle="A PEM file. Needed on every network interface."
         stacked
       >
-        <Input
+        <TextField
           id="a2a-tls-cert"
           value={form.certPath}
           placeholder="/path/to/cert.pem"
           spellCheck={false}
           disabled={locked}
-          className="font-mono"
+          className={shared.monoInput}
           onChange={(e) => update({ certPath: e.target.value })}
         />
         <FieldProblem message={problemAt('certPath')} />
       </SettingsRow>
       <SettingsRow title="TLS key" htmlFor="a2a-tls-key" stacked>
-        <Input
+        <TextField
           id="a2a-tls-key"
           value={form.keyPath}
           placeholder="/path/to/key.pem"
           spellCheck={false}
           disabled={locked}
-          className="font-mono"
+          className={shared.monoInput}
           onChange={(e) => update({ keyPath: e.target.value })}
         />
         <FieldProblem message={problemAt('keyPath')} />
@@ -427,7 +433,11 @@ function ListenerGroup({
         title="Apply"
         subtitle="Saved on this machine only, never in config.yml."
         control={
-          <Button disabled={locked || pending} onClick={() => void save()}>
+          <Button
+            variant="primary"
+            disabled={locked || pending}
+            onClick={() => void save()}
+          >
             {pending ? 'Saving…' : 'Save listener'}
           </Button>
         }
@@ -490,9 +500,9 @@ function CardGroup({ client }: { client: Api }) {
           <SettingsRow
             title="Skills"
             control={
-              <span className="flex flex-wrap justify-end gap-1">
+              <span className={styles.skills}>
                 {summary.skills.map((skill) => (
-                  <Pill key={skill}>{skill}</Pill>
+                  <Chip key={skill}>{skill}</Chip>
                 ))}
               </span>
             }
@@ -500,7 +510,7 @@ function CardGroup({ client }: { client: Api }) {
           {endpoint !== null && (
             <SettingsRow
               title="Endpoint"
-              subtitle={<span className="font-mono">{endpoint}</span>}
+              subtitle={<span className="mono">{endpoint}</span>}
             />
           )}
         </>
@@ -604,7 +614,7 @@ function ClientsGroup({
         {rows.map((row) => (
           <SettingsRow
             key={row.address}
-            title={<span className="font-mono">{row.address}</span>}
+            title={<span className="mono">{row.address}</span>}
             subtitle={[
               CLIENT_STATUS[row.status],
               row.recipients.length === 0
@@ -615,34 +625,31 @@ function ClientsGroup({
               .join(' · ')}
             control={
               row.status === 'revoked' ? undefined : (
-                <span className="flex items-center gap-0.5">
+                <span className={styles.actions}>
                   {row.status === 'pending' && (
-                    <IconButton
+                    <RowAction
                       label={`Approve ${row.address}`}
+                      icon={<Check {...ICON} />}
                       disabled={!canDecide || busy !== null}
                       onClick={() =>
                         void act(row, (api) => api.approveAgent(row.address))
                       }
-                    >
-                      <Check aria-hidden />
-                    </IconButton>
+                    />
                   )}
-                  <IconButton
+                  <RowAction
                     label={`Rotate ${row.address}`}
+                    icon={<RotateCw {...ICON} />}
                     disabled={!canDecide || busy !== null}
                     onClick={() =>
                       void act(row, (api) => api.rotateA2AClient(row.address))
                     }
-                  >
-                    <RotateCw aria-hidden />
-                  </IconButton>
-                  <IconButton
+                  />
+                  <RowAction
                     label={`Revoke ${row.address}`}
+                    icon={<Ban {...ICON} />}
                     disabled={!canDecide || busy !== null}
                     onClick={() => setConfirming(row)}
-                  >
-                    <Ban aria-hidden />
-                  </IconButton>
+                  />
                 </span>
               )
             }
@@ -661,23 +668,18 @@ function ClientsGroup({
             subtitle="Shown once. Hand it to the client's operator."
             stacked
           >
-            <div className="flex items-center gap-2">
-              <code className="bg-surface-quaternary rounded-control min-w-0 flex-1 truncate px-2 py-1 font-mono text-[12px]">
-                {issued.token}
-              </code>
-              <CopyButton value={issued.token} label="token" />
-            </div>
+            <CopyValue value={issued.token} label="token" truncate />
           </SettingsRow>
         )}
         <SettingsRow title="Client name" htmlFor="a2a-client-name" stacked>
           <form
-            className="flex flex-col gap-2"
+            className={shared.stack}
             onSubmit={(e) => {
               e.preventDefault();
               void add();
             }}
           >
-            <Input
+            <TextField
               id="a2a-client-name"
               value={name}
               placeholder="acme-planner"
@@ -685,13 +687,10 @@ function ClientsGroup({
               autoComplete="off"
               onChange={(e) => setName(e.target.value)}
             />
-            <label
-              htmlFor="a2a-client-recipients"
-              className="text-foreground text-[13px] font-medium"
-            >
+            <label htmlFor="a2a-client-recipients" className={shared.rowTitle}>
               May also address
             </label>
-            <Input
+            <TextField
               id="a2a-client-recipients"
               value={recipients}
               placeholder="alice, bob"
@@ -705,8 +704,12 @@ function ClientsGroup({
                 : 'It waits until someone who can approve lets it in.'}
             </SettingsHint>
             <div>
-              <Button type="submit" disabled={name.trim() === '' || pending}>
-                <Plus />
+              <Button
+                type="submit"
+                variant="secondary"
+                icon={<Plus {...ICON} />}
+                disabled={name.trim() === '' || pending}
+              >
                 Add client
               </Button>
             </div>
@@ -715,32 +718,22 @@ function ClientsGroup({
         </SettingsRow>
       </SettingsGroup>
 
-      {confirming !== null && (
-        <AlertDialog open onOpenChange={(open) => !open && setConfirming(null)}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Revoke {confirming.address}?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Its token stops working at once, and its unanswered questions
-                are closed. To come back it needs a new client and token.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel variant="ghost">Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                variant="destructive"
-                onClick={() => {
-                  const row = confirming;
-                  setConfirming(null);
-                  void act(row, (api) => api.revokeAgent(row.address));
-                }}
-              >
-                Revoke
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      )}
+      <ConfirmDialog
+        open={confirming !== null}
+        title={`Revoke ${confirming?.address ?? ''}?`}
+        confirmLabel="Revoke"
+        tone="danger"
+        onCancel={() => setConfirming(null)}
+        onConfirm={() => {
+          const row = confirming;
+          if (row === null) return;
+          setConfirming(null);
+          void act(row, (api) => api.revokeAgent(row.address));
+        }}
+      >
+        Its token stops working at once, and its unanswered questions are
+        closed. To come back it needs a new client and token.
+      </ConfirmDialog>
     </>
   );
 }
@@ -791,9 +784,9 @@ function TasksGroup({
         [...open].map(([address, list]) => (
           <SettingsRow
             key={address}
-            title={<span className="font-mono">{address}</span>}
+            title={<span className="mono">{address}</span>}
           >
-            <ul className="font-book text-muted-foreground flex flex-col gap-0.5 text-[12px]">
+            <ul className={styles.taskList}>
               {list.map((task) => (
                 <li key={task.id}>
                   {task.skill === 'ask' ? 'Question' : 'Handoff'} {task.id} ·{' '}
@@ -996,10 +989,10 @@ function PeersGroup({
           rows.map((row) => (
             <SettingsRow
               key={row.alias}
-              title={<span className="font-mono">a2a:{row.alias}</span>}
+              title={<span className="mono">a2a:{row.alias}</span>}
               subtitle={
-                <span className="flex min-w-0 flex-col">
-                  <span className="truncate">
+                <span className={styles.lines}>
+                  <span className={styles.truncate}>
                     {[
                       PEER_AUTH[row.auth ?? 'bearer'],
                       PEER_STATUS[row.status],
@@ -1008,9 +1001,11 @@ function PeersGroup({
                       .filter((part) => part !== '')
                       .join(' · ')}
                   </span>
-                  <span className="truncate font-mono">{row.interfaceUrl}</span>
+                  <span className={`${styles.truncate} mono`}>
+                    {row.interfaceUrl}
+                  </span>
                   {row.fingerprint != null && (
-                    <span className="truncate font-mono">
+                    <span className={`${styles.truncate} mono`}>
                       {row.fingerprint}
                     </span>
                   )}
@@ -1018,70 +1013,65 @@ function PeersGroup({
               }
               control={
                 canDecide ? (
-                  <span className="flex items-center gap-0.5">
-                    <IconButton
+                  <span className={styles.actions}>
+                    <RowAction
                       label={`Refresh a2a:${row.alias}`}
+                      icon={<RefreshCw {...ICON} />}
                       disabled={busy !== null}
                       onClick={() =>
                         void act(row.alias, (api) =>
                           api.refreshA2APeer(row.alias)
                         )
                       }
-                    >
-                      <RefreshCw aria-hidden />
-                    </IconButton>
+                    />
                     {row.status === 'active' ? (
-                      <IconButton
+                      <RowAction
                         label={`Disable a2a:${row.alias}`}
+                        icon={<Pause {...ICON} />}
                         disabled={busy !== null}
                         onClick={() =>
                           void act(row.alias, (api) =>
                             api.setA2APeerEnabled(row.alias, false)
                           )
                         }
-                      >
-                        <Pause aria-hidden />
-                      </IconButton>
+                      />
                     ) : row.status === 'disabled' ? (
-                      <IconButton
+                      <RowAction
                         label={`Enable a2a:${row.alias}`}
+                        icon={<Play {...ICON} />}
                         disabled={busy !== null}
                         onClick={() =>
                           void act(row.alias, (api) =>
                             api.setA2APeerEnabled(row.alias, true)
                           )
                         }
-                      >
-                        <Play aria-hidden />
-                      </IconButton>
+                      />
                     ) : null}
                     {(row.auth ?? 'bearer') === 'bearer' && (
-                      <IconButton
+                      <RowAction
                         label={`Upgrade a2a:${row.alias} to signed`}
+                        icon={<ShieldCheck {...ICON} />}
                         disabled={busy !== null}
                         onClick={() => {
                           setUpgrading(row.alias);
                           setTheirFingerprint('');
                           setUpgradeNote(null);
                         }}
-                      >
-                        <ShieldCheck aria-hidden />
-                      </IconButton>
+                      />
                     )}
-                    <IconButton
+                    <RowAction
                       label={`Remove a2a:${row.alias}`}
+                      icon={<Trash2 {...ICON} />}
                       disabled={busy !== null}
                       onClick={() => setRemoving(row)}
-                    >
-                      <Trash2 aria-hidden />
-                    </IconButton>
+                    />
                   </span>
                 ) : undefined
               }
             >
               {canDecide && upgrading === row.alias && (
                 <form
-                  className="flex items-center gap-2"
+                  className={styles.inlineForm}
                   onSubmit={(e) => {
                     e.preventDefault();
                     const fp = theirFingerprint.trim();
@@ -1095,47 +1085,59 @@ function PeersGroup({
                     });
                   }}
                 >
-                  <Input
+                  <TextField
                     aria-label="Their fingerprint"
                     placeholder="As its owner reads it to you"
                     value={theirFingerprint}
                     spellCheck={false}
                     autoComplete="off"
-                    className="h-7 min-w-0 flex-1 font-mono text-[12px]"
+                    size="sm"
+                    className={styles.grow}
                     onChange={(e) => setTheirFingerprint(e.target.value)}
                   />
-                  <Button type="submit" size="sm" disabled={busy !== null}>
+                  <Button
+                    type="submit"
+                    variant="secondary"
+                    size="sm"
+                    disabled={busy !== null}
+                  >
                     Ask to upgrade
                   </Button>
                 </form>
               )}
               {canDecide && row.status === 'auth-failed' && (
                 <form
-                  className="flex items-center gap-2"
+                  className={styles.inlineForm}
                   onSubmit={(e) => {
                     e.preventDefault();
                     enableWithSecret(row.alias);
                   }}
                 >
-                  <Input
+                  <TextField
                     type="password"
                     aria-label={`New credential for a2a:${row.alias}`}
                     placeholder="New credential"
                     autoComplete="new-password"
                     spellCheck={false}
-                    className="h-7 min-w-0 flex-1 font-mono text-[12px]"
+                    size="sm"
+                    className={styles.grow}
                     ref={(el) => {
                       if (el === null) newSecrets.current.delete(row.alias);
                       else newSecrets.current.set(row.alias, el);
                     }}
                   />
-                  <Button type="submit" size="sm" disabled={busy !== null}>
+                  <Button
+                    type="submit"
+                    variant="secondary"
+                    size="sm"
+                    disabled={busy !== null}
+                  >
                     Enable a2a:{row.alias}
                   </Button>
                   <Button
                     type="button"
                     size="sm"
-                    variant="outline"
+                    variant="quiet"
                     aria-label={`Enable a2a:${row.alias} with the same credential`}
                     disabled={busy !== null}
                     onClick={() =>
@@ -1163,52 +1165,52 @@ function PeersGroup({
         {canDecide && (
           <SettingsRow title="Add a peer" stacked>
             <form
-              className="flex flex-col gap-2"
+              className={shared.stack}
               onSubmit={(e) => {
                 e.preventDefault();
                 void add();
               }}
             >
-              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2">
-                <Input
+              <div className={styles.pairNarrowFirst}>
+                <TextField
                   aria-label="Peer alias"
                   value={draft.alias}
                   placeholder="acme"
                   spellCheck={false}
                   autoComplete="off"
-                  className="font-mono"
+                  className={shared.monoInput}
                   onChange={(e) => update({ alias: e.target.value })}
                 />
-                <Input
+                <TextField
                   aria-label="Card URL"
                   value={draft.cardUrl}
                   placeholder="https://agent.example.com/.well-known/agent-card.json"
                   spellCheck={false}
                   autoComplete="off"
-                  className="font-mono"
+                  className={shared.monoInput}
                   onChange={(e) => update({ cardUrl: e.target.value })}
                 />
               </div>
               <FieldProblem
                 message={problemAt('alias') ?? problemAt('cardUrl')}
               />
-              <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-2">
-                <Input
+              <div className={styles.pairWideFirst}>
+                <TextField
                   ref={secret}
                   type="password"
                   aria-label="Peer credential"
                   placeholder="Credential, if its card asks for one"
                   autoComplete="new-password"
                   spellCheck={false}
-                  className="font-mono"
+                  className={shared.monoInput}
                 />
-                <Input
+                <TextField
                   aria-label="API key header"
                   value={draft.apiKeyHeader}
                   placeholder="From the card"
                   spellCheck={false}
                   autoComplete="off"
-                  className="font-mono"
+                  className={shared.monoInput}
                   onChange={(e) => update({ apiKeyHeader: e.target.value })}
                 />
               </div>
@@ -1216,7 +1218,11 @@ function PeersGroup({
                 message={problemAt('token') ?? problemAt('apiKeyHeader')}
               />
               {conflict !== null && (
-                <p role="alert" className="text-state-failed text-[12px]">
+                <p
+                  role="alert"
+                  className={cx('toneText', shared.error)}
+                  data-tone="danger"
+                >
                   The card at {conflict.cardOrigin} points its A2A interface at{' '}
                   {conflict.interfaceOrigin}.
                   {canOperate
@@ -1225,28 +1231,18 @@ function PeersGroup({
                 </p>
               )}
               {canOperate && (
-                <div className="text-muted-foreground flex flex-wrap items-center gap-4 text-[12px]">
-                  <label className="flex items-center gap-1.5">
-                    <input
-                      type="checkbox"
-                      className="accent-primary size-3.5"
-                      checked={draft.allowHttp}
-                      onChange={(e) => update({ allowHttp: e.target.checked })}
-                    />
-                    Allow plain http
-                  </label>
+                <div className={styles.checks}>
+                  <Checkbox
+                    label="Allow plain http"
+                    checked={draft.allowHttp}
+                    onChange={(allowHttp) => update({ allowHttp })}
+                  />
                   {conflict !== null && (
-                    <label className="flex items-center gap-1.5">
-                      <input
-                        type="checkbox"
-                        className="accent-primary size-3.5"
-                        checked={draft.allowOrigin}
-                        onChange={(e) =>
-                          update({ allowOrigin: e.target.checked })
-                        }
-                      />
-                      Allow the other origin
-                    </label>
+                    <Checkbox
+                      label="Allow the other origin"
+                      checked={draft.allowOrigin}
+                      onChange={(allowOrigin) => update({ allowOrigin })}
+                    />
                   )}
                 </div>
               )}
@@ -1254,13 +1250,14 @@ function PeersGroup({
               <div>
                 <Button
                   type="submit"
+                  variant="secondary"
+                  icon={<Plus {...ICON} />}
                   disabled={
                     pending ||
                     draft.alias.trim() === '' ||
                     draft.cardUrl.trim() === ''
                   }
                 >
-                  <Plus />
                   {pending ? 'Adding…' : 'Add peer'}
                 </Button>
               </div>
@@ -1269,32 +1266,22 @@ function PeersGroup({
         )}
       </SettingsGroup>
 
-      {removing !== null && (
-        <AlertDialog open onOpenChange={(open) => !open && setRemoving(null)}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Remove a2a:{removing.alias}?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Its stored credential is deleted, and questions waiting on it
-                are closed. To use it again, add it back.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel variant="ghost">Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                variant="destructive"
-                onClick={() => {
-                  const alias = removing.alias;
-                  setRemoving(null);
-                  void act(alias, (api) => api.removeA2APeer(alias));
-                }}
-              >
-                Remove
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      )}
+      <ConfirmDialog
+        open={removing !== null}
+        title={`Remove a2a:${removing?.alias ?? ''}?`}
+        confirmLabel="Remove"
+        tone="danger"
+        onCancel={() => setRemoving(null)}
+        onConfirm={() => {
+          if (removing === null) return;
+          const alias = removing.alias;
+          setRemoving(null);
+          void act(alias, (api) => api.removeA2APeer(alias));
+        }}
+      >
+        Its stored credential is deleted, and questions waiting on it are
+        closed. To use it again, add it back.
+      </ConfirmDialog>
     </>
   );
 }
@@ -1397,12 +1384,13 @@ function PairingGroup({
               subtitle={`Shown once, good until ${formatShortDate(offered.expiresAt)}. This agent's fingerprint: ${offered.fingerprint}`}
               stacked
             >
-              <div className="flex items-center gap-2">
-                <code className="bg-surface-quaternary rounded-control min-w-0 flex-1 px-2 py-1 font-mono text-[12px] break-all">
-                  {offered.code}
-                </code>
-                <CopyButton value={offered.code} label="code" />
-                <Button size="sm" onClick={() => setOffered(null)}>
+              <div className={styles.secretLine}>
+                <CopyValue value={offered.code} label="code" />
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setOffered(null)}
+                >
                   Done
                 </Button>
               </div>
@@ -1410,66 +1398,69 @@ function PairingGroup({
           )}
           <SettingsRow title="Pair as" htmlFor="a2a-pair-alias" stacked>
             <form
-              className="flex items-center gap-2"
+              className={styles.inlineForm}
               onSubmit={(e) => {
                 e.preventDefault();
                 void offer();
               }}
             >
-              <Input
+              <TextField
                 id="a2a-pair-alias"
                 value={alias}
                 placeholder="bob"
                 spellCheck={false}
                 autoComplete="off"
-                className="min-w-0 flex-1"
+                className={styles.grow}
                 onChange={(e) => setAlias(e.target.value)}
               />
-              <Button type="submit" disabled={alias.trim() === '' || pending}>
-                <Link2 />
+              <Button
+                type="submit"
+                variant="secondary"
+                icon={<Link2 {...ICON} />}
+                disabled={alias.trim() === '' || pending}
+              >
                 Pair with…
               </Button>
             </form>
             <label
               htmlFor="a2a-pair-link"
-              className="text-foreground mt-2 text-[13px] font-medium"
+              className={`${shared.rowTitle} ${styles.spaced}`}
             >
               Over a link (git remote)
             </label>
-            <Input
+            <TextField
               id="a2a-pair-link"
               value={linkRemote}
               placeholder="Optional: a remote you both can push to"
               spellCheck={false}
               autoComplete="off"
-              className="font-mono text-[12px]"
+              size="sm"
+              className={shared.monoInput}
               onChange={(e) => setLinkRemote(e.target.value)}
             />
           </SettingsRow>
           <SettingsRow title="Pairing code" htmlFor="a2a-pair-code" stacked>
             <form
-              className="flex flex-col gap-2"
+              className={shared.stack}
               onSubmit={(e) => {
                 e.preventDefault();
                 void accept();
               }}
             >
-              <Input
+              <TextField
                 id="a2a-pair-code"
                 type="password"
                 placeholder="dispatch-a2a-pair:…"
                 autoComplete="off"
                 spellCheck={false}
-                className="font-mono text-[12px]"
+                size="sm"
+                className={shared.monoInput}
                 ref={code}
               />
-              <label
-                htmlFor="a2a-pair-their-alias"
-                className="text-foreground text-[13px] font-medium"
-              >
+              <label htmlFor="a2a-pair-their-alias" className={shared.rowTitle}>
                 Their alias
               </label>
-              <Input
+              <TextField
                 id="a2a-pair-their-alias"
                 value={theirAlias}
                 placeholder="alice"
@@ -1478,7 +1469,7 @@ function PairingGroup({
                 onChange={(e) => setTheirAlias(e.target.value)}
               />
               <div>
-                <Button type="submit" disabled={pending}>
+                <Button type="submit" variant="secondary" disabled={pending}>
                   Enter code
                 </Button>
               </div>
@@ -1487,14 +1478,12 @@ function PairingGroup({
           {accepted !== null && (
             <SettingsRow
               title={
-                <span className="font-mono">
-                  Paired with a2a:{accepted.alias}
-                </span>
+                <span className="mono">Paired with a2a:{accepted.alias}</span>
               }
               subtitle={
-                <span className="flex min-w-0 flex-col">
-                  <span className="font-mono">SAS {accepted.sas}</span>
-                  <span className="truncate font-mono">
+                <span className={styles.lines}>
+                  <span className="mono">SAS {accepted.sas}</span>
+                  <span className={`${styles.truncate} mono`}>
                     {accepted.fingerprint}
                   </span>
                   <span>Check the other side shows the same SAS.</span>
@@ -1505,13 +1494,13 @@ function PairingGroup({
           {(pairings.data?.pairings ?? []).map((p) => (
             <SettingsRow
               key={p.id}
-              title={<span className="font-mono">a2a:{p.alias}</span>}
+              title={<span className="mono">a2a:{p.alias}</span>}
               subtitle={
                 p.state === 'completed' && p.sas !== null ? (
-                  <span className="flex min-w-0 flex-col">
-                    <span className="font-mono">SAS {p.sas}</span>
+                  <span className={styles.lines}>
+                    <span className="mono">SAS {p.sas}</span>
                     {p.fingerprint !== null && (
-                      <span className="truncate font-mono">
+                      <span className={`${styles.truncate} mono`}>
                         {p.fingerprint}
                       </span>
                     )}
@@ -1524,8 +1513,9 @@ function PairingGroup({
               }
               control={
                 p.state === 'offered' && p.role === 'offer' ? (
-                  <IconButton
+                  <RowAction
                     label={`Cancel the offer for a2a:${p.alias}`}
+                    icon={<Ban {...ICON} />}
                     disabled={pending}
                     onClick={() => {
                       if (client === null) return;
@@ -1535,9 +1525,7 @@ function PairingGroup({
                           setError(errorText(err))
                         );
                     }}
-                  >
-                    <Ban aria-hidden />
-                  </IconButton>
+                  />
                 ) : undefined
               }
             />
@@ -1577,10 +1565,10 @@ function LinksGroup({
       {data.links.map((l) => (
         <SettingsRow
           key={l.alias}
-          title={<span className="font-mono">a2a:{l.alias}</span>}
+          title={<span className="mono">a2a:{l.alias}</span>}
           subtitle={
-            <span className="flex min-w-0 flex-col">
-              <span className="truncate font-mono">{l.remote}</span>
+            <span className={styles.lines}>
+              <span className={`${styles.truncate} mono`}>{l.remote}</span>
               <span>
                 {l.pending
                   ? 'Waiting for the other side to start the link'
@@ -1603,11 +1591,11 @@ function LinksGroup({
       {data.offers.map((o) => (
         <SettingsRow
           key={o.pairedId}
-          title={<span className="font-mono">a2a:{o.alias}</span>}
+          title={<span className="mono">a2a:{o.alias}</span>}
           subtitle={
-            <span className="flex min-w-0 flex-col">
+            <span className={styles.lines}>
               <span>Waiting for their proof on the link</span>
-              <span className="truncate font-mono">{o.remote}</span>
+              <span className={`${styles.truncate} mono`}>{o.remote}</span>
               {o.problems.map((p) => (
                 <span key={p}>{p}</span>
               ))}
@@ -1670,14 +1658,12 @@ function KeysGroup({
           ) : keys.data === undefined ? (
             'Loading…'
           ) : (
-            <span className="flex min-w-0 flex-col">
-              <span className="font-mono">{keys.data.current.fingerprint}</span>
+            <span className={styles.lines}>
+              <span className="mono">{keys.data.current.fingerprint}</span>
               {keys.data.next !== null && (
                 <span>
                   Rotating to{' '}
-                  <span className="font-mono">
-                    {keys.data.next.fingerprint}
-                  </span>{' '}
+                  <span className="mono">{keys.data.next.fingerprint}</span>{' '}
                   until {formatShortDate(keys.data.next.until)}
                 </span>
               )}
@@ -1688,11 +1674,11 @@ function KeysGroup({
           canOperate ? (
             <Button
               size="sm"
-              variant="outline"
+              variant="secondary"
+              icon={<KeyRound {...ICON} />}
               disabled={keys.data?.next != null}
               onClick={() => setConfirming(true)}
             >
-              <KeyRound />
               Rotate key
             </Button>
           ) : undefined
@@ -1700,23 +1686,19 @@ function KeysGroup({
       />
       {result !== null && <SettingsHint>{result}</SettingsHint>}
       <FieldProblem message={error} />
-      <AlertDialog open={confirming} onOpenChange={setConfirming}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Rotate the card key?</AlertDialogTitle>
-            <AlertDialogDescription>
-              A new key signs at once. Paired peers are sent a statement from
-              the old key and re-pin; both keys are served for 7 days.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void rotate()}>
-              Rotate
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={confirming}
+        title="Rotate the card key?"
+        confirmLabel="Rotate"
+        onCancel={() => setConfirming(false)}
+        onConfirm={() => {
+          setConfirming(false);
+          void rotate();
+        }}
+      >
+        A new key signs at once. Paired peers are sent a statement from the old
+        key and re-pin; both keys are served for 7 days.
+      </ConfirmDialog>
     </SettingsGroup>
   );
 }

@@ -1,0 +1,12 @@
+/* GateFrame (components/shell/GateFrame.tsx): the wrapper around the library SignedOutFrame
+   for a screen shown instead of the app shell. It fills its parent and scrolls on its own,
+   so a gate taller than the window scrolls whether it is the whole page or sits inside
+   App's fixed-height frame. --shell-brand-inset, when the host sets it, is set here. */
+
+.root {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg);
+}

@@ -1,0 +1,21 @@
+/* StackRail (StackRail.tsx): the task's blockedBy chain as a column of library
+   ListItem rows (the rows draw their own connector, selection and focus), with a
+   small cluster of run marks at each row's end. Tokens only. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* The run-state mark and the pull request glyph at a row's end. */
+.marks {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+.pr {
+  display: inline-flex;
+  color: var(--text-3);
+}

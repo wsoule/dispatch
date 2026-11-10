@@ -10,10 +10,11 @@ import type {
   Message,
   Ref,
 } from '@dispatch/client';
+import type { UiTone } from '@dispatch/ui';
 
 import { peerAddresses } from './a2a';
 import type { MessageAccess } from './daemonAuth';
-import { gateOf, taskProposalOf } from './gates';
+import { gateOf, isSystemMarker, taskProposalOf } from './gates';
 import type { KnownAddresses } from './threads';
 import { addressLabel } from './threads';
 
@@ -54,7 +55,7 @@ export interface ThreadLookups {
   task: (taskId: string) => TaskListItem | null;
   taskIdOfRun: (runId: string) => string | null;
   agentStatus: (address: string) => 'revoked' | 'muted' | null;
-  /** Whether an address is the daemon's own overseer (the Assistant). */
+  /** Whether an address is the daemon's own overseer (the Overseer). */
   isOverseer: (address: string) => boolean;
 }
 
@@ -79,7 +80,7 @@ export function threadLookups(
     task: (id) => docs.get(id) ?? null,
     taskIdOfRun: (id) => taskOfRun.get(id) ?? null,
     agentStatus: (address) => status.get(address) ?? null,
-    // Until the roster loads, any overseer-named agent reads as the Assistant.
+    // Until the roster loads, any overseer-named agent reads as the Overseer.
     isOverseer: (address) =>
       overseer === undefined ? OVERSEER.test(address) : address === overseer,
   };
@@ -134,6 +135,41 @@ export function kindLabel(kind: string): string | undefined {
   return kind === 'message' ? undefined : (KIND_LABELS[kind] ?? kind);
 }
 
+/** The kind badge a message row shows: the daemon's own close or breaker
+ *  marker as Closed or Breaker (a client's look-alike keeps its plain kind),
+ *  else the kind's label, and none for a plain message. */
+export function messageBadge(message: Message): string | undefined {
+  if (isSystemMarker(message, 'x-closed')) return 'Closed';
+  if (isSystemMarker(message, 'x-breaker')) return 'Breaker';
+  return kindLabel(message.kind);
+}
+
+/** The tone of a badge chip on a message row (the kind badge, Urgent and an
+ *  agent's Revoked or Muted): a closed thread or a silenced agent is grey
+ *  (inactive), a tripped breaker red (failed), Urgent amber, and every other
+ *  badge neutral. The words always say it too. A message's Urgent is amber on
+ *  purpose, unlike a task's Urgent priority (red, `adapters/taskDetail.ts`
+ *  and the library's priority glyph): the message flag asks its reader for a
+ *  reply soon, a missing input in the status table, and nothing has failed
+ *  or run late; red here would sit beside Breaker, the one failure a row
+ *  shows. */
+export function messageBadgeTone(
+  badge: string
+): Extract<UiTone, 'default' | 'muted' | 'danger' | 'warning'> {
+  switch (badge) {
+    case 'Closed':
+    case 'Revoked':
+    case 'Muted':
+      return 'muted';
+    case 'Breaker':
+      return 'danger';
+    case 'Urgent':
+      return 'warning';
+    default:
+      return 'default';
+  }
+}
+
 /** A thread's one-line title: its root's first line, cut to 80 characters. */
 export function threadTitle(root: Message): string {
   const first = Array.from(root.body.split('\n', 1)[0] ?? '');
@@ -164,7 +200,7 @@ export function knownAddresses(input: {
   };
 }
 
-/** Where a tool call waits for its answer: a run, or an Assistant conversation. */
+/** Where a tool call waits for its answer: a run, or an Overseer conversation. */
 export type ParkedCall =
   | { runId: string; requestId: string }
   | { conversation: string; requestId: string };
@@ -194,7 +230,7 @@ export type RowControl =
     }
   | { kind: 'choices'; choices: string[]; gate: boolean };
 
-// The run or Assistant conversation a tool-approval gate's call is parked on.
+// The run or Overseer conversation a tool-approval gate's call is parked on.
 function parkedCall(gate: {
   requestId: string;
   runId?: string;

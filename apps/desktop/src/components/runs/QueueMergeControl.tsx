@@ -3,9 +3,10 @@ import type {
   MergeQueueSnapshot,
   RunMeta,
 } from '@dispatch/client';
+import { Button, cx } from '@dispatch/ui';
 import { ListOrdered } from 'lucide-react';
 
-import { Button } from '@/ui/button';
+import styles from './QueueMergeControl.module.css';
 
 // Live-state label for a run currently sitting in the merge queue — 'queued' gets its own
 // position-aware label built inline (see `QueueMergeControl` below), every other non-terminal
@@ -32,9 +33,9 @@ const QUEUE_STATE_LABEL: Partial<Record<MergeQueueEntryState, string>> = {
  * re-enabled button so the person can retry. Disabled (with a reason tooltip) once the run has
  * already been reviewed, mirroring the server's own 409 for that case.
  *
- * Shared by every surface that can enqueue a run's merge — today the run detail's
- * action row (RunReviewView, both the plain-diff and PR-open branches) — so one
- * place owns the run -> queue-state mapping and every surface agrees.
+ * Shared by every surface that can enqueue a run's merge — today the task page's Review
+ * mode action row (ReviewMode) — so one place owns the run -> queue-state mapping and every
+ * surface agrees.
  */
 export function QueueMergeControl({
   meta,
@@ -72,37 +73,36 @@ export function QueueMergeControl({
     : undefined;
 
   return (
-    <div className="flex items-center gap-2">
+    <div className={styles.row}>
       {activeEntry !== undefined ? (
-        <span className="text-muted-foreground font-book inline-flex items-center gap-1.5 text-[12px]">
-          <ListOrdered className="size-3.5" />
+        <span className={styles.state}>
+          <ListOrdered size={14} strokeWidth={1.8} aria-hidden="true" />
           {activeEntry.state === 'queued'
             ? `Queued · #${queuePosition}`
             : (QUEUE_STATE_LABEL[activeEntry.state] ?? activeEntry.state)}
         </span>
       ) : (
         <Button
-          variant="ghost"
+          variant="quiet"
           size="sm"
           disabled={busy || alreadyReviewed}
           title={disabledReason}
+          icon={<ListOrdered size={14} strokeWidth={1.8} aria-hidden="true" />}
           onClick={onQueueMerge}
         >
-          <ListOrdered className="size-3.5" />
           Queue merge
         </Button>
       )}
       {blockedReason !== undefined && (
-        <span
-          className="text-muted-foreground font-book max-w-40 truncate text-[12px]"
-          title={blockedReason}
-        >
+        <span className={styles.reason} title={blockedReason}>
           {blockedReason}
         </span>
       )}
       {failedEntry !== undefined && (
+        // A failed attempt is said in the danger tone's words (the global .toneText hook).
         <span
-          className="text-state-failed font-book max-w-40 truncate text-[12px]"
+          className={cx(styles.reason, 'toneText')}
+          data-tone="danger"
           title={failedEntry.reason}
         >
           Failed: {failedEntry.reason ?? 'unknown error'}

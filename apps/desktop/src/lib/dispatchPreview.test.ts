@@ -253,6 +253,60 @@ describe('buildDispatchPreview', () => {
   });
 });
 
+// A milestone fan-out never starts a teammate's task (the daemon's fillQueue, core's
+// fanoutHolder), so the preview must not promise it, price it or check it for overlaps.
+describe('a teammate’s task', () => {
+  const holderOf = (t: TaskDoc) => (t.meta.id === 't-2' ? 'human:sam' : null);
+
+  test('is marked teammate and left out of the counts and the estimate', () => {
+    const p = buildDispatchPreview({
+      tasks: four,
+      readyIds: allReady,
+      runningNow: 0,
+      concurrency: 2,
+      holderOf,
+      liveClaims: [{ runId: 'r-9', taskId: 't-99', claims: ['src/t-2.ts'] }],
+    });
+    expect(p.rows.map((r) => r.disposition)).toEqual([
+      'starts-now',
+      'teammate',
+      'starts-now',
+      'queued',
+    ]);
+    expect(p.startsNow).toBe(2);
+    expect(p.queued).toBe(1);
+    expect(p.teammate).toBe(1);
+    expect(p.estimateUsd).toEqual({ low: 15, high: 45 });
+    expect(p.overlaps).toEqual([]);
+    expect(p.summary).toContain('1 is a teammate’s');
+  });
+
+  test('only teammates’ tasks: nothing can start, and the sentence says why', () => {
+    const p = buildDispatchPreview({
+      tasks: [task('t-2')],
+      readyIds: allReady,
+      runningNow: 0,
+      concurrency: 2,
+      holderOf,
+    });
+    expect(p.startsNow + p.queued).toBe(0);
+    expect(p.summary).toBe(
+      'Nothing can start. Everything is blocked, already running or a teammate’s.'
+    );
+  });
+
+  test('without holderOf (a hand dispatch) nobody’s task is held', () => {
+    const p = buildDispatchPreview({
+      tasks: four,
+      readyIds: allReady,
+      runningNow: 0,
+      concurrency: 4,
+    });
+    expect(p.teammate).toBe(0);
+    expect(p.startsNow).toBe(4);
+  });
+});
+
 describe('overlaps with live runs', () => {
   const t1 = task('t-1', 'Widget', ['src/widget.ts']);
 

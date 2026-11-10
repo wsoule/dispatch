@@ -1,11 +1,16 @@
+import { Button, cx, Notice } from '@dispatch/ui';
 import { RotateCw } from 'lucide-react';
 import { useState } from 'react';
 
 import type { DecideAvailability } from '../../lib/daemonAuth';
-import { Button } from '@/ui/button';
+import styles from './DecideUnavailableNotice.module.css';
 
 /** Why a decide card is inert in this window (it attached to a daemon it did
- *  not start, so it lacks the app token), with a restart when one is safe. */
+ *  not start, so it lacks the app token), with a restart when one is safe.
+ *  A muted note: the lead-in is the lib's notice ("Restart daemon to enable
+ *  approvals"), the body explains why, and the restart is a secondary Button
+ *  whose words swap to "Restarting…" while it runs (never a spinner). When a
+ *  restart is not safe, the reason it is blocked shows as quiet text. */
 export function DecideUnavailableNotice({
   availability,
   onRestartDaemon,
@@ -29,28 +34,49 @@ export function DecideUnavailableNotice({
     }
   }
 
+  // The restart is offered only when it is safe and this host can run it.
+  const runRestart =
+    availability.restart?.safe === true ? onRestartDaemon : undefined;
+  const canRestart = runRestart !== undefined;
+  const blockedReason = availability.restart?.blockedReason ?? null;
+
   return (
-    <div className="rounded-control border-border-chip bg-surface-quaternary flex flex-col gap-1.5 border-[0.5px] px-2.5 py-2">
-      <span className="text-[13px] font-medium">{availability.notice}</span>
-      <span className="font-book text-muted-foreground text-[12px]">
-        {availability.explanation}
-      </span>
-      {availability.restart?.safe === true && onRestartDaemon !== undefined ? (
-        <Button
-          variant="secondary"
-          className="self-start"
-          disabled={restarting}
-          onClick={() => void restart(onRestartDaemon)}
-        >
-          <RotateCw className="size-3" />
-          {restarting ? 'Restarting…' : 'Restart daemon'}
-        </Button>
-      ) : (
-        <span className="font-book text-muted-foreground text-[12px]">
-          {availability.restart?.blockedReason}
-        </span>
-      )}
-      {error !== null && <div className="text-red text-[12px]">{error}</div>}
-    </div>
+    <Notice
+      tone="muted"
+      role="note"
+      label={availability.notice ?? undefined}
+      action={
+        runRestart === undefined ? undefined : (
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<RotateCw size={14} strokeWidth={1.8} aria-hidden />}
+            busy={restarting}
+            busyLabel="Restarting…"
+            onClick={() => void restart(runRestart)}
+          >
+            Restart daemon
+          </Button>
+        )
+      }
+    >
+      <div className={styles.body}>
+        {availability.explanation === null ? null : (
+          <p className={styles.line}>{availability.explanation}</p>
+        )}
+        {!canRestart && blockedReason !== null ? (
+          <p className={styles.quiet}>{blockedReason}</p>
+        ) : null}
+        {error === null ? null : (
+          <p
+            role="alert"
+            className={cx('toneText', styles.line)}
+            data-tone="danger"
+          >
+            {error}
+          </p>
+        )}
+      </div>
+    </Notice>
   );
 }

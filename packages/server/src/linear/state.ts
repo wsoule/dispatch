@@ -38,8 +38,12 @@ interface EncodedBase {
   r: string;
 }
 
-/** A local comment's Linear twin: [remote id, task id, body hash at last sync]. */
-type CommentLink = [string, string, string];
+/** A local comment's Linear twin: [remote id, task id, body hash at last
+ *  sync, and the Linear user who wrote the remote comment when known]. Only
+ *  a comment's author may edit it in Linear, so an edit or delete goes out
+ *  as that user when it is the signed-in person. Links written before the
+ *  fourth element have three. */
+type CommentLink = [string, string, string, string?];
 
 /** One field both sides changed, and which side's edit was kept. */
 export interface ConflictRecord {

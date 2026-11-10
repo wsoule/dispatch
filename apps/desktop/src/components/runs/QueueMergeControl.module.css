@@ -1,0 +1,28 @@
+/* QueueMergeControl (QueueMergeControl.tsx): the Queue merge button, or the run's live
+   queue state, with the blocked or failed reason beside it. Tokens only. */
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* "Queued · #2", "Rebasing…": quiet words led by the queue glyph. */
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+
+/* A blocked or failed reason, cut to one line (the title holds the whole of it). A failure
+   takes its colour from the global .toneText hook instead of --text-2. */
+.reason {
+  max-width: 10rem;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

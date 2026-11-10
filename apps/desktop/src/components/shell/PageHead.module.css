@@ -1,0 +1,80 @@
+/* The head of a main-column page (components/shell/PageHead.tsx): the
+   back chip, the breadcrumb trail, the heading, a quiet meta sentence,
+   the receipts line and the actions pushed right, wrapping at a narrow
+   width. It places nothing around itself; the host pads it. */
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-1) var(--s-4);
+  min-width: 0;
+}
+
+.title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-heading);
+  color: var(--text);
+}
+
+.meta {
+  min-width: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+/* The receipts line: "9 projects in 3 initiatives · 2 at risk". */
+.receipts {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  margin-left: auto;
+}
+
+.crumbs {
+  min-width: 0;
+}
+
+.trail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-1) 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.segment {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.separator {
+  color: var(--text-3);
+}
+
+.ancestor {
+  min-width: 0;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.current {
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}

@@ -393,7 +393,23 @@ export interface ExecutorEvents {
     usage?: RunUsage;
     // The harness experiments (experiments.ts) the run ran under, when any.
     experiments?: string[];
+    // Set when the run stopped because its subscription account hit a usage
+    // limit, with when that limit resets if the executor learned it. The
+    // orchestrator's account failover (accountFailover.ts) acts on it.
+    usageLimit?: UsageLimitStop;
   }): void;
+}
+
+/** A run stopped by its account's usage limit; `resetsAt` is ISO, when known. */
+export interface UsageLimitStop {
+  resetsAt?: string;
+}
+
+/** The subscription account a run starts on: its label, and the token to
+ *  sign in with (absent for the executor's own login). */
+export interface RunAccount {
+  label: string;
+  token?: string;
 }
 
 export interface ExecutorStartOptions {
@@ -433,6 +449,10 @@ export interface ExecutorStartOptions {
   runTokenFile?: string;
   // How a Claude session carries memory; absent is `native`, today's behavior.
   memory?: ExecutorMemoryOptions;
+  // The stored subscription account to run on (see accountFailover.ts).
+  // Absent, or without a token, runs on the executor's own login. Only the
+  // Claude executor acts on it.
+  account?: RunAccount;
 }
 
 /** A run's memory mode, including the two outcomes of export's load check. */
@@ -593,6 +613,10 @@ export interface RunMeta {
   // The reasoning effort this run was started at; absent means the model's
   // own default. A resume keeps it, like `model`.
   effort?: EffortLevel;
+  // The label of the subscription account this run ran on ('default' for the
+  // executor's own login). Absent when no extra accounts are stored. A resume
+  // keeps it unless failover moves the run to another account.
+  account?: string;
   // Serialized ActorRef of the human the run is for, e.g. `human:ada`: who
   // pressed dispatch, or started the fan-out that dispatched it. A resume,
   // follow-up or review/verify run keeps its work's owner unless a person
@@ -717,6 +741,11 @@ export type DecoratedRunMeta = RunMeta & {
   /** Merged runs on origin, when the repo has a `v*` tag: the newest one and
    *  whether it contains this merge. */
   release?: { tag: string; included: boolean };
+  /** Ended runs another run resumed from: the newest such run's id. Its work
+   *  continued there, so the run reads "superseded" rather than its own
+   *  terminal state; when the successor merges, this run carries the same
+   *  reviewAction and mergeCommit (closeSupersededPredecessors). */
+  supersededBy?: string;
 };
 
 // A run's kind, defaulted for the transcripts and registry entries written

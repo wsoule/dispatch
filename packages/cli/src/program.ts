@@ -15,6 +15,7 @@ import { join } from 'node:path';
 
 import packageJson from '../package.json';
 import { registerA2ACommands } from './commands/a2a.js';
+import { registerAccountsCommands } from './commands/accounts.js';
 import { registerApprovalsCommands } from './commands/approvals.js';
 import { registerBoardSyncCommands } from './commands/boardSync.js';
 import { registerBrowserCommands } from './commands/browser.js';
@@ -33,6 +34,8 @@ import { registerMergeTaskCommand } from './commands/mergeTask.js';
 import { registerMergeTeamCommand } from './commands/mergeTeam.js';
 import { registerMigrateCommand } from './commands/migrate.js';
 import { registerOrchestrateCommands } from './commands/orchestrate.js';
+import { registerPairCommands } from './commands/pair.js';
+import { registerPhoneCommands } from './commands/phone.js';
 import { registerPlanCommands } from './commands/plan.js';
 import { registerReceiptsCommands } from './commands/receipts.js';
 import { registerRemoteCommands } from './commands/remote.js';
@@ -327,6 +330,7 @@ export function makeProgram(ctx: CliContext): Command {
 
   registerTaskCommands(program, ctx);
   registerDoctorCommand(program, ctx);
+  registerAccountsCommands(program, ctx);
   registerDaemonCommands(program, ctx);
   registerOrchestrateCommands(program, ctx);
   registerPlanCommands(program, ctx);
@@ -338,6 +342,7 @@ export function makeProgram(ctx: CliContext): Command {
   registerBrowserCommands(program, ctx);
   registerFanoutCommand(program, ctx);
   registerRemoteCommands(program, ctx);
+  registerPairCommands(program, ctx);
   registerWorktreeCommands(program, ctx);
   registerShareCommands(program, ctx);
   registerTeamCommands(program, ctx);
@@ -346,6 +351,7 @@ export function makeProgram(ctx: CliContext): Command {
   registerReceiptsCommands(program, ctx);
   registerDocsCommands(program, ctx);
   registerLicenseCommands(program, ctx);
+  registerPhoneCommands(program, ctx);
   registerMigrateCommand(program, ctx);
   registerA2ACommands(program, ctx);
 

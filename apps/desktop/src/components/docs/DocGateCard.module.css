@@ -1,0 +1,61 @@
+/* A doc gate (DocGateCard.tsx) inside its DecisionCard: the proposal's
+   title, proposer and merge state, its changed lines in a mono well that
+   scrolls past 256px, the merge-view pointer, and the decide error. */
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--s-2);
+}
+
+.title {
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+.strong {
+  color: var(--text);
+}
+
+/* A sentence with a quiet button after it ("Try again", "Open merge view"). */
+.line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--s-1);
+}
+
+.diff {
+  max-height: 256px;
+  margin: 0;
+  padding: var(--s-2) 10px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+/* The well scrolls with the keyboard; its ring sits inside its edge. */
+.diff:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.diffLine {
+  display: block;
+}
+
+.error {
+  font-size: var(--fs-xs);
+}

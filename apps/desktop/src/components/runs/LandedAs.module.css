@@ -1,0 +1,48 @@
+/* LandedAs (LandedAs.tsx): where a run's work went, as a wrapping row of a sentence, the
+   sha chip, the release chip, the retry button and the pull request chip. Tokens only. */
+
+.root {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* "Merged locally — not on GitHub yet": weighted, its colour from the global .toneText
+   hook (data-tone="warning"). */
+.owed {
+  font-weight: var(--fw-medium);
+}
+
+/* A chip's inside when it holds icons beside its words. */
+.chipBody {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+/* The short sha: a machine-read string, so Geist Mono. */
+.sha {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The out-arrow after a link's words. */
+.out {
+  flex: none;
+  color: var(--text-3);
+}
+
+/* A chip that is a link (the sha on GitHub, the pull request): no underline, the focus ring
+   on the link itself (rounded like the chip), and a hover fill one step past the chip's own
+   on the chip, the link's only child. */
+.link {
+  display: inline-flex;
+  border-radius: var(--r-chip);
+  color: inherit;
+  text-decoration: none;
+}
+
+.link:hover > * {
+  background: var(--surface-3);
+}

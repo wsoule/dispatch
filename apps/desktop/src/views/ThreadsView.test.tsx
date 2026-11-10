@@ -98,7 +98,6 @@ test('a question waiting on me is under Needs you, and its choice answers it', a
     <QueryClientProvider client={queryClient}>
       <ThreadsView
         data={data}
-        projectName="storefront"
         focus={focus}
         onFocus={onFocus}
         onOpenRef={() => {}}
@@ -108,6 +107,9 @@ test('a question waiting on me is under Needs you, and its choice answers it', a
   );
   const { rerender } = render(view(null));
 
+  // With nothing open, the page opens the newest thread waiting on me.
+  await waitFor(() => expect(onFocus).toHaveBeenCalledWith('m-q'));
+  onFocus.mockClear();
   const needsYou = await screen.findByRole('group', { name: 'Needs you' });
   fireEvent.click(
     await within(needsYou).findByRole('option', {
@@ -148,7 +150,6 @@ function renderRail(client: Record<string, unknown>) {
           runs: [],
           presence: [],
         })}
-        projectName="storefront"
         focus={null}
         onFocus={() => {}}
         onOpenRef={() => {}}
@@ -170,10 +171,55 @@ test('while the rail loads it is busy and says so, and the pane asks for nothing
   const rail = screen.getByRole('complementary', { name: 'Thread list' });
   expect(rail.getAttribute('aria-busy')).toBe('true');
   expect(within(rail).getByText('Loading threads…')).toBeTruthy();
+  // Skeleton rows hold the rail's shape while it loads, announced once.
+  expect(within(rail).getByRole('status').getAttribute('aria-busy')).toBe(
+    'true'
+  );
   expect(screen.queryByText('Pick a thread')?.textContent).toBeUndefined();
 });
 
+test('the page leads with its head: Threads as the trail, no back chip, and New thread', async () => {
+  renderRail({
+    getMailbox: mock(() => Promise.resolve({ items: [] })),
+    listRecentThreads: mock(() => Promise.resolve({ threads: [] })),
+    openDecisions: mock(() => Promise.resolve({ items: [] })),
+    listChannels: mock(() => Promise.resolve({ channels: [] })),
+    listAgentRoster: mock(() => Promise.resolve({ agents: [] })),
+  });
+  const head = document.querySelector('[data-slot="page-header"]');
+  if (!(head instanceof HTMLElement)) throw new Error('no page header');
+  expect(
+    head.querySelector('[data-slot="page-header-crumb"]')?.textContent
+  ).toBe('Threads');
+  expect(screen.queryByTestId('tasks-back')).toBeNull();
+  expect(within(head).getByText('Threads').getAttribute('aria-current')).toBe(
+    'page'
+  );
+  expect(
+    within(head).getByRole<HTMLButtonElement>('button', { name: 'New thread' })
+      .disabled
+  ).toBe(false);
+  expect(screen.getByRole('region', { name: 'Thread' })).toBeTruthy();
+  await within(
+    screen.getByRole('complementary', { name: 'Thread list' })
+  ).findByText('No threads yet');
+});
+
 // An empty mailbox is not an empty rail while a decider's other lists are out.
+test('a rail that failed to load says why, in the danger tone', async () => {
+  renderRail({
+    getMailbox: mock(() => Promise.reject(new Error('mailbox is down'))),
+    listRecentThreads: mock(() => Promise.resolve({ threads: [] })),
+    openDecisions: mock(() => Promise.resolve({ items: [] })),
+    listChannels: mock(() => Promise.resolve({ channels: [] })),
+    listAgentRoster: mock(() => Promise.resolve({ agents: [] })),
+  });
+  const rail = screen.getByRole('complementary', { name: 'Thread list' });
+  const alert = await within(rail).findByRole('alert');
+  expect(alert.textContent).toBe('mailbox is down');
+  expect(alert.getAttribute('data-tone')).toBe('danger');
+});
+
 test('the rail stays loading until recent threads and open gates are in too', async () => {
   const pending = () => new Promise<never>(() => {});
   const getMailbox = mock(() => Promise.resolve({ items: [] }));
@@ -256,7 +302,7 @@ test('Cancel closes a new thread without sending', async () => {
   expect(document.activeElement === newThread).toBe(true);
 });
 
-test("a cut-off Assistant call is read in full from the Assistant's conversation", async () => {
+test("a cut-off Overseer call is read in full from the Overseer's conversation", async () => {
   const gate: Message = {
     ...question,
     id: 'm-g',
@@ -311,7 +357,6 @@ test("a cut-off Assistant call is read in full from the Assistant's conversation
           runs: [],
           presence: [],
         })}
-        projectName="storefront"
         focus="m-g"
         onFocus={() => {}}
         onOpenRef={() => {}}
@@ -357,7 +402,6 @@ test('an attached agent-token window queries nothing and says why', () => {
     >
       <ThreadsView
         data={data}
-        projectName="storefront"
         focus="m-q"
         onFocus={() => {}}
         onOpenRef={() => {}}
@@ -409,7 +453,6 @@ test('a teammate waits for the daemon to say who they are, with no reason given 
     >
       <ThreadsView
         data={data}
-        projectName="storefront"
         focus={null}
         onFocus={() => {}}
         onOpenRef={() => {}}
@@ -417,9 +460,12 @@ test('a teammate waits for the daemon to say who they are, with no reason given 
       />
     </QueryClientProvider>
   );
-  expect(
-    screen.getByText('Waiting for the daemon to say who you are.')
-  ).toBeTruthy();
+  // The rail's skeleton, busy, says what it waits for (no empty-state glyph).
+  const rail = screen.getByRole('complementary', { name: 'Thread list' });
+  expect(rail.getAttribute('aria-busy')).toBe('true');
+  const status = within(rail).getByRole('status');
+  expect(status.getAttribute('aria-busy')).toBe('true');
+  expect(status.textContent).toBe('Waiting for the daemon to say who you are.');
   expect(
     screen.queryByText('Threads are not available in this window.')
   ).toBeNull();
@@ -464,7 +510,6 @@ test('a failed whoami says so and asks again from Retry, instead of loading for 
           runs: [],
           presence: [],
         })}
-        projectName="storefront"
         focus={null}
         onFocus={() => {}}
         onOpenRef={() => {}}
@@ -541,7 +586,6 @@ test('a run moving on re-renders no row of the open thread until what a row offe
             runs,
             presence,
           })}
-          projectName="storefront"
           focus="m-q"
           onFocus={() => {}}
           onOpenRef={() => {}}
@@ -596,7 +640,6 @@ test('a focus that names no message says the thread did not load', async () => {
     >
       <ThreadsView
         data={data}
-        projectName="storefront"
         focus="m-gone"
         onFocus={() => {}}
         onOpenRef={() => {}}

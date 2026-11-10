@@ -1,20 +1,19 @@
 import type { AdjudicateFindingInput, Finding } from '@dispatch/client';
+import { Button, Chip, cx, TaskDetailSection } from '@dispatch/ui';
 import { useState } from 'react';
 
 import {
   countOpenFindings,
+  findingTone,
   groupOpenFindingsBySeverity,
-  severityColor,
   severityLabel,
 } from '../../../lib/findings';
-import { MainSection } from './MainSection';
-import { LabelPill, PillButton } from '@/ui/ai/pill';
-import { Textarea } from '@/ui/textarea';
+import styles from './sections.module.css';
 
-// Two explicit actions, never a bare "submit" — both disabled until a
-// reason is actually typed, so the ruling requirement can't be missed. Laid
-// out as a composer card: a borderless textarea over a row of pill buttons,
-// `Block` in red text rather than a filled destructive button.
+// Two explicit actions, never a bare "submit": both disabled until a reason is
+// actually typed, so the ruling requirement can't be missed. A native textarea
+// over a row of small buttons, `Block` in the danger tone's text rather than a
+// filled destructive button.
 function AdjudicateFindingForm({
   onSubmit,
 }: {
@@ -39,43 +38,69 @@ function AdjudicateFindingForm({
   }
 
   return (
-    <div
-      data-slot="adjudicate-form"
-      className="bg-field rounded-card border-border-strong focus-within:ring-ring mt-3 flex flex-col gap-2 border-[0.5px] p-2.5 focus-within:ring-1"
-    >
-      <Textarea
-        variant="borderless"
-        rows={1}
+    <div data-slot="adjudicate-form" className={styles.form}>
+      <textarea
+        className={cx('textarea', styles.ruling)}
+        rows={2}
         aria-label="Ruling"
         value={ruling}
         onChange={(e) => setRuling(e.target.value)}
         placeholder="Ruling (required to park or block)"
-        className="min-h-5 resize-none text-[13px] leading-5"
       />
       {error !== null && (
-        <div className="text-red font-book text-[12px]">{error}</div>
+        <p className={cx('toneText', styles.note)} data-tone="danger">
+          {error}
+        </p>
       )}
-      <div className="flex items-center gap-2">
-        <PillButton
+      <div className={styles.actions}>
+        <Button
+          size="sm"
+          variant="secondary"
           disabled={empty || pending !== null}
+          busy={pending === 'parked'}
+          busyLabel="Parking…"
           onClick={() => void submit('parked')}
         >
-          {pending === 'parked' ? 'Parking…' : 'Park'}
-        </PillButton>
-        <PillButton
-          className="text-red"
+          Park
+        </Button>
+        <Button
+          size="sm"
+          variant="quiet"
           disabled={empty || pending !== null}
+          busy={pending === 'blocked'}
+          busyLabel="Blocking…"
           onClick={() => void submit('blocked')}
         >
-          {pending === 'blocked' ? 'Blocking…' : 'Block'}
-        </PillButton>
+          <span className="toneText" data-tone="danger">
+            Block
+          </span>
+        </Button>
       </div>
     </div>
   );
 }
 
-// The adjudication form only attaches while the fix loop is capped — that
-// is the one moment a ruling actually does anything.
+// The heading's meta names the severity mix so it's visible without scrolling
+// the grouped body below, e.g. "3 open (1 critical, 2 minor)".
+function findingsSummary(findings: Finding[]): string {
+  const counts = countOpenFindings(findings);
+  const bySeverity = [
+    counts.critical > 0 ? `${counts.critical} critical` : null,
+    counts.important > 0 ? `${counts.important} important` : null,
+    counts.minor > 0 ? `${counts.minor} minor` : null,
+  ]
+    .filter((s): s is string => s !== null)
+    .join(', ');
+  return bySeverity === ''
+    ? `${counts.open} open`
+    : `${counts.open} open (${bySeverity})`;
+}
+
+// The open findings grouped most severe first, each group under a severity
+// chip toned by `findingTone` (its words always say the severity), each finding
+// a comment card with its file location in mono. The adjudication form only
+// attaches while the fix loop is capped: that is the one moment a ruling
+// actually does anything.
 export function FindingsPanel({
   findings,
   needsRuling,
@@ -89,67 +114,45 @@ export function FindingsPanel({
   ) => Promise<void>;
 }) {
   const groups = groupOpenFindingsBySeverity(findings);
-  const counts = countOpenFindings(findings);
   if (groups.length === 0) return null;
-  // The heading's trailing text names the severity mix so it's visible
-  // without scrolling the grouped body below — e.g. "3 open (1 critical, 2 minor)".
-  const bySeverity = [
-    counts.critical > 0 ? `${counts.critical} critical` : null,
-    counts.important > 0 ? `${counts.important} important` : null,
-    counts.minor > 0 ? `${counts.minor} minor` : null,
-  ]
-    .filter((s): s is string => s !== null)
-    .join(', ');
-  const summary =
-    bySeverity === ''
-      ? `${counts.open} open`
-      : `${counts.open} open (${bySeverity})`;
   return (
-    <MainSection
+    <TaskDetailSection
       title="Findings"
-      trailing={
-        <span
-          data-slot="findings-summary"
-          className="text-muted-foreground font-book text-[12px] tabular-nums"
-        >
-          {summary}
+      headingLevel={3}
+      meta={
+        <span data-slot="findings-summary" className="num">
+          {findingsSummary(findings)}
         </span>
       }
     >
-      <div className="flex flex-col gap-3">
+      <div className={styles.body}>
         {groups.map((group) => (
           <div
             key={group.severity}
             data-slot="findings-group"
-            className="flex flex-col gap-1.5"
+            className={styles.group}
           >
-            <div className="flex items-center gap-2">
-              <LabelPill color={severityColor(group.severity)}>
+            <div className={styles.groupHead}>
+              <Chip data-slot="label-pill" tone={findingTone(group.severity)}>
                 {severityLabel(group.severity)}
-              </LabelPill>
-              <span className="text-muted-foreground font-book text-[12px] tabular-nums">
-                {group.findings.length}
-              </span>
+              </Chip>
+              <span className={styles.count}>{group.findings.length}</span>
             </div>
-            <ul className="flex flex-col gap-2">
+            <ul className={styles.list}>
               {group.findings.map((finding) => (
                 <li
                   key={finding.id}
                   data-slot="finding-card"
-                  className="bg-surface-quaternary rounded-card border-border-strong border-[0.5px] p-3"
+                  className={styles.card}
                 >
-                  <div className="text-foreground text-[13px] font-medium">
-                    {finding.title}
-                  </div>
+                  <div className={styles.cardTitle}>{finding.title}</div>
                   {finding.file !== null && (
-                    <div className="text-muted-foreground mt-0.5 font-mono text-[12px] break-all">
+                    <span className={cx('mono', styles.cardLine)}>
                       {finding.file}
                       {finding.line !== null ? `:${finding.line}` : ''}
-                    </div>
+                    </span>
                   )}
-                  <p className="text-muted-foreground font-book mt-1 text-[13px] whitespace-pre-wrap">
-                    {finding.detail}
-                  </p>
+                  <p className={styles.cardBody}>{finding.detail}</p>
                   {needsRuling && (
                     <AdjudicateFindingForm
                       onSubmit={(input) => onAdjudicate(finding.id, input)}
@@ -161,6 +164,6 @@ export function FindingsPanel({
           </div>
         ))}
       </div>
-    </MainSection>
+    </TaskDetailSection>
   );
 }

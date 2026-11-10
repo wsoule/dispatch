@@ -12,6 +12,7 @@ import {
   diffQueueNotifications,
   diffRunNotifications,
   emptyQuestionTracking,
+  isAskNotification,
   isKindEnabled,
 } from './notificationEdges';
 
@@ -451,5 +452,17 @@ describe('isKindEnabled', () => {
 
   test('everything fires until config has loaded', () => {
     expect(isKindEnabled(null, 'run-stalled')).toBe(true);
+  });
+});
+
+describe('isAskNotification', () => {
+  test('a question is an ask; a run or merge transition is not', () => {
+    expect(isAskNotification({ title: 'An agent needs your answer' })).toBe(
+      true
+    );
+    expect(isAskNotification({ title: 'The planner needs your answer' })).toBe(
+      true
+    );
+    expect(isAskNotification({ title: 'Run finished' })).toBe(false);
   });
 });

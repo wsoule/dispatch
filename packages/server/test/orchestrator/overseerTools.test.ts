@@ -336,6 +336,7 @@ describe('overseer tool sets', () => {
       'open_questions',
       'pending_approvals',
       'read_conversation',
+      'show_page',
       'show_tasks',
       'task_details',
     ]);
@@ -767,6 +768,89 @@ describe('overseer mutating tools produce a pending action, never an effect', ()
     expect(h.orchestrator.pendingApprovalsFor(runId)).toHaveLength(1);
   });
 
+  it('approve_run asks every time for an irreversible call or a whole-run allow', async () => {
+    const h = makeHarness();
+    h.orchestrator.registerExecutor(
+      'gated-ls',
+      new FakeExecutor({
+        steps: [
+          {
+            approval: {
+              requestId: 'req-ls',
+              toolName: 'Bash',
+              input: { command: 'ls' },
+            },
+          },
+        ],
+        finish: { state: 'finished', sessionId: 'sess-ls' },
+      })
+    );
+    h.orchestrator.registerExecutor(
+      'gated-push',
+      new FakeExecutor({
+        steps: [
+          {
+            approval: {
+              requestId: 'req-push',
+              toolName: 'Bash',
+              input: { command: 'git push --force origin main' },
+            },
+          },
+        ],
+        finish: { state: 'finished', sessionId: 'sess-push' },
+      })
+    );
+    const plain = await dispatchUntil(
+      h,
+      'Plain',
+      'gated-ls',
+      'awaiting-approval'
+    );
+    const floor = await dispatchUntil(
+      h,
+      'Floor',
+      'gated-push',
+      'awaiting-approval'
+    );
+    const tierOf = (input: Record<string, unknown>) =>
+      h.registry.callMutatingTool('approve_run', input).tier;
+
+    expect(tierOf({ runId: plain.runId })).toBe('medium');
+    expect(tierOf({ runId: plain.runId, scope: 'session' })).toBe('high');
+    // A force-push is on the irreversibility floor.
+    expect(tierOf({ runId: floor.runId })).toBe('high');
+    // deny_run is never raised: refusing can't do irreversible harm.
+    expect(
+      h.registry.callMutatingTool('deny_run', { runId: floor.runId }).tier
+    ).toBe('medium');
+  });
+
+  it('create_plan is low unless it starts agents, which asks like a dispatch', () => {
+    const base = makeHarness();
+    const ctx = {
+      ...base,
+      milestones: { start: () => Promise.resolve() },
+    } as OverseerToolContext;
+    const registry = new OverseerToolRegistry(ctx);
+    const tasks = [{ title: 'One' }];
+    expect(registry.callMutatingTool('create_plan', { tasks }).tier).toBe(
+      'low'
+    );
+    expect(
+      registry.callMutatingTool('create_plan', {
+        milestone: { title: 'M' },
+        tasks,
+      }).tier
+    ).toBe('medium');
+    expect(
+      registry.callMutatingTool('create_plan', {
+        milestone: { title: 'M' },
+        send: false,
+        tasks,
+      }).tier
+    ).toBe('low');
+  });
+
   it('approve_run names the parked call it was given, and refuses one that is not parked', async () => {
     const h = makeHarness();
     const { runId } = await dispatchUntil(
@@ -889,6 +973,7 @@ describe('applyAction performs the real effect', () => {
     const applied = await h.registry.applyAction(action.id, CONFIRMED);
 
     expect(applied.status).toBe('applied');
+    expect(applied.taskIds).toEqual([task.meta.id]);
     const runs = h.orchestrator.list();
     expect(runs).toHaveLength(1);
     expect(runs[0].taskId).toBe(task.meta.id);
@@ -1316,6 +1401,21 @@ describe('discard_run', () => {
     expect(h.store.get(taskId)?.body).toContain(`run ${runId} discarded`);
   });
 
+  it('discards a run whose task was deleted and whose worktree is gone', async () => {
+    const h = makeHarness();
+    const { runId, taskId } = await failedRun(h, 'Fake task');
+    const meta = h.orchestrator.getRun(runId)?.meta;
+    if (meta === undefined) throw new Error('no run');
+    runGitSync(repo, ['worktree', 'remove', '--force', meta.worktreePath]);
+    expect(h.store.remove(taskId)).toBe(true);
+
+    const action = h.registry.callMutatingTool('discard_run', { runId });
+    await h.registry.applyAction(action.id, CONFIRMED);
+
+    expect(h.orchestrator.getRun(runId)?.meta.reviewAction).toBe('discard');
+    expect(runGitSync(repo, ['branch', '--list', meta.branch]).trim()).toBe('');
+  });
+
   it('warns on the card that an interrupted-dirty run loses its uncommitted changes', async () => {
     const h = makeHarness();
     const { runId } = await failedRun(h, 'Died mid-write', { dirty: true });
@@ -1494,7 +1594,7 @@ describe('pending action bookkeeping', () => {
     );
   });
 
-  it('leaves an action pending when applying it fails, so it can be retried', async () => {
+  it('settles an action as failed when applying it fails, so it is not applied again', async () => {
     const h = makeHarness();
     const task = h.store.create({ title: 'Add feature' });
     h.cache.rebuild(h.store);
@@ -1506,8 +1606,11 @@ describe('pending action bookkeeping', () => {
     expect(h.registry.applyAction(action.id, CONFIRMED)).rejects.toThrow(
       /unknown executor/
     );
-    await waitFor(() => h.registry.getAction(action.id)?.status === 'pending');
-    expect(h.registry.listPending().map((x) => x.id)).toEqual([action.id]);
+    await waitFor(() => h.registry.getAction(action.id)?.status === 'failed');
+    expect(h.registry.listPending()).toEqual([]);
+    expect(h.registry.applyAction(action.id, CONFIRMED)).rejects.toThrow(
+      /already failed/
+    );
   });
 });
 
@@ -1528,6 +1631,19 @@ describe('the agent reaches into Tasks', () => {
     expect(() =>
       h.registry.callStatusTool('show_tasks', { milestoneId: task.meta.id })
     ).toThrow('not a milestone');
+  });
+
+  it('show_page leaves a door to an http(s) page and refuses anything else', () => {
+    const h = makeHarness();
+    expect(
+      h.registry.callStatusTool('show_page', { url: 'http://localhost:5173' })
+    ).toMatchObject({ door: { url: 'http://localhost:5173/' } });
+    expect(() =>
+      h.registry.callStatusTool('show_page', { url: 'file:///etc/passwd' })
+    ).toThrow('not an http(s) page');
+    expect(() =>
+      h.registry.callStatusTool('show_page', { url: 'localhost' })
+    ).toThrow('not a URL');
   });
 
   it('task_details fences the body as data', () => {
@@ -1689,10 +1805,14 @@ describe('the agent drives everything behind cards', () => {
     expect(h.cache.query().some((t) => t.meta.title === 'Spec the 403')).toBe(
       false
     );
-    await h.registry.applyAction(action.id, CONFIRMED);
+    expect(action.entities).toBeUndefined();
+    const applied = await h.registry.applyAction(action.id, CONFIRMED);
     const made = h.cache.query().find((t) => t.meta.title === 'Spec the 403');
+    expect(applied.taskIds).toEqual([made?.meta.id ?? '']);
     expect(made?.meta.parent).toBe(milestone.meta.id);
     expect(made?.meta.priority).toBe('high');
+    // The chat's result card links the task it made.
+    expect(applied.entities).toEqual([made?.meta.id ?? '']);
   });
 
   it('create_plan makes a milestone and its tasks on one card, #n wiring order', async () => {
@@ -1708,7 +1828,7 @@ describe('the agent drives everything behind cards', () => {
     expect(action.summary).toBe(
       'Create milestone "Auth v2" with 3 tasks: "Schema", "Endpoints", "UI"'
     );
-    await h.registry.applyAction(action.id, CONFIRMED);
+    const applied = await h.registry.applyAction(action.id, CONFIRMED);
     const all = h.cache.query();
     const milestone = all.find((t) => t.meta.title === 'Auth v2');
     const byTitle = (title: string) => {
@@ -1720,6 +1840,17 @@ describe('the agent drives everything behind cards', () => {
     expect(byTitle('Schema').parent).toBe(milestone?.meta.id ?? null);
     expect(byTitle('Endpoints').blockedBy).toEqual([byTitle('Schema').id]);
     expect(byTitle('UI').blockedBy).toEqual([byTitle('Endpoints').id]);
+    // The plan's tasks, in order, never the milestone that holds them.
+    expect(applied.taskIds).toEqual(
+      ['Schema', 'Endpoints', 'UI'].map((title) => byTitle(title).id)
+    );
+    // The milestone first, then the tasks in plan order: the card's rows.
+    expect(applied.entities).toEqual([
+      milestone?.meta.id ?? '',
+      byTitle('Schema').id,
+      byTitle('Endpoints').id,
+      byTitle('UI').id,
+    ]);
   });
 
   it('create_plan sends agents on its new milestone once approved, and says so first', async () => {

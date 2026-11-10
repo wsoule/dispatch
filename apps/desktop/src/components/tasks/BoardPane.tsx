@@ -1,6 +1,12 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
 import { isContainerKind } from '@dispatch-foo/core/browser';
 import {
+  parseCollapsed,
+  readCollapsedRaw,
+  toggleCollapsed,
+  writeCollapsed,
+} from '@dispatch/ui';
+import {
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -18,31 +24,40 @@ import {
   visibleBoardColumns,
   visibleLaneTaskIds,
 } from '../../lib/boardGrouping';
-import {
-  COLLAPSED_LANES_STORAGE_KEY,
-  readCollapsedGroups,
-  toggleCollapsedGroup,
-  writeCollapsedGroups,
-} from '../../lib/collapsedMilestones';
 import { resolveListKeyCommand } from '../../lib/keyboard';
 import { landingStateByTaskId } from '../../lib/landingBadge';
 import { sortTasks } from '../../lib/listGrouping';
 import type { WorkMilestoneOptions } from '../../lib/milestoneSession';
 import { useStatusModelOf } from '../../lib/statusModel';
 import type { TasksDisplayPrefs } from '../../lib/tasksPrefs';
+import { viewerHolderOf } from '../flightplan/flightPlan';
+import styles from './BoardPane.module.css';
 import { DispatchDialog } from './DispatchDialog';
 import { TaskBoard } from './TaskBoard';
 import { liveClaimsFrom } from '@/lib/dispatchPreview';
 
+/**
+ * The board's folded swim lanes, whatever kind they are. Keys are namespaced by lane kind
+ * (`e-…` / `__no-milestone__` for milestone lanes, `assignee:…`, `priority:…`) so a fold on
+ * one sub-grouping never hides a lane of another. The storage key predates the generalized
+ * lanes (it was milestone lanes only), and stays so sessions folded before them survive.
+ */
+const COLLAPSED_LANES_STORAGE_KEY = 'dispatch:board-collapsed-milestones';
 /** Session keys for the columns folded to a strip or hidden from a column's `···` menu —
- * the same "out of my way for now" lifetime as collapsed milestone lanes. */
+ * the same "out of my way for now" lifetime as collapsed lanes. */
 const COLLAPSED_COLUMNS_STORAGE_KEY = 'dispatch:board-collapsed-columns';
 const HIDDEN_COLUMNS_STORAGE_KEY = 'dispatch:board-hidden-columns';
 
-// Reads a session-scoped collapsed set without touching storage during SSR/tests that
-// stub `window` away.
+/**
+ * Reads one of the board's session-scoped sets (folded lanes, collapsed or hidden columns)
+ * through the library's fold storage, without touching storage during SSR or tests that stub
+ * `window` away. Session-scoped on purpose: folding is a "get this out of my way for now"
+ * gesture, so it survives a view switch but not a restart. A corrupt value reads as empty.
+ */
 function readSessionSet(key: string): Set<string> {
-  return typeof window === 'undefined' ? new Set() : readCollapsedGroups(key);
+  return typeof window === 'undefined'
+    ? new Set()
+    : parseCollapsed(readCollapsedRaw(key, 'session'));
 }
 
 interface BoardPaneProps {
@@ -52,6 +67,10 @@ interface BoardPaneProps {
   /** The page's filter as one predicate; omitted passes everything. */
   taskFilter?: (doc: TaskListItem) => boolean;
   onSelectTask: (taskId: string) => void;
+  /** The task whose full page just closed: when the board mounts, its card
+   * takes the cursor and the focus (Back lands where it left), as the list's
+   * row does. Read at mount only. */
+  returnTaskId?: string;
   /** `f` on the board: the page header opens its filter menu. */
   onRequestFilter?: () => void;
   /** `⇧V` on the board: the page header opens its Display popover. */
@@ -70,6 +89,7 @@ export function BoardPane({
   display,
   taskFilter,
   onSelectTask,
+  returnTaskId,
   onRequestFilter,
   onRequestDisplay,
 }: BoardPaneProps) {
@@ -91,18 +111,37 @@ export function BoardPane({
     milestoneId: string;
     mode: 'start' | 'raise';
   } | null>(null);
+  const unlimitedSpend = data.config?.orchestrator.unlimitedSpend === true;
 
   useEffect(() => {
-    writeCollapsedGroups(COLLAPSED_LANES_STORAGE_KEY, collapsedLaneKeys);
+    writeCollapsed(COLLAPSED_LANES_STORAGE_KEY, 'session', collapsedLaneKeys);
   }, [collapsedLaneKeys]);
 
   useEffect(() => {
-    writeCollapsedGroups(COLLAPSED_COLUMNS_STORAGE_KEY, collapsedColumns);
+    writeCollapsed(COLLAPSED_COLUMNS_STORAGE_KEY, 'session', collapsedColumns);
   }, [collapsedColumns]);
 
   useEffect(() => {
-    writeCollapsedGroups(HIDDEN_COLUMNS_STORAGE_KEY, hiddenColumns);
+    writeCollapsed(HIDDEN_COLUMNS_STORAGE_KEY, 'session', hiddenColumns);
   }, [hiddenColumns]);
+
+  // A card's status menu offers every status (cardStatuses below), hidden columns
+  // included. Moving a card into a column hidden this session shows that column again,
+  // so the card stays on the board where the reader can see and reach it, instead of
+  // vanishing with focus dropped to the page. (A drag can only land on a shown column.)
+  const moveTaskStatus = data.moveTaskStatus;
+  const moveStatus = useCallback(
+    (taskId: string, status: string) => {
+      setHiddenColumns((prev) => {
+        if (!prev.has(status)) return prev;
+        const next = new Set(prev);
+        next.delete(status);
+        return next;
+      });
+      return moveTaskStatus(taskId, status);
+    },
+    [moveTaskStatus]
+  );
 
   const laneBy = display.subGrouping;
   const model = useStatusModelOf(data.config);
@@ -203,6 +242,20 @@ export function BoardPane({
     [lanes, collapsedLaneKeys, laneBy]
   );
 
+  // Back from a task page lands on the card it was opened from: at mount, the
+  // cursor goes to that card when the board shows it, and the card's tile takes
+  // DOM focus from its `focused` prop (TaskBoard first mounts it if its column
+  // window does not hold it). Nothing moves when focus already sits elsewhere
+  // or the card is filtered away, as with the list's row. Read once, at mount.
+  const mountReturn = useRef({ taskId: returnTaskId, orderedTaskIds });
+  useLayoutEffect(() => {
+    const { taskId, orderedTaskIds: onScreen } = mountReturn.current;
+    if (taskId === undefined || !onScreen.includes(taskId)) return;
+    const active = document.activeElement;
+    if (active !== null && active !== document.body) return;
+    setFocusedTaskId(taskId);
+  }, []);
+
   // A card's Dispatch and `d`: in place and optimistic, like the Cockpit's — the card moves
   // to the dispatched column at once.
   const handleDispatch = data.handleDispatch;
@@ -302,31 +355,37 @@ export function BoardPane({
           remain the real roving-focus targets once `focusedTaskId` moves onto one of them. */}
       <div
         data-testid="board-pane"
-        className="min-h-0 flex-1 px-4 py-3 outline-none"
+        className={styles.track}
         tabIndex={0}
         onKeyDown={handleBoardKeyDown}
       >
         <TaskBoard
           collapsedLaneKeys={collapsedLaneKeys}
           onToggleLane={(key) =>
-            setCollapsedLaneKeys((prev) => toggleCollapsedGroup(prev, key))
+            setCollapsedLaneKeys((prev) => toggleCollapsed(prev, key))
           }
           collapsedColumns={collapsedColumns}
           onToggleColumnCollapsed={(status) =>
-            setCollapsedColumns((prev) => toggleCollapsedGroup(prev, status))
+            setCollapsedColumns((prev) => toggleCollapsed(prev, status))
           }
           onHideColumn={(status) =>
             setHiddenColumns((prev) => new Set([...prev, status]))
           }
           hiddenColumnCount={hiddenColumns.size}
           onShowHiddenColumns={() => setHiddenColumns(new Set())}
-          onRequestWorkMilestone={(milestoneId) =>
-            setDispatchMilestone({ milestoneId, mode: 'start' })
+          // Unlimited spend skips the preview: the lane header then dispatches straight
+          // away at its picker's concurrency with no ceilings, so nothing pauses for one.
+          onRequestWorkMilestone={
+            unlimitedSpend
+              ? undefined
+              : (milestoneId) =>
+                  setDispatchMilestone({ milestoneId, mode: 'start' })
           }
           tasks={orderedBoardTasks}
           archivedTaskIds={archivedTaskIds}
           statusModel={model}
           statuses={visibleStatuses}
+          cardStatuses={data.config?.statuses}
           display={display}
           readyIds={data.readyIds}
           blockedIds={data.blockedIds}
@@ -345,12 +404,15 @@ export function BoardPane({
           onWorkMilestone={data.handleWorkMilestone}
           onPauseMilestone={data.handlePauseMilestone}
           onResumeMilestone={data.handleResumeMilestone}
-          onRaiseCeilingMilestone={(milestoneId) =>
-            setDispatchMilestone({ milestoneId, mode: 'raise' })
+          onRaiseCeilingMilestone={
+            unlimitedSpend
+              ? undefined
+              : (milestoneId) =>
+                  setDispatchMilestone({ milestoneId, mode: 'raise' })
           }
           onStopMilestone={data.handleStopMilestone}
           onLandMilestone={data.handleLandMilestone}
-          onMoveStatus={data.moveTaskStatus}
+          onMoveStatus={moveStatus}
           onEditTask={data.handleUpdate}
           focusedTaskId={focusedTaskId}
           onCardFocus={setFocusedTaskId}
@@ -363,6 +425,8 @@ export function BoardPane({
             (t) => t.meta.parent === dispatchMilestone.milestoneId
           )}
           readyIds={data.readyIds}
+          // A teammate's task never starts in a fan-out: the dialog marks it Teammate.
+          holderOf={viewerHolderOf(data.me, data.localHuman)}
           runningNow={data.liveRunStateByTaskId.size}
           liveClaims={liveClaimsFrom(data.runs)}
           defaultConcurrency={

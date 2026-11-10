@@ -1,8 +1,14 @@
+import type { DependentStart } from './graph.js';
 import type { LabelDefinition } from './labels.js';
 import { DEFAULT_STATUS_MAP } from './linearMap.js';
 import type { Person } from './people.js';
-import type { PolicyConfig, PolicyGate, PolicyGateMode } from './policy.js';
-import { DEFAULT_POLICY } from './policy.js';
+import type {
+  DifficultyPolicy,
+  PolicyConfig,
+  PolicyGate,
+  PolicyGateMode,
+} from './policy.js';
+import { DEFAULT_DIFFICULTY_POLICY, DEFAULT_POLICY } from './policy.js';
 import type { QueueWeights } from './scoring.js';
 import { DEFAULT_QUEUE_WEIGHTS } from './scoring.js';
 import type { StatusDefinition, StatusRoles } from './status.js';
@@ -17,7 +23,13 @@ export interface OrchestratorConfig {
   /** Ceiling on one `verifyCommand` run. The merge queue is serial, so a verify
    *  that never returns holds up every entry behind it. */
   verifyTimeoutSec: number;
+  /** Always undefined in a loaded config while `unlimitedSpend` is on, whatever
+   *  the file says, so no executor or overseer is handed a cap. */
   maxBudgetUsd?: number;
+  /** "Spend doesn't matter here": no per-run budget cap, fan-outs never pause
+   *  at a spend or run ceiling, and the desktop sends agents without asking for
+   *  one. The on-disk `maxBudgetUsd` is kept, so turning this off restores it. */
+  unlimitedSpend: boolean;
   permissionMode: string;
   milestoneConcurrency: number;
   /** Hard ceiling on concurrent runs any one milestone session may hold, capped at
@@ -28,11 +40,68 @@ export interface OrchestratorConfig {
   runCostEstimateUsd: number;
   /** The executor a dispatch runs on when the caller names none. */
   executor: string;
+  /** When a milestone fan-out may start a task whose blocker is not done yet —
+   *  see `DependentStart`. Defaults to `landed`: a blocker in review is still
+   *  waiting on a human, so nothing is built on top of it automatically. */
+  startDependents: DependentStart;
 }
 
 /** The largest `maxConcurrency` the loader accepts. Browser-safe so the
  *  dispatch dialog can clamp its own input against it. */
 export const MAX_CONCURRENCY_HARD_CAP = 32;
+
+/** The numeric planning tuning fields, by @dispatch/planning's `Tuning`
+ * names (core cannot import that package, so the names are mirrored and the
+ * desktop checks they still match). */
+export const PLANNING_TUNING_NUMBERS = [
+  'warnLeadDays',
+  'paceWindowDays',
+  'stallDays',
+  'overdueRepeatDays',
+  'newBadgeDays',
+  'timelineDaysBack',
+  'timelineDaysAhead',
+] as const;
+
+export type PlanningTuningNumber = (typeof PLANNING_TUNING_NUMBERS)[number];
+
+/** Project statuses the planning may count as active (its ProjectStatusType). */
+export const PLANNING_PROJECT_STATUSES = [
+  'backlog',
+  'planned',
+  'started',
+  'paused',
+  'completed',
+  'canceled',
+] as const;
+
+export type PlanningProjectStatus = (typeof PLANNING_PROJECT_STATUSES)[number];
+
+/**
+ * The `planning:` block: the milestone planner's settings (Better Tracker's
+ * Settings → Schedule and Watchers). `tuning` holds only the fields set, each
+ * overriding the planning's default; `watchers` are `human:<handle>` refs who
+ * hear about every at-risk milestone besides its project's lead.
+ */
+export interface PlanningConfig {
+  tuning: Partial<Record<PlanningTuningNumber, number>> & {
+    activeProjectStatuses?: PlanningProjectStatus[];
+  };
+  watchers: string[];
+  /** Milestone task id → its weight: a heavier milestone sorts first among
+   * milestones due alike (Better Tracker's planner-only weight). */
+  weights: Record<string, number>;
+  /** `daily`: the daemon applies the allocation once a day on its own;
+   * `manual` (default): only when someone presses Apply. */
+  allocation: PlanningAllocationMode;
+  /** `notify`: the daemon sends each watcher and project lead a daily digest
+   * of milestones at risk; `off` (default): nothing is sent. */
+  warnings: PlanningWarningsMode;
+}
+
+export type PlanningAllocationMode = 'manual' | 'daily';
+
+export type PlanningWarningsMode = 'off' | 'notify';
 
 export interface RepoDigestConfig {
   /** False stops all generation; the cache still serves what is on disk. */
@@ -157,6 +226,29 @@ export const DEFAULT_SYNC: SyncConfig = {
   intervalSec: 30,
 };
 
+/**
+ * How much the overseer does without asking. Its mutating tools come in three
+ * risk tiers: low (filing and editing tasks, messaging a live run), medium
+ * (dispatching, answering a run's approval, the merge queue) and high
+ * (cancelling or discarding a run, sending as the human). `cautious` asks
+ * about every one; `balanced` runs the low tier at once and asks about a
+ * medium-tier tool once per conversation; `trusting` runs the medium tier at
+ * once too. The high tier asks every time, in every mode.
+ */
+export const OVERSEER_AUTONOMY_LEVELS = [
+  'cautious',
+  'balanced',
+  'trusting',
+] as const;
+export type OverseerAutonomy = (typeof OVERSEER_AUTONOMY_LEVELS)[number];
+
+/**
+ * The body a human's `confirm` answer to an `overseer-action` gate carries to
+ * also allow that tool for the rest of the conversation. Riding on the answer
+ * body keeps the gate's choices exactly the protocol's `confirm`/`cancel`.
+ */
+export const OVERSEER_GRANT_ANSWER = 'Allow for this conversation';
+
 /** One named gate in the verify pipeline. */
 export interface VerifyStep {
   name: string;
@@ -204,6 +296,8 @@ export interface DispatchConfig {
   verify?: VerifyConfig;
   carto: CartoConfig;
   repoDigest: RepoDigestConfig;
+  /** The milestone planner's settings; absent means the planning defaults. */
+  planning?: PlanningConfig;
   notifications: NotificationsConfig;
   messaging: MessagingConfig;
   /** Optional only so hand-built fixtures stay valid; `loadConfig` always
@@ -244,7 +338,8 @@ export interface DispatchConfig {
   preview?: PreviewConfig;
   /** How the Overseer chat shows a running turn. `loadConfig` always
    *  populates it; optional only so hand-built config literals predating the
-   *  block stay valid. Read it through `overseerSettings()`. */
+   *  block stay valid. Read it through `overseerSettings()` (or
+   *  `overseerAutonomy()`). */
   overseer?: OverseerConfig;
   /** How a task run's chat shows the agent at work. `loadConfig` always
    *  populates it; optional only so hand-built config literals predating the
@@ -259,7 +354,19 @@ export interface DispatchConfig {
  *  caller's mutation change every later gate consult process-wide. */
 export function projectPolicy(config: DispatchConfig): PolicyConfig {
   const policy = config.policy ?? DEFAULT_POLICY;
-  return { rung: policy.rung, gates: { ...policy.gates } };
+  return {
+    rung: policy.rung,
+    gates: { ...policy.gates },
+    ...(policy.difficulty === undefined
+      ? {}
+      : { difficulty: { ...policy.difficulty } }),
+  };
+}
+
+/** The difficulty lift a policy implies: the configured block, or the
+ *  all-off default. The single reader of the optional `difficulty` field. */
+export function difficultyPolicy(policy: PolicyConfig): DifficultyPolicy {
+  return { ...(policy.difficulty ?? DEFAULT_DIFFICULTY_POLICY) };
 }
 
 /** Settings for the planning queue's ranking. Nested under `queue:` rather
@@ -336,18 +443,28 @@ export const OVERSEER_STREAM_MODES: readonly OverseerStreamMode[] = [
   'off',
 ];
 
-/** The `overseer:` block: settings of the project assistant's chat. */
+/** The `overseer:` block: how the project assistant's chat shows a running
+ *  turn (`stream`) and how freely it acts without asking (`autonomy`). */
 export interface OverseerConfig {
   stream: OverseerStreamMode;
+  autonomy: OverseerAutonomy;
 }
 
-export const DEFAULT_OVERSEER: OverseerConfig = { stream: 'live' };
+export const DEFAULT_OVERSEER: OverseerConfig = {
+  stream: 'live',
+  autonomy: 'balanced',
+};
 
 /** The Overseer settings a config implies. The single reader of the optional
  *  `overseer` block, so a hand-built config (test fixtures, mostly) gets the
  *  default. Returns a fresh object, as previewSettings does. */
 export function overseerSettings(config: DispatchConfig): OverseerConfig {
   return { ...DEFAULT_OVERSEER, ...(config.overseer ?? {}) };
+}
+
+/** The overseer's autonomy a config implies; the default when the block is absent. */
+export function overseerAutonomy(config: DispatchConfig): OverseerAutonomy {
+  return overseerSettings(config).autonomy;
 }
 
 /**
@@ -624,6 +741,12 @@ export interface LinearConfig {
   /** Whether archiving a completed or canceled task archives its Linear issue
    *  too. Off: Linear's own auto-archive owns finished issues. */
   archiveFinished: boolean;
+  /** The Linear OAuth application people sign in through; not a secret.
+   *  DISPATCH_LINEAR_CLIENT_ID overrides it. Null: sign-in is not set up. */
+  oauthClientId: string | null;
+  /** The loopback port Linear redirects to after sign-in; the OAuth app's
+   *  callback URL must name it exactly. */
+  oauthCallbackPort: number;
 }
 
 export const LINEAR_DIRECTIONS = ['both', 'pull', 'push'] as const;
@@ -637,6 +760,8 @@ export const DEFAULT_LINEAR: LinearConfig = {
   direction: 'both',
   includeAcceptanceCriteria: true,
   archiveFinished: false,
+  oauthClientId: null,
+  oauthCallbackPort: 47823,
 };
 
 /** Per-role model ids. Each role is a distinct kind of agent work, so cheap
@@ -815,6 +940,7 @@ export interface ConfigPatch {
   /** `null` clears the key, restoring "no cap" — both are optional in OrchestratorConfig. */
   maxTurns?: number | null;
   maxBudgetUsd?: number | null;
+  unlimitedSpend?: boolean;
   permissionMode?: OrchestratorConfig['permissionMode'];
   models?: Partial<ModelConfig>;
   /** Per-role effort; `null` removes the role so the model default applies. */
@@ -847,6 +973,8 @@ export interface ConfigPatch {
   policy?: {
     rung?: number;
     gates?: Partial<Record<PolicyGate, PolicyGateMode | null>>;
+    /** Written field by field; a field the patch omits keeps its value. */
+    difficulty?: Partial<DifficultyPolicy>;
   };
   // The blocks below follow one rule, field by field: a value sets it, `null`
   // removes it (its default applies again), absent leaves it alone. The
@@ -866,6 +994,17 @@ export interface ConfigPatch {
   remotes?: Record<string, RemoteConfig | null>;
   carto?: { enabled?: CartoMode };
   repoDigest?: { enabled?: boolean; cooldownHours?: number | null };
+  /** Field by field; null clears a field back to the planning's default. */
+  planning?: {
+    tuning?: Partial<Record<PlanningTuningNumber, number | null>> & {
+      activeProjectStatuses?: PlanningProjectStatus[] | null;
+    };
+    watchers?: string[] | null;
+    /** Per milestone; null clears one milestone's weight. */
+    weights?: Record<string, number | null>;
+    allocation?: PlanningAllocationMode | null;
+    warnings?: PlanningWarningsMode | null;
+  };
   receipts?: {
     enabled?: boolean;
     dir?: string | null;
@@ -890,9 +1029,13 @@ export interface ConfigPatch {
   };
   /** A value sets the key, `null` removes it (its default applies again). */
   memory?: { [K in keyof MemoryConfig]?: MemoryConfig[K] | null };
-  /** How the Overseer chat shows a running turn; `null` removes the key,
-   *  so `live` applies again. */
-  overseer?: { stream?: OverseerStreamMode | null };
+  /** `stream`: how the Overseer chat shows a running turn. `autonomy`: how
+   *  freely it acts without asking. `null` removes the key, so the default
+   *  (`live` / `balanced`) applies again. */
+  overseer?: {
+    stream?: OverseerStreamMode | null;
+    autonomy?: OverseerAutonomy | null;
+  };
   /** How a task run's chat shows the agent's text; `null` removes the key,
    *  so `live` applies again. */
   runs?: { stream?: RunStreamMode | null };

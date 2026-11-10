@@ -137,11 +137,25 @@ fn most_recent_path_at(path: &Path) -> Option<String> {
         .map(|p| p.path)
 }
 
+/// The registered projects whose directory still exists, most recently opened
+/// first — what the project switcher offers. An entry whose folder was deleted
+/// or moved is hidden here but left in the file, so a project on an unmounted
+/// volume comes back once the volume does.
+fn list_live_at(path: &Path) -> Vec<RegisteredProject> {
+    let mut projects: Vec<RegisteredProject> = read_registry_at(path)
+        .into_iter()
+        .filter(|p| Path::new(&p.path).is_dir())
+        .collect();
+    projects.sort_by(|a, b| b.last_opened_at.cmp(&a.last_opened_at));
+    projects
+}
+
 // --- Public API (operates on the real `~/.dispatch/projects.json`) ---
 
-/// Every registered project, newest-registration order as stored on disk.
+/// Every registered project that still exists on disk, most recently opened
+/// first (see `list_live_at`).
 pub fn list() -> Vec<RegisteredProject> {
-    read_registry_at(&registry_path())
+    list_live_at(&registry_path())
 }
 
 /// Registers `project_path` (or refreshes it), returning the stored entry —
@@ -230,6 +244,32 @@ mod tests {
     fn upsert_at_rejects_a_relative_path() {
         let path = temp_registry();
         assert!(upsert_at(&path, "relative/path").is_err());
+    }
+
+    #[test]
+    fn list_live_at_hides_missing_directories_and_orders_by_last_opened() {
+        let path = temp_registry();
+        let older = path.parent().unwrap().join("older");
+        let newer = path.parent().unwrap().join("newer");
+        std::fs::create_dir_all(&older).unwrap();
+        std::fs::create_dir_all(&newer).unwrap();
+        let (older, newer) = (older.to_str().unwrap(), newer.to_str().unwrap());
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"projects": [
+  {{ "path": "{older}", "name": "older", "addedAt": "2026-01-01T00:00:00.000Z", "lastOpenedAt": "2026-01-01T00:00:00.000Z" }},
+  {{ "path": "/nonexistent/dispatch-gone", "name": "gone", "addedAt": "2026-01-01T00:00:00.000Z", "lastOpenedAt": "2026-09-01T00:00:00.000Z" }},
+  {{ "path": "{newer}", "name": "newer", "addedAt": "2026-01-01T00:00:00.000Z", "lastOpenedAt": "2026-07-01T00:00:00.000Z" }}
+]}}"#
+            ),
+        )
+        .unwrap();
+
+        let names: Vec<String> = list_live_at(&path).into_iter().map(|p| p.name).collect();
+        assert_eq!(names, vec!["newer", "older"]);
+        // Hidden, not deleted: the missing entry is still in the file.
+        assert_eq!(read_registry_at(&path).len(), 3);
     }
 
     #[test]

@@ -1,6 +1,16 @@
 import { ApiError } from '@dispatch/client';
-import type { ApiClient, RunMeta, Snippet } from '@dispatch/client';
-import type { CodeViewItem, FileDiffMetadata } from '@pierre/diffs';
+import type {
+  ApiClient,
+  ReviewComment,
+  RunMeta,
+  Snippet,
+} from '@dispatch/client';
+import type {
+  CodeViewDiffItem,
+  CodeViewItem,
+  FileDiffMetadata,
+} from '@pierre/diffs';
+import type { CodeViewHandle } from '@pierre/diffs/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   act,
@@ -9,7 +19,9 @@ import {
   screen,
   waitFor,
 } from '@testing-library/react';
-import { describe, expect, it, mock } from 'bun:test';
+import { afterEach, describe, expect, it, mock } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { isValidElement, type ReactNode, useCallback, useRef } from 'react';
 
 import type { ReviewChatHandle } from './ReviewChatPanel';
@@ -27,6 +39,14 @@ import {
 // so `CodeView` renders no rows at all: neither the line selection nor the annotations it
 // produces can be driven through the DOM, and this element is the only way to reach them.
 let codeViewProps: Record<string, unknown> | null = null;
+// The `diffStyle` of every `CodeView` element the diff built, in order, so a test can tell
+// whether Pierre was ever handed a layout it then had to throw away.
+const codeViewStyles: unknown[] = [];
+
+// The items that `CodeView` element was last handed: the review diff only ever builds diff items.
+function currentItems(): CodeViewDiffItem<Annotation>[] {
+  return (codeViewProps?.items ?? []) as CodeViewDiffItem<Annotation>[];
+}
 
 // `PierreWorkerPool` imports `@pierre/diffs/worker/worker.js?worker&url`, a
 // Vite-only specifier `bun test` cannot resolve — stubbed to a passthrough so
@@ -36,6 +56,9 @@ void mock.module('@/components/runs/PierreWorkerPool', () => ({
     codeViewProps = isValidElement(children)
       ? (children.props as Record<string, unknown>)
       : null;
+    codeViewStyles.push(
+      (codeViewProps?.options as { diffStyle?: unknown } | undefined)?.diffStyle
+    );
     return children;
   },
 }));
@@ -92,19 +115,22 @@ describe('buildItems — the load gate', () => {
     expect(items[0]?.edit).toBe(true);
   });
 
-  it('bumps version when edit state changes so Pierre re-renders the item', () => {
+  // Pierre compares versions for equality only (`syncItemRecord`), so "changed" is the whole
+  // contract; lib/reviewDiffItems.test.ts covers every other input the version follows.
+  it('changes version when edit state changes so Pierre re-renders the item', () => {
+    const file = fileDiff('a.ts');
     const before = buildItems({
-      files: [fileDiff('a.ts')],
+      files: [file],
       editing: null,
       loaded: new Set(['a.ts']),
     });
     const after = buildItems({
-      files: [fileDiff('a.ts')],
+      files: [file],
       editing: 'a.ts',
       loaded: new Set(['a.ts']),
     });
 
-    expect(after[0]?.version).toBeGreaterThan(before[0]?.version ?? 0);
+    expect(after[0]?.version).not.toBe(before[0]?.version);
   });
 
   it('only the editing file goes into edit mode among several loaded files', () => {
@@ -461,6 +487,237 @@ describe('PierreReviewDiff — the pencil gate reads the parsed file’s type', 
   });
 });
 
+describe('PierreReviewDiff — the viewed tick collapses and expands the file', () => {
+  function renderViewed(viewed: ReadonlySet<string>) {
+    return (
+      <PierreReviewDiff
+        patch={TWO_FILE_PATCH}
+        comments={[]}
+        onResolve={() => Promise.resolve()}
+        onReply={() => Promise.resolve()}
+        viewed={viewed}
+        onToggleViewed={() => {}}
+      />
+    );
+  }
+
+  function itemFor(file: string): CodeViewDiffItem<Annotation> | undefined {
+    return currentItems().find((item) => item.id === file);
+  }
+
+  // The PR page restores the ticks from storage, so a file can start collapsed; unticking it
+  // must reach Pierre as a new version or the file stays collapsed for good.
+  it('hands Pierre a new version each time the tick flips', () => {
+    const { rerender } = render(renderViewed(new Set(['a.ts'])));
+    const collapsed = itemFor('a.ts');
+    const other = itemFor('b.ts');
+    expect(collapsed?.collapsed).toBe(true);
+
+    rerender(renderViewed(new Set()));
+    const expanded = itemFor('a.ts');
+    expect(expanded?.collapsed).toBe(false);
+    expect(expanded?.version).not.toBe(collapsed?.version);
+    // The file that did not change keeps its number, so Pierre does not redraw it.
+    expect(itemFor('b.ts')?.version).toBe(other?.version);
+
+    rerender(renderViewed(new Set(['a.ts'])));
+    expect(itemFor('a.ts')?.collapsed).toBe(true);
+    expect(itemFor('a.ts')?.version).not.toBe(expanded?.version);
+  });
+
+  // A comment saved from the composer comes back through `comments`; it is only drawn as a
+  // thread if the item it lands on reaches Pierre with a new version.
+  it('hands Pierre a new version when a thread lands on the file', () => {
+    const withComments = (comments: ReviewComment[]) => (
+      <PierreReviewDiff
+        patch={TWO_FILE_PATCH}
+        comments={comments}
+        onResolve={() => Promise.resolve()}
+        onReply={() => Promise.resolve()}
+      />
+    );
+    const { rerender } = render(withComments([]));
+    const before = itemFor('a.ts')?.version;
+
+    rerender(
+      withComments([
+        {
+          id: 'c1',
+          file: 'a.ts',
+          line: 2,
+          pending: false,
+          anchorText: 'const b = 2;',
+          author: 'human:noreply',
+          body: 'Why two?',
+          resolved: false,
+          created: '2026-11-02T10:00:00.000Z',
+          replies: [],
+        },
+      ])
+    );
+
+    const after = itemFor('a.ts');
+    expect(after?.annotations?.map((a) => a.metadata.kind)).toEqual([
+      'threads',
+    ]);
+    expect(after?.version).not.toBe(before);
+  });
+});
+
+describe('PierreReviewDiff — Pierre resizes around an annotation that grows', () => {
+  // Pierre 1.3.1 re-measures an item when the React content in its slots grows but never
+  // renders on that path, so the scroll content kept its old height and clipped a fresh composer
+  // or thread. Each annotation and its item host are observed, and a size change asks Pierre for
+  // a render.
+  it('asks Pierre to render when an annotation or its host changes size', () => {
+    const Original = globalThis.ResizeObserver;
+    const observed: { callback: ResizeObserverCallback; target: Element }[] =
+      [];
+    class FakeResizeObserver {
+      private callback: ResizeObserverCallback;
+      constructor(callback: ResizeObserverCallback) {
+        this.callback = callback;
+      }
+      observe(target: Element) {
+        observed.push({ callback: this.callback, target });
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+    globalThis.ResizeObserver =
+      FakeResizeObserver as unknown as typeof ResizeObserver;
+    try {
+      render(
+        <PierreReviewDiff
+          patch={TWO_FILE_PATCH}
+          only="a.ts"
+          comments={[
+            {
+              id: 'c1',
+              file: 'a.ts',
+              line: 2,
+              pending: false,
+              anchorText: 'const b = 2;',
+              author: 'human:noreply',
+              body: 'Why two?',
+              resolved: false,
+              created: '2026-11-02T10:00:00.000Z',
+              replies: [],
+            },
+          ]}
+          onResolve={() => Promise.resolve()}
+          onReply={() => Promise.resolve()}
+        />
+      );
+      // happy-dom lays out no rows, so the thread is drawn the way Pierre asks for it.
+      const item = currentItems()[0];
+      const annotation = item?.annotations?.[0];
+      const renderAnnotation = codeViewProps?.renderAnnotation as
+        | ((a: unknown, i: unknown) => ReactNode)
+        | undefined;
+      if (annotation === undefined || renderAnnotation === undefined) {
+        throw new Error('the diff drew no thread annotation');
+      }
+      // Mounted into an item host the way Pierre portals it: inside a `diffs-container`.
+      const host = document.createElement('diffs-container');
+      document.body.appendChild(host);
+      render(<>{renderAnnotation(annotation, item)}</>, { container: host });
+
+      const thread = observed.find(
+        (o) => o.target !== host && host.contains(o.target)
+      );
+      const itemHost = observed.find((o) => o.target === host);
+      if (thread === undefined) throw new Error('the thread is not observed');
+      if (itemHost === undefined) throw new Error('its host is not observed');
+      const viewRef = codeViewProps?.ref as
+        | { current: CodeViewHandle<Annotation> | null }
+        | undefined;
+      const instance = viewRef?.current?.getInstance();
+      if (instance === undefined) throw new Error('no CodeView instance');
+      const renders = mock(() => {});
+      instance.render = renders;
+
+      thread.callback([], {} as ResizeObserver);
+      expect(renders).toHaveBeenCalledTimes(1);
+      // The host shrinks a frame later than a shrinking annotation; that counts too.
+      itemHost.callback([], {} as ResizeObserver);
+      expect(renders).toHaveBeenCalledTimes(2);
+    } finally {
+      globalThis.ResizeObserver = Original;
+    }
+  });
+});
+
+describe('PierreReviewDiff — keys typed into a Pierre editor stay there', () => {
+  // Pierre's editors sit in shadow roots, so a window listener sees the shadow host as the target
+  // and cannot tell the reviewer is typing: "a" or "/" in a suggestion opened a picker or the
+  // search. A plain key from an editable element inside the diff stops at the diff.
+  function keyFrom(
+    target: Element,
+    init: KeyboardEventInit
+  ): { reachedWindow: boolean } {
+    let reachedWindow = false;
+    const onWindow = () => {
+      reachedWindow = true;
+    };
+    window.addEventListener('keydown', onWindow);
+    try {
+      target.dispatchEvent(
+        new KeyboardEvent('keydown', { bubbles: true, composed: true, ...init })
+      );
+    } finally {
+      window.removeEventListener('keydown', onWindow);
+    }
+    return { reachedWindow };
+  }
+
+  function editorInShadowRoot(): HTMLElement {
+    const host = document.createElement('div');
+    positioningFrame().appendChild(host);
+    const editor = document.createElement('div');
+    editor.contentEditable = 'true';
+    host.attachShadow({ mode: 'open' }).appendChild(editor);
+    return editor;
+  }
+
+  it('keeps a plain key typed into an editor in its shadow root from the app’s shortcuts', () => {
+    renderDiff({ only: 'a.ts' });
+    const editor = editorInShadowRoot();
+
+    expect(keyFrom(editor, { key: 'a' }).reachedWindow).toBe(false);
+    expect(keyFrom(editor, { key: '/' }).reachedWindow).toBe(false);
+  });
+
+  it('lets a Ctrl or Cmd chord through, as the app means them to work while typing', () => {
+    renderDiff({ only: 'a.ts' });
+    const editor = editorInShadowRoot();
+
+    expect(keyFrom(editor, { key: 'k', ctrlKey: true }).reachedWindow).toBe(
+      true
+    );
+    expect(keyFrom(editor, { key: '[', metaKey: true }).reachedWindow).toBe(
+      true
+    );
+  });
+
+  // Pierre's editor itself listens for Shift on the document to anchor a shift-extended
+  // selection, and a modifier on its own types nothing.
+  it('lets a modifier key on its own through', () => {
+    renderDiff({ only: 'a.ts' });
+    const editor = editorInShadowRoot();
+
+    expect(
+      keyFrom(editor, { key: 'Shift', shiftKey: true }).reachedWindow
+    ).toBe(true);
+  });
+
+  it('lets a key from anywhere else in the diff through', () => {
+    renderDiff({ only: 'a.ts' });
+
+    expect(keyFrom(positioningFrame(), { key: 'a' }).reachedWindow).toBe(true);
+  });
+});
+
 describe('PierreReviewDiff — nothing to render', () => {
   it('says so when `only` names a file the patch does not contain', () => {
     renderDiff({ only: 'gone.ts' });
@@ -577,7 +834,9 @@ function stubRect(
 
 /** The element the bar is positioned inside: the wrapper `PierreReviewDiff` renders. */
 function positioningFrame(): HTMLElement {
-  const frame = document.querySelector<HTMLElement>('.relative');
+  const frame = document.querySelector<HTMLElement>(
+    '[data-slot="review-diff"]'
+  );
   if (frame === null) throw new Error('no positioning frame rendered');
   return frame;
 }
@@ -688,7 +947,7 @@ function renderForSelection(
 }
 
 /**
- * The whole patch in one scroller, with no `only` — how `RunReviewView` renders this. Every file
+ * The whole patch in one scroller, with no `only` — how `ReviewMode` renders this. Every file
  * shares one `CodeView`, so a line number on its own does not say which file it belongs to.
  */
 function renderWholePatch(onAddToChat: (snippet: Snippet) => void) {
@@ -824,11 +1083,16 @@ describe('PierreReviewDiff — arming the action bar from the gutter', () => {
     clickGutter(2);
     expect(selectionBar()).not.toBeNull();
 
+    let notClaimed = true;
     act(() => {
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      notClaimed = document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })
+      );
     });
 
     expect(selectionBar()).toBeNull();
+    // Claimed, or the app's window-level Escape would close the page under the bar as well.
+    expect(notClaimed).toBe(false);
   });
 
   it('copies the armed line to the clipboard', () => {
@@ -854,6 +1118,7 @@ describe('PierreReviewDiff — arming the action bar from the gutter', () => {
   // composer — and this is the test that says the second click still reaches the same composer.
   it('opens the composer on the armed line', async () => {
     renderForSelection({ onAddToChat: () => {} });
+    const versionBefore = currentItems()[0]?.version;
     clickGutter(2);
 
     fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
@@ -866,6 +1131,9 @@ describe('PierreReviewDiff — arming the action bar from the gutter', () => {
     expect(
       annotations.map((a) => a.metadata).filter((m) => m?.kind === 'composer')
     ).toEqual([{ kind: 'composer', file: 'a.ts' }]);
+    // Pierre keeps the record it already holds until the version changes, so without this the
+    // composer annotation above would never be drawn.
+    expect(items[0]?.version).not.toBe(versionBefore);
   });
 
   // A patch carries only the lines its hunks cover, and some file types carry none at all. An
@@ -1035,7 +1303,7 @@ describe('PierreReviewDiff — where the bar hangs', () => {
     // Both boxes are viewport-absolute, so the bar's offsets are their difference.
     expect(selectionBar()?.style.top).toBe('300px');
     expect(selectionBar()?.style.left).toBe('40px');
-    expect(selectionBar()?.className).toContain('-translate-y-full');
+    expect(selectionBar()?.dataset['place']).toBe('above');
   });
 
   it('drops the bar below the line when it is against the top of the pane', () => {
@@ -1051,7 +1319,7 @@ describe('PierreReviewDiff — where the bar hangs', () => {
 
     // 10px of room above is not enough for the bar, so it goes under the line instead.
     expect(selectionBar()?.style.top).toBe('30px');
-    expect(selectionBar()?.className).not.toContain('-translate-y-full');
+    expect(selectionBar()?.dataset['place']).toBe('below');
   });
 });
 
@@ -1154,13 +1422,55 @@ describe('PierreReviewDiff — the viewed tick in each file header', () => {
       />
     );
 
-    const a = await screen.findByRole('checkbox', { name: 'Mark a.ts viewed' });
-    const b = await screen.findByRole('checkbox', { name: 'Mark b.ts viewed' });
-    expect(a.getAttribute('aria-checked')).toBe('true');
-    expect(b.getAttribute('aria-checked')).toBe('false');
+    // The library Checkbox is a native input named by its label, so `checked` is the state.
+    const a = await screen.findByRole<HTMLInputElement>('checkbox', {
+      name: 'Mark a.ts viewed',
+    });
+    const b = await screen.findByRole<HTMLInputElement>('checkbox', {
+      name: 'Mark b.ts viewed',
+    });
+    expect(a.type).toBe('checkbox');
+    expect(a.checked).toBe(true);
+    expect(b.checked).toBe(false);
 
     fireEvent.click(b);
     expect(toggled).toEqual(['b.ts']);
+  });
+
+  // The tick sits inside the file header, which folds the file on a click. A tick whose click
+  // reached the header would fold the file as well as marking it, so the click stops at the box.
+  // React's stopPropagation acts at React's root, so what this proves is that the click never
+  // reaches the page (document listeners, React handlers above the tick); a native listener on
+  // a DOM ancestor would still fire, and @pierre/diffs 1.3.1 attaches none to its header.
+  it('stops a tick at the box, so the page never sees the click', async () => {
+    const toggled: string[] = [];
+    render(
+      <PierreReviewDiff
+        patch={TWO_FILE_PATCH}
+        comments={[]}
+        viewed={new Set()}
+        onToggleViewed={(file) => toggled.push(file)}
+        onResolve={() => Promise.resolve()}
+        onReply={() => Promise.resolve()}
+      />
+    );
+    const box = await screen.findByRole('checkbox', {
+      name: 'Mark a.ts viewed',
+    });
+    // The page around the tick: a document listener, which React's stop reaches.
+    let headerClicks = 0;
+    const onHeaderClick = () => {
+      headerClicks += 1;
+    };
+    document.addEventListener('click', onHeaderClick);
+    try {
+      fireEvent.click(box);
+    } finally {
+      document.removeEventListener('click', onHeaderClick);
+    }
+
+    expect(toggled).toEqual(['a.ts']);
+    expect(headerClicks).toBe(0);
   });
 
   it('shows no tick on a surface without viewed state', () => {
@@ -1173,5 +1483,234 @@ describe('PierreReviewDiff — the viewed tick in each file header', () => {
       />
     );
     expect(screen.queryByRole('checkbox')).toBeNull();
+  });
+});
+
+describe('PierreReviewDiff — an open composer survives a thread landing before it', () => {
+  const thread: ReviewComment = {
+    id: 'c1',
+    file: 'a.ts',
+    line: 1,
+    pending: false,
+    anchorText: 'const a = 0;',
+    author: 'human:noreply',
+    body: 'Why zero?',
+    resolved: false,
+    created: '2026-11-02T10:00:00.000Z',
+    replies: [],
+  };
+
+  function diff(
+    comments: ReviewComment[],
+    onAdd: () => Promise<ReviewComment>
+  ) {
+    return (
+      <PierreReviewDiff
+        // No contents to read: the suggestion editor stays withheld, the note box is the draft.
+        client={fakeClient({
+          fetchRunFile: () => Promise.reject(new Error('no worktree')),
+        })}
+        runId="r1"
+        meta={runMeta()}
+        patch={TWO_FILE_PATCH}
+        only="a.ts"
+        comments={comments}
+        onAdd={onAdd}
+        onResolve={() => Promise.resolve()}
+        onReply={() => Promise.resolve()}
+      />
+    );
+  }
+
+  // Pierre draws a file's annotations into slots keyed by position (`renderDiffChildren`:
+  // `lineAnnotations.map((annotation, index) => <div key={index}>…)`), threads first and the
+  // composer last, so a thread landing on the file while the composer is open moves it one slot
+  // along and React mounts a fresh composer there. Pierre draws those slots in happy-dom too.
+  const note = () =>
+    screen.getByRole<HTMLTextAreaElement>('textbox', {
+      name: 'Comment on line 2',
+    });
+
+  async function openComposer(onAdd: () => Promise<ReviewComment>) {
+    const view = render(diff([], onAdd));
+    clickGutter(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Comment' }));
+    await settle();
+    return view;
+  }
+
+  it('keeps the note typed into it, and the caret', async () => {
+    const unused = () => Promise.reject(new Error('not used here'));
+    const view = await openComposer(unused);
+    fireEvent.change(note(), { target: { value: 'Name this total' } });
+    const before = note();
+
+    view.rerender(diff([thread], unused));
+    await settle();
+
+    // A new note box (the remount), holding the same text, with the caret back in it.
+    expect(screen.getByText('Why zero?')).toBeDefined();
+    expect(note()).not.toBe(before);
+    expect(note().value).toBe('Name this total');
+    expect(document.activeElement).toBe(note());
+  });
+
+  it('keeps a save in flight disabled, and closes once it lands', async () => {
+    let land: (comment: ReviewComment) => void = () => {};
+    const saving = new Promise<ReviewComment>((resolve) => {
+      land = resolve;
+    });
+    const view = await openComposer(() => saving);
+    fireEvent.change(note(), { target: { value: 'Name this total' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add comment' }));
+    const before = note();
+
+    view.rerender(diff([thread], () => saving));
+    await settle();
+    expect(note()).not.toBe(before);
+    expect(note().value).toBe('Name this total');
+    expect(
+      screen.getByRole<HTMLButtonElement>('button', { name: 'Add comment' })
+        .disabled
+    ).toBe(true);
+
+    await act(async () => {
+      land({ ...thread, id: 'c2', line: 2, body: 'Name this total' });
+      await saving;
+    });
+    await settle();
+    expect(
+      screen.queryByRole('textbox', { name: 'Comment on line 2' })
+    ).toBeNull();
+  });
+});
+
+describe('PierreReviewDiff — split falls back to unified in a narrow column', () => {
+  const SETTINGS_KEY = 'dispatch:diff-display-settings';
+  // The frame's width as the stub below reports it; happy-dom has no layout of its own.
+  let frameWidth = 0;
+  // Every ResizeObserver made while a test runs, so a test can report a resize to them.
+  let observers: { callback: () => void; targets: Element[] }[] = [];
+  const RealResizeObserver = globalThis.ResizeObserver;
+
+  // Gives the review diff's frame (a div) a width, and swaps in a ResizeObserver a test can
+  // fire. Both live on prototypes and globals every test file shares, so afterEach undoes them.
+  function stubLayout(width: number): void {
+    frameWidth = width;
+    Object.defineProperty(HTMLDivElement.prototype, 'clientWidth', {
+      configurable: true,
+      get(this: HTMLDivElement) {
+        return this.dataset.slot === 'review-diff' ? frameWidth : 0;
+      },
+    });
+    observers = [];
+    globalThis.ResizeObserver = class {
+      private readonly entry: { callback: () => void; targets: Element[] };
+      constructor(callback: () => void) {
+        this.entry = { callback, targets: [] };
+        observers.push(this.entry);
+      }
+      observe(target: Element) {
+        this.entry.targets.push(target);
+      }
+      unobserve() {}
+      disconnect() {
+        this.entry.targets = [];
+      }
+    } as unknown as typeof ResizeObserver;
+  }
+
+  // Reports a new frame width to whatever observes the frame, as a window resize would.
+  function resizeFrame(width: number): void {
+    frameWidth = width;
+    const target = document.querySelector('[data-slot=review-diff]');
+    act(() => {
+      for (const o of observers) {
+        if (target !== null && o.targets.includes(target)) o.callback();
+      }
+    });
+  }
+
+  afterEach(() => {
+    Reflect.deleteProperty(HTMLDivElement.prototype, 'clientWidth');
+    globalThis.ResizeObserver = RealResizeObserver;
+    window.localStorage.removeItem(SETTINGS_KEY);
+  });
+
+  const frame = () => document.querySelector('[data-slot=review-diff]');
+  const diffStyle = () =>
+    (codeViewProps?.options as { diffStyle?: string } | undefined)?.diffStyle;
+
+  it('draws a split setting unified in a column narrower than 980px', () => {
+    stubLayout(702);
+    renderDiff();
+    expect(frame()?.getAttribute('data-diff-layout')).toBe('unified');
+    expect(diffStyle()).toBe('unified');
+  });
+
+  it('keeps split where the column holds two readable sides', () => {
+    stubLayout(980);
+    renderDiff();
+    expect(frame()?.getAttribute('data-diff-layout')).toBe('split');
+    expect(diffStyle()).toBe('split');
+  });
+
+  it('follows the column as it narrows and widens again', () => {
+    stubLayout(1330);
+    renderDiff();
+    expect(diffStyle()).toBe('split');
+    resizeFrame(530);
+    expect(diffStyle()).toBe('unified');
+    expect(frame()?.getAttribute('data-diff-layout')).toBe('unified');
+    resizeFrame(1330);
+    expect(diffStyle()).toBe('split');
+  });
+
+  it('mounts the diff only once the column is measured, so Pierre never lays it out split first', () => {
+    stubLayout(702);
+    codeViewStyles.length = 0;
+    renderDiff();
+    expect(codeViewStyles.length).toBeGreaterThan(0);
+    expect([...new Set(codeViewStyles)]).toEqual(['unified']);
+  });
+
+  it('a column with no width yet (not laid out) leaves the setting standing, and later keeps the last answer', () => {
+    stubLayout(0);
+    renderDiff();
+    expect(diffStyle()).toBe('split');
+    resizeFrame(702);
+    expect(diffStyle()).toBe('unified');
+    // Hidden for a moment (a collapsed pane): the last answer holds.
+    resizeFrame(0);
+    expect(diffStyle()).toBe('unified');
+    expect(frame()?.getAttribute('data-diff-layout')).toBe('unified');
+  });
+
+  it('a unified setting stays unified at any width', () => {
+    window.localStorage.setItem(
+      SETTINGS_KEY,
+      JSON.stringify({ layout: 'unified' })
+    );
+    stubLayout(1600);
+    renderDiff();
+    expect(frame()?.getAttribute('data-diff-layout')).toBe('unified');
+    expect(diffStyle()).toBe('unified');
+  });
+
+  it("a finding's head wraps instead of cutting its title", () => {
+    const css = readFileSync(
+      join(import.meta.dir, 'PierreReviewDiff.module.css'),
+      'utf8'
+    );
+    const rule = (selector: string) =>
+      css.match(new RegExp(`\\${selector} \\{([^}]*)\\}`))?.[1] ?? '';
+    expect(rule('.findingHead')).toContain('flex-wrap: wrap;');
+    const title = rule('.findingTitle');
+    expect(title).toContain('flex: 1 1 16ch;');
+    expect(title).toContain('overflow-wrap: anywhere;');
+    expect(title).not.toContain('nowrap');
+    expect(title).not.toContain('ellipsis');
+    // The card's indent gives way in a narrow column instead of squeezing the card.
+    expect(rule('.annotation')).toContain('clamp(var(--s-3), 10%, 90px)');
   });
 });

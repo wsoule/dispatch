@@ -1,0 +1,35 @@
+/* Coming in's drafts and notifications (InflowSections.tsx): each a Panel
+   (soft border, radius, no shadow) holding a group header, ruled off,
+   over its rows; the notifications fold their tail behind a quiet
+   "+N more" under the list. Tokens only. */
+
+/* The header lines up with the rows' text and leaves room on the right
+   for its quiet buttons. */
+.head {
+  flex-wrap: wrap;
+  padding-inline: var(--s-3) var(--s-1);
+}
+
+/* In a 300px column "Notifications 2" and its three buttons do not fit on
+   one line. The heading keeps its whole width (the library name would
+   otherwise break mid-word) and the buttons wrap under it instead. */
+.head > :is(h3, h4) {
+  flex-shrink: 0;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  padding-block: var(--s-1);
+}
+
+/* A notification already read: its subject in the secondary ink, so the
+   unread ones (also marked by the dot and an sr-only word) stand out. */
+.read {
+  color: var(--text-2);
+}
+
+.more {
+  display: flex;
+  padding: 0 var(--s-1) var(--s-1);
+}

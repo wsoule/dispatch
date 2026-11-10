@@ -1,0 +1,204 @@
+/* Gr8r's list row (list-item.tsx): 40px, 13.5px medium title, the meta
+   line and the date at 12px in the secondary ink with tabular figures.
+   No fill at rest; hover is --surface-2 (a clickable row only), selected
+   the accent tint, active (a host list's keyboard cursor) and keyboard
+   focus the 2px focus ring drawn inside the row, so a pane with overflow
+   hidden never clips it. A two-line row (with meta) grows to fit. */
+
+/* as="button": the browser's button face reset to the row's (before
+   .root, so the row's own type and colour win over the reset). */
+.button {
+  border: 0;
+  background-color: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.root {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--row-h);
+  margin: 0;
+  padding: 6px var(--s-3);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-size: var(--fs);
+  line-height: 1.35;
+  text-align: left;
+  list-style: none;
+}
+
+.root[data-clickable='true'] {
+  cursor: pointer;
+}
+
+.root[data-selected='true'] {
+  background: var(--accent-soft);
+}
+
+.root:focus-visible,
+.root[data-active='true'] {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* indent 1: one step in, with a connector on the border colour where the
+   parent's glyph sits. */
+.root[data-indent='1'] {
+  padding-left: calc(var(--s-3) + 20px);
+}
+
+.connector {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--s-3) + 6px);
+  border-left: 1px solid var(--border);
+}
+
+/* as="button" with trailing controls: the wrapper is the row (its fill,
+   ring and connector) and the button inside it takes the whole row up to
+   the controls, so a click anywhere but on them presses it. */
+.split {
+  padding: 0 var(--s-3) 0 0;
+}
+
+.split[data-indent='1'] {
+  padding-left: 0;
+}
+
+.inner {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  align-self: stretch;
+  gap: var(--s-2);
+  min-width: 0;
+  margin: 0;
+  padding: 6px 0 6px var(--s-3);
+  border-radius: var(--r-sm);
+}
+
+.split[data-indent='1'] .inner {
+  padding-left: calc(var(--s-3) + 20px);
+}
+
+.inner:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* unread: a 6px accent dot in the left gutter, so read and unread rows
+   keep their titles in one column. The sr-only word beside it says it. */
+.unread {
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  display: inline-flex;
+  transform: translateY(-50%);
+}
+
+.unreadDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* The host's 14px glyph (a state mark, an avatar). */
+.leading {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+}
+
+.main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.title {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crumb {
+  color: var(--text-2);
+  font-weight: var(--fw-regular);
+}
+
+.meta {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trailing {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.date {
+  flex: none;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@media (hover: hover) {
+  .root[data-clickable='true']:not([data-selected='true']):hover {
+    background: var(--surface-2);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .root {
+    transition: background-color var(--dur) ease;
+  }
+}
+
+/* Forced colours drop the fills: a selected row keeps a Highlight edge
+   and the cursor and keyboard focus a CanvasText ring, twice as thick,
+   so neither state rests on a background; the unread dot keeps its fill
+   (the sr-only word says it too). */
+@media (forced-colors: active) {
+  .root[data-selected='true'] {
+    outline: 1px solid Highlight;
+    outline-offset: -1px;
+  }
+
+  .root:focus-visible,
+  .root[data-active='true'],
+  .inner:focus-visible {
+    outline: 2px solid CanvasText;
+    outline-offset: -2px;
+  }
+
+  .unreadDot {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+}

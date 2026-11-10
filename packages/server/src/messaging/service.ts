@@ -1,5 +1,9 @@
 import type { MessagingConfig, TaskStorePort } from '@dispatch-foo/core';
-import { DEFAULT_MESSAGING, loadConfig } from '@dispatch-foo/core';
+import {
+  DEFAULT_MESSAGING,
+  loadConfig,
+  OVERSEER_GRANT_ANSWER,
+} from '@dispatch-foo/core';
 import type {
   FederationHooks,
   Message,
@@ -50,7 +54,7 @@ import { createRunTokens } from './runTokens.js';
 import {
   applyScopeAnswer,
   installScopePolicy,
-  SCOPE_EXPIRY_SWEEP_MS,
+  SCOPE_SWEEP_MS,
   sweepScopeGates,
 } from './scopePolicy.js';
 import {
@@ -85,7 +89,8 @@ interface OverseerGateTarget {
     actionId: string,
     approve: boolean,
     actor: string,
-    ownerCredential: boolean
+    ownerCredential: boolean,
+    scope?: 'once' | 'session'
   ): Promise<unknown>;
   decideApproval(
     conversationId: string,
@@ -176,8 +181,8 @@ export function openMessaging(deps: {
   ledgerStore?: Pick<LedgerStorePort, 'add' | 'entriesFor'>;
   // The task Activity line a policy grant writes; defaults to none.
   appendPolicyActivity?: (taskId: string, text: string) => void;
-  // How often the scope-gate sweep runs, and its clock; tests shorten both.
-  scopeExpiry?: { sweepMs?: number; now?: () => number };
+  // How often the scope-gate grant sweep runs; tests shorten it.
+  scopeSweep?: { sweepMs?: number };
   // Federation's hooks, and a nudge for the next pass once mail is stored.
   federation?: FederationHooks;
   onFederatedMessage?: () => void;
@@ -528,7 +533,10 @@ export function openMessaging(deps: {
         gate.actionId,
         answer.choice === 'confirm',
         answer.from,
-        answeredWithOwnerCredential()
+        answeredWithOwnerCredential(),
+        // "Allow for this conversation" rides on the confirm's body, so the
+        // gate keeps the protocol's two choices.
+        answer.body.trim() === OVERSEER_GRANT_ANSWER ? 'session' : 'once'
       )
     );
   });
@@ -601,14 +609,10 @@ export function openMessaging(deps: {
   });
   const uninstallScopePolicy = installScopePolicy(engine, scopeDeps);
   const uninstallOperatorNotices = installOperatorNotices(engine, routing);
-  // Grants what policy covers before expiring, so a covered gate is never denied.
+  // Catches a policy grant the live subscription missed; undecided gates stay open.
   const scopeSweep = setInterval(() => {
-    void sweepScopeGates(
-      engine,
-      scopeDeps,
-      () => deps.scopeExpiry?.now?.() ?? Date.now()
-    );
-  }, deps.scopeExpiry?.sweepMs ?? SCOPE_EXPIRY_SWEEP_MS);
+    void sweepScopeGates(engine, scopeDeps);
+  }, deps.scopeSweep?.sweepMs ?? SCOPE_SWEEP_MS);
   scopeSweep.unref();
   const sessionSweep = setInterval(
     () => pruneIdleSessions(store, Date.now(), SESSION_MAX_IDLE_MS),

@@ -383,6 +383,45 @@ describe('formatRunsTable', () => {
   it('renders (none) for an empty list', () => {
     expect(formatRunsTable([])).toBe('(none)');
   });
+
+  // A merged run's raw state stays `finished`, so without this the list could
+  // not say which work landed.
+  it('shows a merged run as merged with its commit', () => {
+    const table = formatRunsTable([
+      {
+        ...run,
+        reviewedAt: '2026-07-20T01:00:00Z',
+        reviewAction: 'merge',
+        mergeCommit: '4cdd0c9a1b2c3d4e',
+      },
+    ]);
+    expect(table.split('\n')[1]).toContain('merged 4cdd0c9');
+  });
+
+  // A predecessor closed by its successor's merge stays `failed` underneath
+  // and carries the same merge; it must read as superseded, not failed.
+  it('shows a resumed-from run as superseded, not failed', () => {
+    const table = formatRunsTable([
+      {
+        ...run,
+        state: 'failed',
+        reviewedAt: '2026-07-20T01:00:00Z',
+        reviewAction: 'merge',
+        mergeCommit: '4cdd0c9a1b2c3d4e',
+        supersededBy: 'r-2',
+      },
+    ]);
+    const row = table.split('\n')[1];
+    expect(row).toContain('superseded by r-2');
+    expect(row).not.toContain('failed');
+  });
+
+  it('shows a discarded run as discarded', () => {
+    const table = formatRunsTable([
+      { ...run, reviewedAt: '2026-07-20T01:00:00Z', reviewAction: 'discard' },
+    ]);
+    expect(table.split('\n')[1]).toContain('discarded');
+  });
 });
 
 describe('formatDiffFiles', () => {

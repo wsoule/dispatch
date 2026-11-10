@@ -5,7 +5,8 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { type IsolatedDaemon, startIsolatedDaemon } from './isolatedDaemon';
-import { REPO } from './paths';
+import { REPO, SETUP_DONE } from './paths';
+import { openDestination, waitForShell } from './shell';
 
 // Two daemons with no A2A listener, paired over a bare repo in the e2e
 // scratch dir: pair, ask, answer, unpair (T55).
@@ -13,24 +14,25 @@ let a: IsolatedDaemon | null = null;
 let b: IsolatedDaemon | null = null;
 let scratch: string | null = null;
 
-// Threads, from the top bar; Settings is a dialog over it, so close it first.
+// Threads, from the sidebar. Settings fills the main column while it is open
+// (an overlay place); Escape returns to the view beneath before moving on.
 async function openThreads(page: Page): Promise<void> {
   const settings = page.getByTestId('settings-panel');
   if ((await settings.count()) > 0) {
     await page.keyboard.press('Escape');
     await expect(settings).toHaveCount(0);
   }
-  await page.getByTestId('two-views-threads').click();
+  await openDestination(page, 'Threads');
 }
 
 // Settings → A2A, through the `G S` shortcut and the Settings page list.
 async function openA2ASettings(page: Page): Promise<void> {
-  await page.getByTestId('two-views-shell').waitFor();
+  await waitForShell(page);
   await page.keyboard.press('g');
   await page.keyboard.press('s');
   await page
     .getByRole('navigation', { name: 'Settings' })
-    .getByRole('button', { name: 'A2A', exact: true })
+    .getByRole('link', { name: 'A2A', exact: true })
     .click();
 }
 
@@ -81,7 +83,9 @@ test.describe('pairing over a teammate link', () => {
     const code = (await shown.textContent()) ?? '';
 
     // B enters it; the SAS shows at once, with no request to A.
-    const pageB = await (await browser.newContext()).newPage();
+    const pageB = await (
+      await browser.newContext({ storageState: SETUP_DONE })
+    ).newPage();
     await pageB.goto(b.appUrl);
     await openA2ASettings(pageB);
     await pageB.getByLabel('Pairing code').fill(code);

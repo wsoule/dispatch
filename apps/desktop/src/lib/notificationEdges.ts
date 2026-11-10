@@ -14,6 +14,15 @@ import { questionsSignature } from './planQuestions';
 
 /** A notification ready to hand to `notify(title, body)` — see notifications.ts. `target`
  * is where the notification's inbox row (see inbox.ts) should navigate on click. */
+
+const PLANNER_ASK_TITLE = 'The planner needs your answer';
+const AGENT_ASK_TITLE = 'An agent needs your answer';
+
+/** Whether a notification is a question: the Overseer's Needs you list already holds
+ *  it, with its answers, so the side panel's history leaves it out. */
+export function isAskNotification(entry: { title: string }): boolean {
+  return entry.title === PLANNER_ASK_TITLE || entry.title === AGENT_ASK_TITLE;
+}
 export interface PendingNotification {
   title: string;
   body: string;
@@ -184,7 +193,7 @@ export function diffQuestionNotifications(
     ...drafts.map((d) => ({
       key: `draft:${d.id}`,
       questions: d.questions,
-      title: 'The planner needs your answer',
+      title: PLANNER_ASK_TITLE,
       body: d.prompt,
       target: { kind: 'draft' as const, draftId: d.id },
     })),
@@ -212,7 +221,7 @@ export function diffQuestionNotifications(
       if (previous.runQuestionIds.has(question.id)) continue;
       // Notifies on every id not already tracked, including the first call.
       notifications.push({
-        title: 'An agent needs your answer',
+        title: AGENT_ASK_TITLE,
         body: question.question,
         target: { kind: 'run', runId },
         kind: 'question',

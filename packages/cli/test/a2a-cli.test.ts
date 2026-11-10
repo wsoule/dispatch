@@ -515,6 +515,24 @@ describe('dispatch serve', () => {
       'c.pem',
       '--a2a-tls-key',
       'k.pem',
+      '--mask-app-token',
+    ]);
+  });
+
+  it('passes the --mobile-* flags through to dispatchd', () => {
+    expect(
+      serveArgs('/r', {
+        mobilePort: '4800',
+        mobileUrl: 'https://laptop.tailnet.ts.net',
+      })
+    ).toEqual([
+      '--root',
+      '/r',
+      '--mobile-port',
+      '4800',
+      '--mobile-url',
+      'https://laptop.tailnet.ts.net',
+      '--mask-app-token',
     ]);
   });
 
@@ -530,13 +548,32 @@ describe('dispatch serve', () => {
       'a.pem',
       '--tls-key',
       'b.pem',
+      '--mask-app-token',
     ]);
+  });
+
+  it('masks the app token unless told to write it to a file or print it', () => {
+    expect(serveArgs('/r', {}).at(-1)).toBe('--mask-app-token');
+    expect(serveArgs('/r', { appTokenFile: '/tmp/t' })).toEqual([
+      '--root',
+      '/r',
+      '--app-token-file',
+      '/tmp/t',
+    ]);
+    expect(serveArgs('/r', { printToken: true })).toEqual(['--root', '/r']);
+    expect(() =>
+      serveArgs('/r', { printToken: true, appTokenFile: '/tmp/t' })
+    ).toThrow(/--print-token and --app-token-file are alternatives/);
   });
 
   it('takes --replace itself rather than passing it to dispatchd', () => {
     // serve stops the old daemon first; dispatchd must then refuse anything
     // still serving, so the flag is never forwarded.
-    expect(serveArgs('/r', { replace: true })).toEqual(['--root', '/r']);
+    expect(serveArgs('/r', { replace: true })).toEqual([
+      '--root',
+      '/r',
+      '--mask-app-token',
+    ]);
     const serve = makeProgram({ cwd: '/r', log: () => {} }).commands.find(
       (c) => c.name() === 'serve'
     );

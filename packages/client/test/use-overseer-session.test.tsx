@@ -49,6 +49,7 @@ function overseerRecord(): OverseerRecord {
         summary: 'Cancel run r-1',
         createdAt: '2026-08-10T00:00:02Z',
         status: 'pending',
+        tier: 'high',
       },
     ],
     pendingApprovals: [],
@@ -192,7 +193,7 @@ test('the deciding action is exposed while a confirm is in flight', async () => 
   });
   expect(result.current.decidingActionId).toBeNull();
 
-  let decided: Promise<void> | undefined;
+  let decided: Promise<boolean> | undefined;
   act(() => {
     decided = result.current.confirmAction('act-1', true);
   });
@@ -586,7 +587,7 @@ test('a second decision while one is in flight is a no-op', async () => {
     await result.current.submit('what is going on?');
   });
 
-  let first: Promise<void> | undefined;
+  let first: Promise<boolean> | undefined;
   act(() => {
     first = result.current.confirmAction('act-1', true);
   });

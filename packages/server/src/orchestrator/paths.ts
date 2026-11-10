@@ -247,6 +247,45 @@ export function receiptsDir(rootDir: string): string {
 }
 
 /**
+ * The daily digest's warning memory and log (planning/warningRuns): daemon
+ * state under DISPATCH_HOME, never in the project.
+ */
+export function planningWarningsPath(rootDir: string): string {
+  return join(
+    dispatchHome(),
+    '.dispatch',
+    'projects',
+    projectKeyOf(rootDir),
+    'planning',
+    'warnings.db'
+  );
+}
+
+/** The planning audit of a project (planning/audit), beside it. */
+export function planningAuditPath(rootDir: string): string {
+  return join(
+    dispatchHome(),
+    '.dispatch',
+    'projects',
+    projectKeyOf(rootDir),
+    'planning',
+    'audit.db'
+  );
+}
+
+/** The allocation run log of a project (planning/allocationRuns), beside it. */
+export function allocationRunsPath(rootDir: string): string {
+  return join(
+    dispatchHome(),
+    '.dispatch',
+    'projects',
+    projectKeyOf(rootDir),
+    'planning',
+    'allocation-runs.db'
+  );
+}
+
+/**
  * Where board sync keeps this replica's state: its identity, what it knows of
  * every synced field, and its clone of the sync branch (see
  * packages/server/src/boardSync). Machine-local by definition — it is this
@@ -279,6 +318,33 @@ export function teamTokensPath(rootDir: string): string {
   );
 }
 
+/** Where the operator's paired devices live across a restart, as token hashes
+ *  (see devices.ts). Beside team tokens, outside the repo for the same reason. */
+export function pairedDevicesPath(rootDir: string): string {
+  return join(
+    dispatchHome(),
+    '.dispatch',
+    'projects',
+    projectKeyOf(rootDir),
+    'paired-devices.json'
+  );
+}
+
+/**
+ * Where the mobile app's state lives (mobile/host.ts): push subscriptions, the
+ * VAPID key and the listener settings. Beside the paired devices and outside
+ * the repo for the same reason.
+ */
+export function mobileDir(rootDir: string): string {
+  return join(
+    dispatchHome(),
+    '.dispatch',
+    'projects',
+    projectKeyOf(rootDir),
+    'mobile'
+  );
+}
+
 // Where a project's terminal sessions keep their scrollback and index (see
 // terminals.ts). Under `runs/` rather than beside the repo for the same reason
 // transcripts are: this is per-machine scratch a person never diffs, and it
@@ -299,4 +365,18 @@ export function terminalScrollbackPath(rootDir: string, id: string): string {
  */
 export function licenseKeyPath(): string {
   return join(dispatchHome(), '.dispatch', 'license.key');
+}
+
+// The phone link's keys and paired devices (remoteAccess/), mode 0600: the
+// relay secret this daemon signs in with, its X25519 key and each phone's
+// public key. Beside team-tokens.json, for the same reason: credentials for
+// this machine's daemon, never committed with the project.
+export function remoteAccessPath(rootDir: string): string {
+  return join(
+    dispatchHome(),
+    '.dispatch',
+    'projects',
+    projectKeyOf(rootDir),
+    'remote.json'
+  );
 }

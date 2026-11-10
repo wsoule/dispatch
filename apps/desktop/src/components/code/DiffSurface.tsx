@@ -1,3 +1,4 @@
+import { EmptyState, Spinner } from '@dispatch/ui';
 import type { CodeViewItem, FileDiffMetadata } from '@pierre/diffs';
 import type {
   CodeViewHandle,
@@ -5,12 +6,13 @@ import type {
   CreateEditor,
 } from '@pierre/diffs/react';
 import { CodeView, EditProvider } from '@pierre/diffs/react';
-import { CircleAlert, FileX, Loader2 } from 'lucide-react';
+import { CircleAlert, FileX } from 'lucide-react';
 import type { ReactNode, Ref } from 'react';
 import { useMemo } from 'react';
 
 import { PierreWorkerPool } from '../runs/PierreWorkerPool';
 import { ErrorBoundary } from '../shell/ErrorBoundary';
+import styles from './DiffSurface.module.css';
 import { useDiffDisplaySettings } from '@/hooks/useDiffDisplaySettings';
 import { toDiffRenderOptions } from '@/lib/diffDisplay';
 import { splitPatchFiles } from '@/lib/patchFiles';
@@ -98,13 +100,14 @@ interface DiffSurfaceProps<T> {
   /**
    * Classes for the `CodeView` element itself, which must stay the actual scroll container:
    * `CodeView` attaches its scroll listener to this exact element and reads its own `scrollTop`
-   * to pick the virtualized row window, so an ancestor owning `overflow-auto` instead leaves it
+   * to pick the virtualized row window, so an ancestor owning `overflow: auto` instead leaves it
    * permanently 0 and the diff never advances past the first screenful.
    *
-   * The default requires the caller's parent to be a flex column with a resolved height, and
-   * `flex-1` then sizes off it directly. A percentage height instead has to resolve through
-   * whatever chain of stretched grid/flex ancestors the caller sits in, which some engines
-   * collapse to zero — that reads as a pane rendering its file header and no code at all.
+   * The default (`DiffSurface.module.css` `.view`) requires the caller's parent to be a flex
+   * column with a resolved height, and `flex: 1` then sizes off it directly. A percentage
+   * height instead has to resolve through whatever chain of stretched grid/flex ancestors the
+   * caller sits in, which some engines collapse to zero — that reads as a pane rendering its
+   * file header and no code at all.
    */
   className?: string;
   /** Handle for imperative `scrollTo` — how a file tree jumps to a file within the one scroller. */
@@ -165,7 +168,7 @@ export function DiffSurface<T = undefined>({
   onSelectedLinesChange,
   onItemEditComplete,
   createEditor,
-  className = 'min-h-0 w-full flex-1 overflow-auto',
+  className = styles.view,
   viewRef,
 }: DiffSurfaceProps<T>) {
   // Skipped when the caller already parsed: `patch` goes in as `undefined`, so the hook returns
@@ -217,42 +220,30 @@ export function DiffSurface<T = undefined>({
     [renderAnnotation, renderGutterUtility, renderHeaderMetadata]
   );
 
-  // `h-full` fills a caller whose parent is a plain block; `flex-1` does the same where the
-  // parent is a flex column, in which a percentage height can resolve to zero.
-  const stateClass =
-    'text-muted-foreground flex h-full min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4';
-  // The icon sits inside an inset chip — same "quiet centered glyph" frame `SearchPanel`'s
-  // empty state and `ContextCard`'s header use, so an empty/error diff pane reads as the
-  // same language as the rest of the reskin rather than a bare floating icon.
-  const iconChipClass =
-    'bg-surface-inset text-muted-foreground shadow-hairline rounded-control flex size-8 items-center justify-center';
-
+  // The three states fill the surface's slot (`.state`: a flex column centred both ways) so
+  // a pane never collapses around them. Loading is in-flight network work, hence the Spinner.
   if (loading) {
     return (
-      <div className={stateClass}>
-        <span className={iconChipClass}>
-          <Loader2 className="size-3.5 animate-spin" />
-        </span>
+      <div className={styles.state} data-diff-state="loading">
+        <Spinner label="Loading the diff" />
       </div>
     );
   }
   if (error !== null) {
     return (
-      <div className={`${stateClass} text-center`}>
-        <span className={iconChipClass}>
-          <CircleAlert className="size-3.5" />
-        </span>
-        <p className="text-[13px]">Couldn&rsquo;t load the diff: {error}</p>
+      <div className={styles.state} data-diff-state="error">
+        <EmptyState icon={<CircleAlert size={22} strokeWidth={1.8} />}>
+          Couldn&rsquo;t load the diff: {error}
+        </EmptyState>
       </div>
     );
   }
   if (files.length === 0) {
     return (
-      <div className={`${stateClass} text-center`}>
-        <span className={iconChipClass}>
-          <FileX className="size-3.5" />
-        </span>
-        <p className="text-[12px]">{emptyLabel}</p>
+      <div className={styles.state} data-diff-state="empty">
+        <EmptyState icon={<FileX size={22} strokeWidth={1.8} />}>
+          {emptyLabel}
+        </EmptyState>
       </div>
     );
   }

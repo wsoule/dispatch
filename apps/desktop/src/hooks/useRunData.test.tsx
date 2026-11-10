@@ -8,7 +8,7 @@ import type {
 } from '@dispatch/client';
 import { liveTextStore, resetLiveText, runLiveKey } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, renderHook, waitFor } from '@testing-library/react';
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'bun:test';
 import type { ReactNode } from 'react';
 
@@ -24,7 +24,9 @@ const RUN = 'r-000001';
 
 afterEach(() => {
   // The live text store is one per window, so each test starts it empty, and
-  // with no notification waiting for a frame.
+  // with no notification waiting for a frame. The hooks are unmounted first:
+  // a flush would otherwise re-render them outside act.
+  cleanup();
   resetLiveText(PORT);
   liveTextStore.flush();
 });

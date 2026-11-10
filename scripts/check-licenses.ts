@@ -26,15 +26,25 @@ const EXPECTED: Record<string, string> = {
   '@dispatch-foo/a2a': 'MIT',
   // Shared with the relay: log verification and the license check.
   '@dispatch-foo/federation': 'Elastic-2.0',
+  // The hosted service at app.dispatch.foo: the team tier.
+  '@dispatch/web': 'Elastic-2.0',
   // The daemon is FSL, except its team features (see LICENSED_DIRS).
   '@dispatch/server': 'FSL-1.1-ALv2 AND Elastic-2.0',
   '@dispatch/tokens': 'FSL-1.1-ALv2',
+  // Better-Tracker's component library and planning view-models, adopted
+  // by the desktop app (2026-10-26); the product's licence.
   '@dispatch/ui': 'FSL-1.1-ALv2',
-  '@dispatch/web': 'FSL-1.1-ALv2',
+  '@dispatch/planning': 'FSL-1.1-ALv2',
   '@dispatch/demo': 'FSL-1.1-ALv2',
   '@dispatch/sandbox': 'FSL-1.1-ALv2',
   '@dispatch/desktop': 'FSL-1.1-ALv2',
   '@dispatch/site': 'FSL-1.1-ALv2',
+  // The phone link: the protocol both ends speak is open, so anyone can
+  // check what the relay can and cannot read; the relay and the app are the
+  // product's.
+  '@dispatch/remote': 'MIT',
+  '@dispatch/remote-relay': 'FSL-1.1-ALv2',
+  '@dispatch/mobile': 'FSL-1.1-ALv2',
 };
 
 // Folders inside a package under a license of their own — the GitLab `ee/`

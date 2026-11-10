@@ -1,0 +1,116 @@
+/* One transcript entry (TranscriptRow.tsx), laid out like T3 Code's timeline: tool,
+   sub-agent and thinking rows are ToolChip rows whose detail opens indented under the
+   label; the agent's prose is unboxed Markdown with a quiet copy-and-time footer; a
+   system line takes its gutter tone (lib/transcriptGutter) as a text colour. Tokens
+   only. */
+
+.row {
+  min-width: 0;
+}
+
+/* A chip row with nothing to open. */
+.plain {
+  display: flex;
+  min-width: 0;
+}
+
+/* An opened row's detail: past the chip's 24px icon column and 2px inset, so it lines
+   up under the label. */
+.body {
+  min-width: 0;
+  padding: 4px 0 4px 28px;
+}
+
+/* A prose or system entry: a hair of air around the text. */
+.text {
+  min-width: 0;
+  padding: 2px 4px;
+}
+
+.prose {
+  font-size: var(--fs);
+  line-height: var(--lh-long);
+  color: var(--text);
+}
+
+/* The system line's words, coloured by tone: muted and normal are text colours, accent
+   the accent's ink (your own turns), and a status goes through .toneText (data-tone). */
+.system {
+  font-size: var(--fs-xs);
+  line-height: var(--lh-long);
+}
+
+.muted {
+  color: var(--text-3);
+}
+
+.normal {
+  color: var(--text);
+}
+
+.accent {
+  color: var(--accent-ink);
+}
+
+/* Copy and the time under a reply. Shown on hover or while the copy button has focus
+   where a pointer can hover; always shown on touch, which has no hover to reveal it. */
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  margin-bottom: -4px;
+  color: var(--text-2);
+}
+
+.time {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+@media (hover: hover) {
+  .footer {
+    opacity: 0;
+  }
+
+  .reply:hover .footer,
+  .footer:focus-within {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .footer {
+    transition: opacity var(--dur) var(--ease);
+  }
+}
+
+/* The sub-agent's name and type after the chip's verb, in the sans face. */
+.agentMeta {
+  display: inline-block;
+  max-width: 40ch;
+  overflow: hidden;
+  font-family: var(--font-sans);
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.agentReport {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 68ch;
+}
+
+.agentBody {
+  max-width: 68ch;
+  font-size: var(--fs);
+  line-height: var(--lh-long);
+  color: var(--text);
+}
+
+.totals {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}

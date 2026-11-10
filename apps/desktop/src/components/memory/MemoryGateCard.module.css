@@ -1,0 +1,48 @@
+/* A memory gate (MemoryGateCard.tsx) inside its DecisionCard: the proposed
+   entry, or each labelled version of a superseded one in its own box, who
+   asked and where it reaches, and the decide error. */
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.title {
+  font-weight: var(--fw-medium);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.strong {
+  color: var(--text);
+}
+
+/* A sentence with a quiet button after it ("Try again"). */
+.line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--s-1);
+}
+
+.version {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: var(--s-2) 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+
+.caption {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+
+.error {
+  font-size: var(--fs-xs);
+}

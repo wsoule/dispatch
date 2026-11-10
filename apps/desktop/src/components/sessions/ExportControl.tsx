@@ -1,8 +1,9 @@
+import { Button, cx } from '@dispatch/ui';
 import { Download, FolderOpen } from 'lucide-react';
 import { useState } from 'react';
 
 import { revealInFinder } from '../../lib/tauri';
-import { Button } from '@/ui/button';
+import styles from './sessions.module.css';
 
 type ExportState =
   | { status: 'idle' }
@@ -17,17 +18,19 @@ interface ExportControlProps {
   savingLabel?: string;
   /** Runs the export and resolves to the saved file's path. */
   onExport: () => Promise<string>;
-  /** `ghost` is the page-header action (12px muted text, no fill); `pill` the in-body
+  /** `ghost` is a toolbar action (a quiet Button, no box until hover); `pill` the in-body
    * secondary button. */
   variant?: 'ghost' | 'pill';
 }
 
 /**
- * "Export … / Exporting… / Saved to &lt;path&gt; [Reveal in Finder] / &lt;error&gt;" control
- * shared by `SessionDetailModal` (exports one session's transcript) and `SessionsHubView`
- * (exports the aggregate spend report from its header) — both call an async export fn and
- * would otherwise re-implement the same idle/saving/saved/error state machine around it. Owns
- * that state itself so neither caller has to.
+ * "Export … / Exporting… / Saved to <path> [Reveal in Finder] / <error>" control shared by
+ * `SessionDetailModal` (exports one session's transcript) and `SessionsHubView` (exports
+ * the aggregate spend report from its toolbar). Both call an async export fn and would
+ * otherwise re-implement the same idle/saving/saved/error state machine around it, so this
+ * owns that state. While saving, the button is disabled and reads `savingLabel` (no
+ * spinner: it is a local file write). The saved path and any error appear in a polite live
+ * region, truncated to one line with the full text in the title.
  */
 export function ExportControl({
   label,
@@ -48,36 +51,43 @@ export function ExportControl({
   }
 
   return (
-    <div className="flex min-w-0 items-center gap-3">
-      {state.status === 'saved' && (
-        <span className="text-muted-foreground font-book inline-flex max-w-[320px] min-w-0 items-center gap-2 text-[12px]">
-          <span className="min-w-0 truncate" title={state.path}>
+    <div className={styles.export}>
+      <span className={styles.exportStatus} aria-live="polite">
+        {state.status === 'saved' && (
+          <span className={styles.exportSaved} title={state.path}>
             Saved to {state.path}
           </span>
-          <Button
-            variant="link"
-            size="xs"
-            onClick={() => void revealInFinder(state.path)}
-            className="h-auto gap-1 p-0 text-[12px] whitespace-nowrap has-[>svg]:px-0"
+        )}
+        {state.status === 'error' && (
+          <span
+            className={cx('toneText', styles.exportError)}
+            data-tone="danger"
+            title={state.message}
           >
-            <FolderOpen className="size-3" />
-            Reveal in Finder
-          </Button>
-        </span>
-      )}
-      {state.status === 'error' && (
-        <span className="text-state-failed max-w-[320px] truncate text-[12px]">
-          {state.message}
-        </span>
+            {state.message}
+          </span>
+        )}
+      </span>
+      {state.status === 'saved' && (
+        <Button
+          variant="quiet"
+          size="sm"
+          className={styles.exportReveal}
+          icon={<FolderOpen size={14} strokeWidth={1.8} aria-hidden />}
+          onClick={() => void revealInFinder(state.path)}
+        >
+          Reveal in Finder
+        </Button>
       )}
       <Button
-        variant={variant === 'ghost' ? 'ghost' : 'secondary'}
+        variant={variant === 'ghost' ? 'quiet' : 'secondary'}
         size="sm"
+        icon={<Download size={14} strokeWidth={1.8} aria-hidden />}
+        busy={state.status === 'saving'}
+        busyLabel={savingLabel}
         onClick={() => void handleExport()}
-        disabled={state.status === 'saving'}
       >
-        <Download className="size-3.5" />
-        {state.status === 'saving' ? savingLabel : label}
+        {label}
       </Button>
     </div>
   );

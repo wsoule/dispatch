@@ -401,6 +401,7 @@ const MACHINE_LOCAL_GROUP: IgnoreGroup = {
     '# neither is the marker naming it — a clone carrying the marker without',
     '# the database reads as a board that is confidently empty.',
     "# Uploaded files are per-machine too; the task's frontmatter names them.",
+    "# So is what this machine's human dismissed from the 'Needs you' feed.",
   ],
   rules: [
     'dispatch.db',
@@ -408,6 +409,7 @@ const MACHINE_LOCAL_GROUP: IgnoreGroup = {
     'dispatch.db-shm',
     'storage.json',
     'attachments/',
+    'decision-acks.json',
   ],
 };
 

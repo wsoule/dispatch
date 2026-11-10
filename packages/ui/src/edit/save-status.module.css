@@ -1,0 +1,42 @@
+/* Save feedback, quietly: "Saving" in the meta voice beside the value,
+   and a one-line error with a red "Not saved" lead-in (a save that failed
+   is the danger tone, docs/architecture.md §8.2). */
+
+.pending {
+  flex: none;
+  font-family: var(--font-body);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  letter-spacing: normal;
+  line-height: 1.4;
+  text-transform: none;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.error {
+  display: flex;
+  align-items: baseline;
+  gap: 4px 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+  font-family: var(--font-body);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-regular);
+  line-height: 1.45;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text);
+}
+
+.key {
+  flex: none;
+  font-weight: var(--fw-semibold);
+  color: var(--red);
+}
+
+.message {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

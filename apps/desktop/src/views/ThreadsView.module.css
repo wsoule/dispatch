@@ -1,0 +1,95 @@
+/* The Threads page (views/ThreadsView.tsx): the page head with New thread
+   over a 320px rail of threads (Needs you, Channels, Direct) beside the
+   open thread, the composer or an empty state. The rail and the pane
+   scroll on their own; the head stays put. Colours and type come from
+   the tokens and @dispatch/ui's components; this sheet places them. */
+
+.view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex-shrink: 0;
+  min-height: 44px;
+  padding: var(--s-2) var(--s-4);
+  border-bottom: 1px solid var(--divider);
+}
+
+.body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.rail {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--s-2);
+  width: 320px;
+  padding: var(--s-2);
+  overflow-y: auto;
+  border-right: 1px solid var(--divider);
+}
+
+.error {
+  margin: 0;
+  padding: var(--s-2);
+  font-size: var(--fs-xs);
+}
+
+.thread {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.composer {
+  padding: var(--s-3);
+}
+
+.open {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.paneSlot {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* An empty state fills the pane (or the page under the head) and sits in
+   its middle. */
+.empty {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 0;
+  padding: var(--s-4);
+}
+
+/* A phone-width window stacks the rail over the thread. */
+@media (width <= 640px) {
+  .body {
+    flex-direction: column;
+  }
+
+  .rail {
+    width: auto;
+    max-height: 40vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--divider);
+  }
+}

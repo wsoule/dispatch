@@ -1,0 +1,27 @@
+/* The status glyph strokes and fills in currentcolor: the status's tone
+   (data-tone from statusTone, --tone), or with no tone (done) the neutral
+   filled mark in --text-2, never green beside a red. The cut-out check or
+   × is filled in the surface. No size here: the SVG's width and height
+   attributes size it, and a caller's class may still override them. */
+
+.icon {
+  flex: none;
+  color: var(--text-2);
+}
+
+.icon[data-tone] {
+  color: var(--tone);
+}
+
+/* Forced colours paint the glyph in CanvasText; the cut-out follows the
+   canvas so the check and × keep their shape. */
+@media (forced-colors: active) {
+  .icon,
+  .icon[data-tone] {
+    color: CanvasText;
+  }
+
+  .cutout {
+    fill: Canvas;
+  }
+}

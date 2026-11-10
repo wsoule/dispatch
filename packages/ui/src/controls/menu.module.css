@@ -1,0 +1,204 @@
+/* Gr8r's menu: the popover card of 30px rows; the focused row takes the
+   picker's fill and accent bar, a destructive row is red. It is placed by
+   script (shell/layer.ts positionLayer, prefix --menu) under its trigger,
+   and a submenu beside its row through --submenu-* (its own prefix: the
+   submenu's layer is a DOM child of the root's and would inherit
+   --menu-*). Each stays hidden until it has been placed. */
+
+.layer {
+  position: fixed;
+  inset: auto;
+  top: var(--menu-top, 0);
+  left: var(--menu-left, 0);
+  z-index: 80;
+  width: max-content;
+  min-width: 180px;
+  max-width: min(320px, calc(100vw - 16px));
+  max-height: var(--menu-max-height, none);
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  border: 0;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: var(--fs);
+  line-height: var(--lh);
+  visibility: hidden;
+}
+
+.layer[data-placed='true'] {
+  visibility: visible;
+}
+
+.layer[data-side='above'] {
+  top: auto;
+  bottom: var(--menu-bottom, 0);
+}
+
+.nested {
+  top: var(--submenu-top, 0);
+  left: var(--submenu-left, 0);
+  z-index: 81;
+  max-height: var(--submenu-max-height, none);
+}
+
+/* The list animates, not the placed layer: positionLayer measures where
+   the layer landed, and a transform still running would read as an
+   offset. */
+@media (prefers-reduced-motion: no-preference) {
+  .layer[data-placed='true'] > .menu {
+    transform-origin: top left;
+    animation: pop-in 0.16s var(--ease) both;
+  }
+
+  .layer[data-side='above'] > .menu {
+    transform-origin: bottom left;
+  }
+
+  .layer[data-side='left'] > .menu {
+    transform-origin: top right;
+  }
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.menu {
+  display: flex;
+  flex-direction: column;
+  padding: var(--s-1);
+}
+
+.menu:focus-visible {
+  outline: 2px solid transparent;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: var(--h-md);
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* The fill alone is too faint a cue, so the accent bar marks focus too. */
+.item:focus {
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+  background: var(--surface-2);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.item[aria-expanded='true'] {
+  background: var(--surface-2);
+}
+
+.item:disabled {
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+.item[data-destructive='true'] {
+  color: var(--red);
+}
+
+.icon {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 16px;
+  color: var(--text-2);
+}
+
+.icon:empty {
+  display: none;
+}
+
+.item[data-destructive='true'] .icon {
+  color: inherit;
+}
+
+.icon :global(svg) {
+  width: 14px;
+  height: 14px;
+}
+
+.label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shortcut {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.tick {
+  flex: none;
+  color: var(--accent);
+}
+
+.chevron {
+  flex: none;
+  color: var(--text-3);
+}
+
+.separator {
+  height: 1px;
+  margin: 4px -4px;
+  background: var(--divider);
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+}
+
+.groupLabel {
+  padding: 6px 8px 2px;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text-3);
+}
+
+.empty {
+  padding: 6px 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+@media (forced-colors: active) {
+  /* The menu's shadow is its only edge, and forced colours drop it. */
+  .layer {
+    border: 1px solid CanvasText;
+  }
+
+  .item:focus {
+    outline-color: Highlight;
+  }
+}

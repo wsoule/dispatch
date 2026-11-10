@@ -1,0 +1,122 @@
+// Where a picker's popover goes: pure geometry, so it is testable without a
+// browser and shared by every popover in the family. No library: below the
+// trigger by default, above it when there is more room there and the
+// popover does not fit below, and slid left so it never leaves the viewport.
+
+export interface PlacementInput {
+  /** The trigger's box in viewport coordinates (getBoundingClientRect). */
+  anchor: { top: number; bottom: number; left: number; right: number };
+  /** The popover's natural size (capped by its CSS max-height). */
+  size: { width: number; height: number };
+  /** The visible viewport. */
+  viewport: { width: number; height: number };
+  /** Space between the trigger and the popover. Default 4. */
+  gap?: number;
+  /** Space kept clear at the viewport's edges. Default 8. */
+  margin?: number;
+  /** Which trigger edge the popover lines up with. Default 'start' (left
+      edges); 'end' lines up the right edges, for a trigger at the right
+      of its row; 'center' centres it on the trigger (a tooltip). Each
+      shifts when the popover would leave the viewport. */
+  align?: 'start' | 'end' | 'center';
+  /** The preferred side. Default 'below'; 'above' (a tooltip on top)
+      flips below when it does not fit above and below has more room. */
+  side?: 'below' | 'above';
+}
+
+export interface Placement {
+  side: 'below' | 'above';
+  /** CSS left, px. */
+  left: number;
+  /** below: CSS top, px (from the viewport's top). */
+  top: number | null;
+  /** above: CSS bottom, px (from the viewport's bottom), so the popover
+      stays pinned to the trigger as its list grows or shrinks. */
+  bottom: number | null;
+  /** Height available on the chosen side, px; the list scrolls inside. */
+  maxHeight: number;
+  /** Width after clamping to the viewport, px. */
+  width: number;
+}
+
+/**
+ * Places a popover against its trigger. Below wins unless the popover does
+ * not fit there and the space above is larger (it flips at the bottom
+ * edge); with side 'above' the same holds the other way round.
+ * Horizontally it lines up with the trigger's left edge (or right edge
+ * with align 'end', or its centre with 'center'); when an edge alignment
+ * leaves the viewport it lines up with the other edge instead, and it is
+ * finally clamped inside the margins.
+ */
+export function placePopover(input: PlacementInput): Placement {
+  const gap = input.gap ?? 4;
+  const margin = input.margin ?? 8;
+  const { anchor, size, viewport } = input;
+
+  const below = viewport.height - anchor.bottom - gap - margin;
+  const above = anchor.top - gap - margin;
+  const side: Placement['side'] =
+    input.side === 'above'
+      ? size.height <= above || above >= below
+        ? 'above'
+        : 'below'
+      : size.height <= below || below >= above
+        ? 'below'
+        : 'above';
+  const maxHeight = Math.max(0, Math.floor(side === 'below' ? below : above));
+
+  const width = Math.max(0, Math.min(size.width, viewport.width - 2 * margin));
+  let left: number;
+  if (input.align === 'center') {
+    left = (anchor.left + anchor.right) / 2 - width / 2;
+  } else if (input.align === 'end') {
+    left = anchor.right - width;
+    if (left < margin) left = anchor.left;
+  } else {
+    left = anchor.left;
+    if (left + width > viewport.width - margin) left = anchor.right - width;
+  }
+  left = Math.min(left, viewport.width - margin - width);
+  left = Math.max(left, margin);
+
+  return {
+    side,
+    left: Math.round(left),
+    top: side === 'below' ? Math.round(anchor.bottom + gap) : null,
+    bottom:
+      side === 'above' ? Math.round(viewport.height - anchor.top + gap) : null,
+    maxHeight,
+    width,
+  };
+}
+
+/** A submenu's box beside the row that opens it. */
+export interface BesidePlacement {
+  /** CSS left, px. */
+  left: number;
+  /** CSS top, px. */
+  top: number;
+  side: 'right' | 'left';
+}
+
+/**
+ * Places a submenu beside its row: to the right with its first row level
+ * with the opener, flipped to the left when it would leave the viewport,
+ * and slid up when it would run off the bottom.
+ */
+export function placeBeside(input: PlacementInput): BesidePlacement {
+  const gap = input.gap ?? 2;
+  const margin = input.margin ?? 8;
+  const { anchor, size, viewport } = input;
+  const fitsRight = anchor.right + gap + size.width <= viewport.width - margin;
+  const fitsLeft = anchor.left - gap - size.width >= margin;
+  const side: BesidePlacement['side'] =
+    fitsRight || !fitsLeft ? 'right' : 'left';
+  let left =
+    side === 'right' ? anchor.right + gap : anchor.left - gap - size.width;
+  left = Math.max(margin, Math.min(left, viewport.width - margin - size.width));
+  let top = anchor.top - 4;
+  top = Math.min(top, viewport.height - margin - size.height);
+  top = Math.max(top, margin);
+  return { side, left: Math.round(left), top: Math.round(top) };
+}

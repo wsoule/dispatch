@@ -14,7 +14,7 @@ import {
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 
 import { type CliContext, CliError } from '../context.js';
@@ -560,8 +560,8 @@ export async function ensureDaemon(
   // recovered — deliberately, since `dispatch` runs inside agent shells whose
   // stdout the agent reads, and relaying that line there would hand the
   // decide-tier credential to the very caller the tier split excludes. Use
-  // `dispatch serve` when you need an app token; `dispatch approve`, `message`
-  // and `scope` say so when they have none.
+  // `dispatch serve --app-token-file <path>` when you need an app token;
+  // `dispatch approve`, `message` and `scope` say so when they have none.
   //
   // On the bun-script
   // path no `env` override is passed, so the child inherits this process's
@@ -655,12 +655,24 @@ export interface ServeOptions {
   a2aPublicUrl?: string;
   a2aTlsCert?: string;
   a2aTlsKey?: string;
+  mobilePort?: string;
+  mobileUrl?: string;
   replace?: boolean;
+  printToken?: boolean;
+  appTokenFile?: string;
 }
 
 // The dispatchd arguments `dispatch serve` passes, in a stable order; throws
 // when a certificate comes without its key or a key without its certificate.
+//
+// The app token flag comes last. A terminal's scrollback, and any agent tool
+// log capturing it, keeps whatever serve prints, so by default dispatchd
+// prints only a masked token; `--app-token-file` writes it to a 0600 file
+// instead, and `--print-token` restores the full DISPATCH_APP_TOKEN= line.
 export function serveArgs(root: string, o: ServeOptions): string[] {
+  if (o.printToken === true && o.appTokenFile !== undefined) {
+    throw new CliError('--print-token and --app-token-file are alternatives');
+  }
   if ((o.tlsCert === undefined) !== (o.tlsKey === undefined)) {
     throw new CliError('--tls-cert and --tls-key go together');
   }
@@ -680,11 +692,16 @@ export function serveArgs(root: string, o: ServeOptions): string[] {
     ['--a2a-public-url', o.a2aPublicUrl],
     ['--a2a-tls-cert', o.a2aTlsCert],
     ['--a2a-tls-key', o.a2aTlsKey],
+    ['--mobile-port', o.mobilePort],
+    ['--mobile-url', o.mobileUrl],
   ];
   const args = ['--root', root];
   for (const [flag, value] of flags) {
     if (value !== undefined) args.push(flag, value);
   }
+  if (o.appTokenFile !== undefined)
+    args.push('--app-token-file', o.appTokenFile);
+  else if (o.printToken !== true) args.push('--mask-app-token');
   return args;
 }
 
@@ -693,11 +710,14 @@ export function serveArgs(root: string, o: ServeOptions): string[] {
 const SERVE_CLAIM_WAIT_MS = 25_000;
 const HANDOVER_EXIT_WAIT_MS = 30_000;
 
-// `dispatch serve`: takes the project over from a background daemon (or, with
-// --replace, any daemon) by asking it to exit once nothing is live, then runs
-// dispatchd in the foreground. The spawn claim is held from before the old
-// daemon exits until the new one has written its daemon file, so an MCP call
-// in that gap waits for this daemon instead of spawning another.
+// `dispatch serve`: takes the project over from a background daemon (once
+// confirmed, or with --replace) or, with --replace, any daemon, by asking it
+// to exit once nothing is live, then runs dispatchd in the foreground. A
+// dispatchd stopped by anything but this process's own signals (the Dispatch
+// app restarting its daemon, say) ends the command non-zero, saying so. The
+// spawn claim is held from before the old daemon exits until the new one has
+// written its daemon file, so an MCP call in that gap waits for this daemon
+// instead of spawning another.
 async function serveInForeground(
   ctx: CliContext,
   root: string,
@@ -742,15 +762,30 @@ async function serveInForeground(
     });
     // Ctrl+C reaches dispatchd through the terminal; a kill of this process
     // is passed on, and either way this waits for it to shut down.
-    const ignore = () => {};
-    const forward = () => child.kill('SIGTERM');
+    let stoppedHere = false;
+    const ignore = () => {
+      stoppedHere = true;
+    };
+    const forward = () => {
+      stoppedHere = true;
+      child.kill('SIGTERM');
+    };
     process.on('SIGINT', ignore);
     process.on('SIGTERM', forward);
     try {
-      const booted = waitForDaemonPid(root, child.pid, 20_000);
-      await Promise.race([booted, exited.catch(() => undefined)]);
+      const booted = await Promise.race([
+        waitForDaemonPid(root, child.pid, 20_000),
+        exited.then(
+          () => false,
+          () => false
+        ),
+      ]);
       release();
-      return await exited;
+      const code = await exited;
+      // A boot that failed printed its own reason; a stop asked for here is
+      // the normal end.
+      if (!booted || stoppedHere) return code;
+      throw await displacedError(root, child.pid, code);
     } finally {
       process.off('SIGINT', ignore);
       process.off('SIGTERM', forward);
@@ -774,25 +809,58 @@ async function askNo(question: string): Promise<boolean> {
   }
 }
 
-// Resolves once this root's daemon file names `pid` and answers health.
+// Resolves true once this root's daemon file names `pid` and answers health,
+// false if that has not happened within `timeoutMs`.
 async function waitForDaemonPid(
   rootDir: string,
   pid: number | undefined,
   timeoutMs: number
-): Promise<void> {
+): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const info = readDaemonFile(rootDir);
     if (info?.pid === pid && info !== null && (await isHealthy(info.port)))
-      return;
+      return true;
     await sleep(200);
   }
+  return false;
+}
+
+// How long a displaced `dispatch serve` looks for the daemon that replaced it.
+const DISPLACED_LOOKUP_MS = 10_000;
+
+// The error `dispatch serve` ends with when its dispatchd was stopped from
+// outside: by the Dispatch app or another `dispatch serve` taking the project
+// over, or by a kill. It names the replacement when one shows up in the
+// daemon file within a few seconds (the app stops the old daemon before it
+// starts its own), and always exits non-zero, keeping a crash's own code.
+async function displacedError(
+  rootDir: string,
+  pid: number | undefined,
+  code: number
+): Promise<CliError> {
+  const deadline = Date.now() + DISPLACED_LOOKUP_MS;
+  for (;;) {
+    const info = readDaemonFile(rootDir);
+    if (info !== null && info.pid !== pid && pidAlive(info.pid))
+      return new CliError(
+        `dispatchd (pid ${pid}) stopped: another dispatchd (pid ${info.pid}, port ${info.port}) took this project over, most likely the Dispatch app. Use that one, or run \`dispatch serve --replace\` to take it back.`,
+        code === 0 ? 1 : code
+      );
+    if (Date.now() >= deadline) break;
+    await sleep(200);
+  }
+  return new CliError(
+    `dispatchd (pid ${pid}) stopped without being asked from this terminal (exit code ${code}); nothing serves this project now. Run \`dispatch serve\` again to serve it.`,
+    code === 0 ? 1 : code
+  );
 }
 
 // Stops the daemon serving `rootDir` so this one can take over: a background
-// one always, any other only with `replace`. It is asked over its API (the
-// daemon file's agent token), refuses while work is live, and is waited for
-// until its pid exits; nothing is ever killed by name or pattern.
+// one once confirmed on the terminal (or with `replace`), any other only with
+// `replace`. It is asked over its API (the daemon file's agent token), refuses
+// while work is live, and is waited for until its pid exits; nothing is ever
+// killed by name or pattern.
 async function stopForTakeover(
   ctx: CliContext,
   rootDir: string,
@@ -832,6 +900,14 @@ async function stopForTakeover(
     );
   // Work under way refuses; runs parked on a human are asked about, since
   // they resume after the takeover and only a fresh app token can answer them.
+  // Without --replace the takeover itself is asked about too: whoever started
+  // the background daemon (an agent's MCP call, or the app attached to it) is
+  // using it. Both go in one question.
+  const reasons: string[] = [];
+  if (!replace)
+    reasons.push(
+      `A background dispatchd${info.startedBy === undefined ? '' : ` started by ${info.startedBy}`} serves this project (${which}); taking over stops it and serves the project from this terminal instead.`
+    );
   let parked = false;
   const work = await fetch(`${base}/api/live-work`, {
     headers: { authorization },
@@ -842,16 +918,23 @@ async function stopForTakeover(
     if (live.busy.length > 0) throw busy(live.busy.join(', '));
     if (live.parked > 0) {
       const n = live.parked;
-      const why = `${n} ${n === 1 ? 'run is' : 'runs are'} waiting on you in the dispatchd serving this project (${which}). They'll pick up again after the restart. Questions stay open; tool approvals will be asked again. Answer them afterwards with \`dispatch approvals\`.`;
-      const ask = ctx.confirm ?? (process.stdin.isTTY === true ? askNo : null);
-      if (ask === null)
-        throw new CliError(
-          `not taking over without a terminal to confirm: ${why} Run \`dispatch serve\` in a terminal to answer the question.`
-        );
-      if (!(await ask(`${why} Take over?`)))
-        throw new CliError('not taking over; nothing was stopped.');
+      reasons.push(
+        `${n} ${n === 1 ? 'run is' : 'runs are'} waiting on you in the dispatchd serving this project (${which}). They'll pick up again after the restart. Questions stay open; tool approvals will be asked again. Answer them afterwards with \`dispatch approvals\`.`
+      );
       parked = true;
     }
+  }
+  if (reasons.length > 0) {
+    const why = reasons.join(' ');
+    const ask = ctx.confirm ?? (process.stdin.isTTY === true ? askNo : null);
+    if (ask === null)
+      throw new CliError(
+        parked
+          ? `not taking over without a terminal to confirm: ${why} Run \`dispatch serve\` in a terminal to answer the question.`
+          : `not taking over without a terminal to confirm: ${why} Run \`dispatch serve\` in a terminal to answer the question, or \`dispatch serve --replace\` to take over without asking.`
+      );
+    if (!(await ask(`${why} Take over?`)))
+      throw new CliError('not taking over; nothing was stopped.');
   }
   const res = await fetch(`${base}/api/daemon/shutdown`, {
     method: 'POST',
@@ -927,8 +1010,24 @@ export function registerDaemonCommands(
       `A2A listener private key ${A2A_OVERRIDE_HELP}`
     )
     .option(
+      '--app-token-file <path>',
+      'write the app token (which authorizes approval decisions) to this file, readable only by you, instead of printing it masked'
+    )
+    .option(
+      '--print-token',
+      'print the full app token instead of a masked one; your terminal scrollback keeps it'
+    )
+    .option(
+      '--mobile-port <n>',
+      'open the phone app on this loopback port, for a tunnel such as `tailscale serve` to front (this boot only)'
+    )
+    .option(
+      '--mobile-url <url>',
+      'the https URL the phone reaches --mobile-port at, through that tunnel (this boot only)'
+    )
+    .option(
       '--replace',
-      'also take over a daemon the Dispatch app or another `dispatch serve` started (a background one is taken over without it); refused while it has live work'
+      'take over a daemon the Dispatch app or another `dispatch serve` started, or a background one without asking; refused while it has live work'
     )
     .action(async (opts: ServeOptions) => {
       // requireInitialized, NOT requireStore: the latter demands
@@ -941,7 +1040,9 @@ export function registerDaemonCommands(
       process.exitCode = await serveInForeground(
         ctx,
         projectRoot(ctx.cwd),
-        opts
+        opts.appTokenFile === undefined
+          ? opts
+          : { ...opts, appTokenFile: resolve(ctx.cwd, opts.appTokenFile) }
       );
     });
 

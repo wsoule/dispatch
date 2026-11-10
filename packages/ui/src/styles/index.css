@@ -1,0 +1,5 @@
+/* Everything a host imports once, globally: tokens + reset + chrome, then
+   the shared primitives. Component styles are CSS modules next to each
+   component. */
+@import './tokens.css';
+@import './primitives.css';

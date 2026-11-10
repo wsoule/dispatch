@@ -5,10 +5,20 @@ import type {
 } from '@dispatch-foo/core/browser';
 import type { ApiClient, Finding } from '@dispatch/client';
 import {
+  Button,
+  Checkbox,
+  ChipButton,
+  cx,
+  Disclosure,
+  SectionHeader,
+  type UiTone,
+} from '@dispatch/ui';
+import {
   Bot,
   Check,
   ChevronRight,
   Flag,
+  type LucideIcon,
   TriangleAlert,
   Wrench,
   X,
@@ -20,20 +30,31 @@ import { partitionFindings } from '../../lib/findings';
 import { isDeadGuard } from '../../lib/reviewCase';
 import { ImpactPanel } from '../impact/ImpactPanel';
 import { PolicyReceiptBadge } from '../ledger/PolicyReceiptBadge';
-import { cn } from '@/lib/utils';
-import { PillButton } from '@/ui/ai/pill';
-import { Button } from '@/ui/button';
-import { Checkbox } from '@/ui/checkbox';
-import { SectionLabel } from '@/ui/chrome/SectionLabel';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/ui/collapsible';
-import { ScrollArea } from '@/ui/scroll-area';
+import styles from './ReviewCasePanel.module.css';
 
-// Row metadata — a summary, a duration, a path, a kind — 12px sans, tabular digits.
-const META_CLASS = 'text-[12px] font-book text-muted-foreground tabular-nums';
+// The 12px glyph a row leads with, and the one inside a chip button.
+const GLYPH = { size: 12, strokeWidth: 1.8, 'aria-hidden': true } as const;
+
+/** A row's status glyph in its tone's ink (the global .toneText), with the
+ *  word it stands for beside it for assistive tech: colour and shape are
+ *  never the only cue. Failed is danger, passed success, pending muted and
+ *  blocked or at risk warning, as the status table has it. */
+function ToneGlyph({
+  icon: Icon,
+  tone,
+  word,
+}: {
+  icon: LucideIcon;
+  tone: UiTone;
+  word: string;
+}) {
+  return (
+    <span className={cx(styles.glyph, 'toneText')} data-tone={tone}>
+      <Icon {...GLYPH} />
+      <span className="srOnly">{word}</span>
+    </span>
+  );
+}
 
 interface ReviewCasePanelProps {
   evidence: CommandEvidence[];
@@ -117,41 +138,35 @@ export function ReviewCasePanel({
   }
   const openCount = judgment.reduce((n, g) => n + g.findings.length, 0);
 
-  // `h-full min-h-0`: this panel is the sole flexible child of the review page's own
-  // `flex-1 flex-col` pane, so it has to actually claim that space itself before
-  // ScrollArea's Viewport (which only ever fills its own Root, `size-full`) has
-  // anything real to scroll within.
+  // The panel scrolls itself: it is the sole flexible child of the review
+  // page's own column, so it claims that height and overflows inside it.
   return (
-    <ScrollArea className="h-full min-h-0">
-      <div className="flex flex-col gap-5 p-1">
-        <section>
-          <SectionLabel rule count={evidence.length}>
-            What the agent verified
-          </SectionLabel>
+    <div className={styles.root}>
+      <div className={styles.stack}>
+        <section className={styles.section}>
+          <SectionHeader
+            name="What the agent verified"
+            count={evidence.length}
+            rule
+          />
           {evidence.length === 0 ? (
-            // The absence is the finding, so this must not read as a blank section or a tick.
-            <p className="text-state-waiting font-book mt-2 text-[13px]">
+            // The absence is the finding, so this must not read as a blank
+            // section or a tick: a missing input, in the warning tone's ink.
+            <p className={cx(styles.lead, 'toneText')} data-tone="warning">
               The agent recorded no verification.
             </p>
           ) : (
-            <div className="mt-2 flex flex-col gap-1">
+            <div className={styles.rows}>
               {evidence.map((e) => (
-                <div
-                  key={`${e.at}-${e.command}`}
-                  className="flex items-baseline gap-2 text-[13px]"
-                >
+                <div key={`${e.at}-${e.command}`} className={styles.row}>
                   {e.exitCode === 0 ? (
-                    <Check className="text-state-review size-3 shrink-0" />
+                    <ToneGlyph icon={Check} tone="success" word="Passed" />
                   ) : (
-                    <X className="text-state-failed size-3 shrink-0" />
+                    <ToneGlyph icon={X} tone="danger" word="Failed" />
                   )}
-                  <code className="min-w-0 flex-1 truncate text-[12px]">
-                    {e.command}
-                  </code>
-                  <span className={cn(META_CLASS, 'shrink-0')}>
-                    {e.summary}
-                  </span>
-                  <span className={cn(META_CLASS, 'shrink-0')}>
+                  <code className={styles.command}>{e.command}</code>
+                  <span className={styles.meta}>{e.summary}</span>
+                  <span className={styles.meta}>
                     {(e.durationMs / 1000).toFixed(1)}s
                   </span>
                 </div>
@@ -162,87 +177,92 @@ export function ReviewCasePanel({
 
         {/* Only ever mounted when a real run is behind this panel — the caller
           (the task view's Diff tab) always has both; this component's own tests exercise
-          `empty` without them, which just hides the section. */}
+          `empty` without them, which just hides the section. The library
+          Panel inside heads it "Impact", so it takes no second header. */}
         {client !== undefined && runId !== undefined && (
-          <section>
-            <SectionLabel rule>Impact</SectionLabel>
-            <div className="mt-2 flex flex-col items-start gap-2">
-              <ImpactPanel client={client} subject="run" id={runId} />
-            </div>
+          <section className={styles.section}>
+            <ImpactPanel client={client} subject="run" id={runId} />
           </section>
         )}
 
         {mutations.length > 0 && (
-          <section>
-            <SectionLabel rule count={mutations.length}>
-              Guards it mutation-tested
-            </SectionLabel>
-            <div className="mt-2 flex flex-col gap-1">
-              {mutations.map((m) => (
-                <div
-                  key={`${m.at}-${m.guard}`}
-                  className="flex items-baseline gap-2 text-[13px]"
-                >
-                  {isDeadGuard(m) ? (
-                    <TriangleAlert className="text-state-waiting size-3 shrink-0" />
-                  ) : (
-                    <Check className="text-state-review size-3 shrink-0" />
-                  )}
-                  <span className="min-w-0 flex-1 truncate">{m.guard}</span>
-                  <span className="text-muted-foreground shrink-0 font-mono text-[12px]">
-                    {m.file}
-                  </span>
-                  <span
-                    className={cn(
-                      META_CLASS,
-                      'shrink-0',
-                      isDeadGuard(m) && 'text-state-waiting'
+          <section className={styles.section}>
+            <SectionHeader
+              name="Guards it mutation-tested"
+              count={mutations.length}
+              rule
+            />
+            <div className={styles.rows}>
+              {mutations.map((m) => {
+                const dead = isDeadGuard(m);
+                return (
+                  <div key={`${m.at}-${m.guard}`} className={styles.row}>
+                    {dead ? (
+                      <ToneGlyph
+                        icon={TriangleAlert}
+                        tone="warning"
+                        word="Dead guard"
+                      />
+                    ) : (
+                      <ToneGlyph icon={Check} tone="success" word="Guarded" />
                     )}
-                  >
-                    {isDeadGuard(m)
-                      ? '0 tests failed: dead guard or vacuous test'
-                      : `${m.testsFailed} tests failed`}
-                  </span>
-                </div>
-              ))}
+                    <span className={styles.name}>{m.guard}</span>
+                    <span className={styles.path}>{m.file}</span>
+                    {dead ? (
+                      <span
+                        className={cx(styles.meta, 'toneText')}
+                        data-tone="warning"
+                      >
+                        0 tests failed: dead guard or vacuous test
+                      </span>
+                    ) : (
+                      <span className={styles.meta}>
+                        {`${m.testsFailed} tests failed`}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </section>
         )}
 
-        <section>
-          <SectionLabel rule count={openCount}>
-            Agent review
-          </SectionLabel>
+        <section className={styles.section}>
+          <SectionHeader name="Agent review" count={openCount} rule />
           {judgment.length === 0 ? (
-            <div className="mt-2 flex flex-col items-start gap-2">
+            <div className={styles.empty}>
               {/* Never "no findings": an empty set means nobody looked, and saying otherwise
                 would turn an absent review into a clean bill of health. */}
-              <p className="text-muted-foreground font-book text-[13px]">
+              <p className={styles.lead}>
                 {reviewAgentLive
                   ? 'An agent is reviewing this diff — its findings land here once it finishes.'
                   : 'No agent review has run over this diff.'}
               </p>
               {onStartAiReview !== undefined && (
-                <PillButton
+                <ChipButton
                   disabled={aiReviewBusy || reviewAgentLive}
                   onClick={() => void onStartAiReview()}
                 >
-                  <Bot />
-                  {reviewAgentLive
-                    ? 'Agent reviewing…'
-                    : aiReviewBusy
-                      ? 'Starting…'
-                      : 'Ask an agent to review'}
-                </PillButton>
+                  <span className={styles.chipBody}>
+                    <Bot {...GLYPH} />
+                    {reviewAgentLive
+                      ? 'Agent reviewing…'
+                      : aiReviewBusy
+                        ? 'Starting…'
+                        : 'Ask an agent to review'}
+                  </span>
+                </ChipButton>
               )}
             </div>
           ) : (
-            <div className="mt-2 flex flex-col gap-3">
+            <div className={styles.groups}>
               {judgment.map((group) => (
-                <div key={group.severity} className="flex flex-col gap-2">
-                  <SectionLabel count={group.findings.length}>
-                    {group.severity}
-                  </SectionLabel>
+                <div key={group.severity} className={styles.group}>
+                  <SectionHeader
+                    as="h4"
+                    name={group.severity}
+                    count={group.findings.length}
+                  />
                   {group.findings.map((f) => (
                     <FindingRow
                       key={f.id}
@@ -258,20 +278,26 @@ export function ReviewCasePanel({
                 </div>
               ))}
               {onFixFindings !== undefined && (
-                <div className="flex items-center gap-2">
-                  <PillButton
+                <div className={styles.fix}>
+                  <ChipButton
                     disabled={fixBusy || selectedFindingIds.size === 0}
                     onClick={() => void fixSelected()}
                   >
-                    <Wrench />
-                    {fixBusy
-                      ? 'Sending to the agent…'
-                      : selectedFindingIds.size > 0
-                        ? `Fix ${selectedFindingIds.size} selected`
-                        : 'Fix selected'}
-                  </PillButton>
+                    <span className={styles.chipBody}>
+                      <Wrench {...GLYPH} />
+                      {fixBusy
+                        ? 'Sending to the agent…'
+                        : selectedFindingIds.size > 0
+                          ? `Fix ${selectedFindingIds.size} selected`
+                          : 'Fix selected'}
+                    </span>
+                  </ChipButton>
                   {fixError !== null && (
-                    <span className="text-state-failed font-book text-[12px]">
+                    <span
+                      className={cx(styles.meta, 'toneText')}
+                      data-tone="danger"
+                      role="alert"
+                    >
                       {fixError}
                     </span>
                   )}
@@ -282,12 +308,14 @@ export function ReviewCasePanel({
         </section>
 
         {checks.length > 0 && (
-          <section>
+          <section className={styles.section}>
             {/* The count is rules, not rows: one rule can span a hundred files. */}
-            <SectionLabel rule count={checks.length}>
-              Checks that fired
-            </SectionLabel>
-            <div className="mt-2 flex flex-col gap-1">
+            <SectionHeader
+              name="Checks that fired"
+              count={checks.length}
+              rule
+            />
+            <div className={styles.rows}>
               {checks.map((group) => (
                 <CheckRow key={group.rule} group={group} />
               ))}
@@ -296,15 +324,17 @@ export function ReviewCasePanel({
         )}
 
         {decisions.length > 0 && (
-          <section>
-            <SectionLabel rule count={decisions.length}>
-              Decisions it escalated
-            </SectionLabel>
+          <section className={styles.section}>
+            <SectionHeader
+              name="Decisions it escalated"
+              count={decisions.length}
+              rule
+            />
             <DecisionList entries={decisions} />
           </section>
         )}
       </div>
-    </ScrollArea>
+    </div>
   );
 }
 
@@ -313,8 +343,9 @@ const DETAIL_CLAMP_CHARS = 220;
 
 /** One agent-raised finding. The title wraps and the detail clamps — the
  *  inverse of the first cut, where a clipped title sat above an unbounded
- *  paragraph. `onToggleSelect` adds the fix-selection checkbox; absent, the
- *  row renders exactly as before. */
+ *  paragraph. `onToggleSelect` adds the fix-selection checkbox (the library
+ *  Checkbox, its label kept for assistive tech); absent, the row renders
+ *  exactly as before. */
 function FindingRow({
   finding,
   selected = false,
@@ -327,43 +358,40 @@ function FindingRow({
   const [expanded, setExpanded] = useState(false);
   const long = finding.detail.length > DETAIL_CLAMP_CHARS;
   return (
-    <div className="text-[13px]">
-      <div className="flex items-baseline gap-1.5">
+    <div className={styles.finding}>
+      <div className={styles.row}>
         {onToggleSelect !== undefined && (
-          <Checkbox
-            checked={selected}
-            onCheckedChange={onToggleSelect}
-            aria-label={`Select finding: ${finding.title}`}
-            className="self-center"
-          />
+          <span className={styles.select}>
+            <Checkbox
+              checked={selected}
+              onChange={() => onToggleSelect()}
+              label={`Select finding: ${finding.title}`}
+              hideLabel
+            />
+          </span>
         )}
-        <TriangleAlert className="text-state-waiting size-3 shrink-0 self-center" />
-        <span className="min-w-0 flex-1 font-medium">{finding.title}</span>
+        <ToneGlyph icon={TriangleAlert} tone="warning" word="Open finding" />
+        <span className={styles.findingTitle}>{finding.title}</span>
         {finding.file !== null && (
-          <span className="text-muted-foreground shrink-0 font-mono text-[12px]">
+          <span className={styles.path}>
             {finding.file}
             {finding.line !== null && `:${finding.line}`}
           </span>
         )}
       </div>
-      <p
-        className={cn(
-          'text-muted-foreground pl-4.5 text-[12px] leading-snug font-book',
-          long && !expanded && 'line-clamp-2'
-        )}
-      >
+      <p className={cx(styles.detail, long && !expanded && styles.clamped)}>
         {finding.detail}
       </p>
       {long && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          onClick={() => setExpanded((v) => !v)}
-          className="h-auto px-0 pl-4.5"
-        >
-          {expanded ? 'Less' : 'More'}
-        </Button>
+        <span className={styles.indent}>
+          <Button
+            variant="quiet"
+            size="sm"
+            onClick={() => setExpanded((v) => !v)}
+          >
+            {expanded ? 'Less' : 'More'}
+          </Button>
+        </span>
       )}
     </div>
   );
@@ -373,39 +401,34 @@ function FindingRow({
 // monorepo cannot put hundreds of rows in the panel.
 const CHECK_FILE_CAP = 20;
 
-/** One mechanical rule, collapsed to a single row. The count is what a
- *  reviewer decides on; the paths are evidence, behind a disclosure. */
+/** One mechanical rule, collapsed to a single row: the library Disclosure
+ *  with a full-width trigger (chevron, rule, file count). The count is what
+ *  a reviewer decides on; the paths are evidence, mounted only while open. */
 function CheckRow({ group }: { group: CheckGroup }) {
-  const [expanded, setExpanded] = useState(false);
   const shown = group.files.slice(0, CHECK_FILE_CAP);
   const hidden = group.files.length - shown.length;
   return (
-    <Collapsible
-      open={expanded}
-      onOpenChange={setExpanded}
-      className="text-[13px]"
+    <Disclosure
+      variant="plain"
+      trigger={({ props }) => (
+        <button {...props} className={styles.checkTrigger}>
+          <ChevronRight className={styles.chevron} {...GLYPH} />
+          <span className={styles.name}>{group.rule}</span>
+          <span className={styles.meta}>
+            {group.files.length} file{group.files.length === 1 ? '' : 's'}
+          </span>
+        </button>
+      )}
     >
-      {/* `group` + `group-data-panel-open:rotate-90` rather than `expanded &&
-          'rotate-90'` — the chevron reacts to the trigger's own `data-panel-open`
-          instead of threading local state down another level. */}
-      <CollapsibleTrigger className="group flex w-full items-baseline gap-1.5 text-left">
-        <ChevronRight className="size-3 shrink-0 self-center transition-transform group-data-panel-open:rotate-90" />
-        <span className="min-w-0 flex-1">{group.rule}</span>
-        <span className={cn(META_CLASS, 'shrink-0')}>
-          {group.files.length} file{group.files.length === 1 ? '' : 's'}
-        </span>
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        <ul className="text-muted-foreground font-book mt-1 flex flex-col gap-0.5 pl-4.5 text-[12px]">
-          {shown.map((path) => (
-            <li key={path} className="truncate">
-              {path}
-            </li>
-          ))}
-          {hidden > 0 && <li className={META_CLASS}>+{hidden} more</li>}
-        </ul>
-      </CollapsibleContent>
-    </Collapsible>
+      <ul className={styles.paths}>
+        {shown.map((path) => (
+          <li key={path} className={styles.pathItem}>
+            {path}
+          </li>
+        ))}
+        {hidden > 0 && <li className={styles.meta}>+{hidden} more</li>}
+      </ul>
+    </Disclosure>
   );
 }
 
@@ -413,43 +436,39 @@ function CheckRow({ group }: { group: CheckGroup }) {
 const DECISION_CAP = 8;
 
 /** The escalated decisions, capped so the section opens short and offers the
- *  rest rather than running past the fold. */
+ *  rest rather than running past the fold. A hazard's flag takes the warning
+ *  tone, a decision's stays muted; the kind word beside it says which. */
 function DecisionList({ entries }: { entries: LedgerEntry[] }) {
   const [showAll, setShowAll] = useState(false);
   const shown = showAll ? entries : entries.slice(0, DECISION_CAP);
   return (
-    <div className="mt-2 flex flex-col gap-2">
+    <div className={styles.decisions}>
       {shown.map((d) => (
-        <div key={d.id} className="text-[13px]">
-          <div className="flex items-center gap-1.5">
-            <Flag
-              className={
-                d.kind === 'hazard'
-                  ? 'text-state-waiting size-3 shrink-0'
-                  : 'text-muted-foreground size-3 shrink-0'
-              }
-            />
-            <span className={cn(META_CLASS, 'shrink-0')}>{d.kind}</span>
-            <span className="min-w-0 flex-1 truncate font-medium">
-              {d.title}
+        <div key={d.id} className={styles.decision}>
+          <div className={styles.decisionHead}>
+            <span
+              className={cx(styles.glyph, 'toneText')}
+              data-tone={d.kind === 'hazard' ? 'warning' : 'muted'}
+            >
+              <Flag {...GLYPH} />
             </span>
+            <span className={styles.meta}>{d.kind}</span>
+            <span className={styles.decisionTitle}>{d.title}</span>
             <PolicyReceiptBadge entry={d} />
           </div>
-          <p className="text-muted-foreground font-book pl-4.5 text-[12px] leading-snug">
-            {d.detail}
-          </p>
+          <p className={styles.detail}>{d.detail}</p>
         </div>
       ))}
       {entries.length > DECISION_CAP && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          onClick={() => setShowAll((v) => !v)}
-          className="h-auto self-start px-0 pl-4.5"
-        >
-          {showAll ? 'Show fewer' : `Show all ${entries.length}`}
-        </Button>
+        <span className={styles.indent}>
+          <Button
+            variant="quiet"
+            size="sm"
+            onClick={() => setShowAll((v) => !v)}
+          >
+            {showAll ? 'Show fewer' : `Show all ${entries.length}`}
+          </Button>
+        </span>
       )}
     </div>
   );

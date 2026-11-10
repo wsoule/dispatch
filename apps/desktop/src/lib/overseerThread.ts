@@ -2,11 +2,13 @@ import type {
   OverseerAction,
   OverseerApproval,
   OverseerAttachment,
+  OverseerFieldChange,
   OverseerLive,
   OverseerMessage,
   OverseerRecord,
 } from '@dispatch/client';
 
+import { normalizeBrowserUrl } from './browserPane';
 import { TASKS_PRESETS, type TasksPreset } from './tasksPresets';
 
 // One rendered row of a overseer conversation, flattened from the record's
@@ -52,14 +54,19 @@ export type OverseerThreadItem =
       outcome: 'applied' | 'allowed' | 'denied' | 'failed';
       text: string;
       at: string;
+      /** An action's tool, for an `action` row. */
+      tool?: string;
+      /** An applied action's tasks (created or dispatched), which it lists as a card. */
+      taskIds?: string[];
+      /** The action ran with no card: this row is its receipt. */
+      auto?: boolean;
+      /** What an update changed, before → after. */
+      changes?: OverseerFieldChange[];
     }
   | {
       kind: 'confirm';
       key: string;
       action: OverseerAction;
-      /** The server's failure text when the last approval attempt threw — the
-       * action came back to `pending` for a retry, and the card should say why. */
-      failure: string | null;
     }
   | { kind: 'approve'; key: string; approval: OverseerApproval }
   | { kind: 'pending'; key: string }
@@ -81,11 +88,12 @@ export type OverseerThreadItem =
 /** A tool call's chip: still running, ended, or failed. */
 export type ToolCallState = 'running' | 'done' | 'failed';
 
-/** Where a show_tasks door opens Tasks. */
+/** Where a show_tasks door opens Tasks, or the page a show_page door opens in the browser pane. */
 export interface OverseerDoor {
   preset?: TasksPreset;
   taskId?: string;
   milestoneId?: string;
+  url?: string;
 }
 
 // The door a show_tasks result recorded, or null for an error or a shape this build does not know.
@@ -98,7 +106,11 @@ function doorOf(text: string): OverseerDoor | null {
   }
   const door = (parsed as { door?: unknown } | null)?.door;
   if (typeof door !== 'object' || door === null) return null;
-  const { preset, taskId, milestoneId } = door as Record<string, unknown>;
+  const { preset, taskId, milestoneId, url } = door as Record<string, unknown>;
+  if (typeof url === 'string') {
+    const page = normalizeBrowserUrl(url);
+    return page === null ? null : { url: page };
+  }
   const presets: readonly string[] = TASKS_PRESETS.map((p) => p.id);
   return {
     ...(typeof preset === 'string' && presets.includes(preset)
@@ -111,6 +123,9 @@ function doorOf(text: string): OverseerDoor | null {
 
 /** The door's button text. */
 export function doorLabel(door: OverseerDoor): string {
+  if (door.url !== undefined) {
+    return `Open ${new URL(door.url).host} in the browser →`;
+  }
   const target =
     door.taskId ??
     door.milestoneId ??
@@ -131,10 +146,9 @@ const TURN_FAILED_FALLBACK =
  * `action` message (`applied`/`denied`/`failed`) rather than editing the first.
  * Rendering both would show every decided action twice ("queued" then
  * "Applied"), so the rule here is: an action still on `pendingActions` renders
- * as one `confirm` card at its *latest* transcript position (a failed approval
- * moves it down to where the failure happened, with the failure text on the
- * card); an action already decided drops its stale `pending` rows and keeps
- * only its decided `outcome` rows.
+ * as one `confirm` card at its latest transcript position; an action already
+ * decided (a failed approval included) drops its stale `pending` rows and
+ * keeps only its decided `outcome` rows.
  *
  * `live` is the running turn's uncommitted text (OverseerSession.live). Its
  * segments follow the transcript, where the "working" row would be, and take
@@ -189,7 +203,6 @@ export function buildOverseerThread(
         kind: 'confirm',
         key: `${record.id}-confirm-${action.id}`,
         action,
-        failure: null,
       });
     }
   }
@@ -281,7 +294,10 @@ function buildRow(
       at: message.at,
     };
   }
-  if (message.role === 'tool' && message.tool === 'show_tasks') {
+  if (
+    message.role === 'tool' &&
+    (message.tool === 'show_tasks' || message.tool === 'show_page')
+  ) {
     const door = doorOf(message.text);
     if (door !== null) return { kind: 'door', key, door, at: message.at };
   }
@@ -333,9 +349,6 @@ function buildRow(
       kind: 'confirm',
       key: `${record.id}-confirm-${actionId}`,
       action: pending,
-      // A failed approval restored the action to pending — surface the server's
-      // explanation on the card the human will retry from.
-      failure: message.outcome === 'failed' ? message.text : null,
     };
   }
 
@@ -352,6 +365,14 @@ function buildRow(
       outcome: message.outcome,
       text: message.text,
       at: message.at,
+      ...(message.tool === undefined ? {} : { tool: message.tool }),
+      ...(message.outcome === 'applied' && message.taskIds !== undefined
+        ? { taskIds: message.taskIds }
+        : {}),
+      ...(message.auto === true ? { auto: true } : {}),
+      ...(message.changes !== undefined && message.changes.length > 0
+        ? { changes: message.changes }
+        : {}),
     };
   }
   return null;
@@ -430,29 +451,55 @@ export type OverseerStreamItem =
   | {
       kind: 'confirms';
       key: string;
-      actions: { action: OverseerAction; failure: string | null }[];
+      actions: OverseerAction[];
     };
 
-/** Folds each run of two or more queued actions into one card's row list. */
+/**
+ * Folds the actions one turn queued into one card's row list, at the first
+ * one's place: actions sharing a `batch` fold together even when receipts or
+ * tool rows sit between them. Actions from a daemon that sends no batch fold
+ * by adjacency instead, as before.
+ */
 export function groupConfirmRows(
   items: readonly OverseerStreamItem[]
 ): OverseerStreamItem[] {
   const out: OverseerStreamItem[] = [];
+  // Where each batch's card sits in `out`.
+  const batchAt = new Map<string, number>();
+  // Folds `row` into the card at `at`, turning a lone confirm into a batch.
+  const fold = (at: number, action: OverseerAction) => {
+    const card = out[at];
+    if (card.kind === 'confirms') card.actions.push(action);
+    else if (card.kind === 'confirm') {
+      out[at] = {
+        kind: 'confirms',
+        key: card.key,
+        actions: [card.action, action],
+      };
+    }
+  };
   for (const item of items) {
-    const last = out.at(-1);
     if (item.kind !== 'confirm') {
       out.push(item);
       continue;
     }
-    const row = { action: item.action, failure: item.failure };
-    if (last?.kind === 'confirms') last.actions.push(row);
-    else if (last?.kind === 'confirm') {
-      out[out.length - 1] = {
-        kind: 'confirms',
-        key: last.key,
-        actions: [{ action: last.action, failure: last.failure }, row],
-      };
-    } else out.push(item);
+    const batch = item.action.batch;
+    if (batch !== undefined) {
+      const at = batchAt.get(batch);
+      if (at !== undefined) fold(at, item.action);
+      else {
+        batchAt.set(batch, out.length);
+        out.push(item);
+      }
+      continue;
+    }
+    const last = out.at(-1);
+    const unbatched =
+      (last?.kind === 'confirm' && last.action.batch === undefined) ||
+      (last?.kind === 'confirms' &&
+        last.actions.every((a) => a.batch === undefined));
+    if (unbatched) fold(out.length - 1, item.action);
+    else out.push(item);
   }
   return out;
 }

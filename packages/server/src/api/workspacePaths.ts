@@ -63,11 +63,29 @@ function isInside(path: string, base: string): boolean {
   return path === base || path.startsWith(base + sep);
 }
 
+// How many times realLocation walks a path whose deepest existing ancestor
+// vanished before it could be resolved. A dangling symlink fails every walk.
+const REAL_LOCATION_WALKS = 3;
+
 // Where `path` really lands on disk: its deepest existing ancestor with every
 // symlink resolved, plus the part that does not exist yet (a file about to be
 // created). Null when that ancestor is a dangling symlink, whose target cannot
-// be checked.
+// be checked. A file deleted between the walk's lstat and its realpath (a
+// checkout switching branches, an agent cleaning up) is walked again from what
+// is left, so it reads as a path that does not exist (the routes' 404), never
+// as one outside the project; each walk's answer is fenced the same way.
 function realLocation(path: string): string | null {
+  for (let walk = 0; walk < REAL_LOCATION_WALKS; walk++) {
+    const real = realLocationOnce(path);
+    if (real !== null) return real;
+  }
+  return null;
+}
+
+// One walk of realLocation: up from `path` to the first ancestor lstat finds,
+// then that ancestor's realpath with the missing part joined back on, or null
+// when the realpath fails.
+function realLocationOnce(path: string): string | null {
   let existing = path;
   const rest: string[] = [];
   for (;;) {

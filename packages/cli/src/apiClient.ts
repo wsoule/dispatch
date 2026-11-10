@@ -58,6 +58,9 @@ export interface RunMeta {
   prUrl?: string;
   archivedAt?: string;
   resumedFrom?: string;
+  // The run that resumed from this one, when it has ended — computed per
+  // request server-side (decorateRunsWithPushed), never persisted.
+  supersededBy?: string;
   stackParents?: string[];
   stackBaseCommit?: string;
   baseDiscarded?: boolean;
@@ -666,6 +669,24 @@ interface FanoutResult {
   variants: FanoutVariantResult[];
 }
 
+/** GET /api/remote, mirroring server's remoteAccess/service.ts. */
+export interface RemoteAccessStatus {
+  enabled: boolean;
+  relay: string;
+  link:
+    | { kind: 'stopped' }
+    | { kind: 'connecting' }
+    | { kind: 'connected'; daemonId: string; sessions: number }
+    | { kind: 'error'; message: string };
+  devices: Array<{
+    id: string;
+    name: string;
+    pairedAt: string;
+    lastSeenAt: string | null;
+  }>;
+  offerExpiresAt: string | null;
+}
+
 export interface ApiClient {
   baseUrl: string;
   /** Clone a task once per agent and dispatch each, for a side-by-side compare. */
@@ -788,6 +809,13 @@ export interface ApiClient {
   listTeamTokens(): Promise<TeamTokenHolder[]>;
   /** Revokes whatever token the handle holds; one per person. */
   revokeTeamToken(handle: string): Promise<void>;
+  /** A one-time code another of the operator's devices trades for its own
+   *  token. Mirrors packages/server/src/api/pairing.ts. */
+  offerPairing(input: { tier?: TeamTier }): Promise<PairingOffer>;
+  /** The operator's paired devices, never their tokens. */
+  listDevices(): Promise<PairedDevice[]>;
+  /** Unpairs a device and every device it paired. */
+  revokeDevice(id: string): Promise<void>;
   /** Board sync's state — `{ enabled: false, reason }` when it is off. */
   getSyncStatus(): Promise<SyncStatus>;
   /** Runs a sync pass and answers with the state after it. */
@@ -796,6 +824,12 @@ export interface ApiClient {
   getLicense(): Promise<LicenseStatus>;
   /** Installs a license key (operator tier). */
   installLicense(key: string): Promise<LicenseStatus>;
+  /** Phones paired through the remote relay (operator tier). */
+  getRemoteAccess(): Promise<RemoteAccessStatus>;
+  /** A fresh pairing URL for a QR code (operator tier). */
+  pairPhone(): Promise<{ url: string; expiresAt: string }>;
+  /** Unpairs one phone (operator tier). */
+  unpairPhone(id: string): Promise<void>;
   /** Decide-tier: imports ledger lessons into memory and reports count
    *  parity; `dryRun` reports without writing. */
   importLedger(
@@ -1153,6 +1187,26 @@ export interface LicenseStatus {
 /** Mirrors AuthTier in packages/server/src/tiers.ts. */
 export type TeamTier = 'request' | 'decide' | 'operator';
 
+/** A one-time pairing code. Mirrors offer in packages/server/src/api/pairing.ts. */
+export interface PairingOffer {
+  code: string;
+  tier: TeamTier;
+  expiresAt: string;
+  /** Whether the daemon listens beyond loopback. */
+  shared: boolean;
+  /** Where it is reachable beyond loopback; empty when loopback-only. */
+  origins: string[];
+}
+
+/** One paired device. Mirrors PairedDevice in packages/server/src/devices.ts. */
+interface PairedDevice {
+  id: string;
+  name: string;
+  tier: TeamTier;
+  pairedAt: string;
+  lastUsedAt: string | null;
+}
+
 /** A freshly issued teammate credential — the only response that ever carries
  *  one. Mirrors issueTeamToken in packages/server/src/team/routes.ts. */
 interface IssuedTeamToken {
@@ -1328,6 +1382,13 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
         ...jsonBody({ key }),
         method: 'PUT',
       }),
+    getRemoteAccess: () => request(target, '/api/remote'),
+    pairPhone: () => request(target, '/api/remote/pair', jsonBody({})),
+    unpairPhone: async (id) => {
+      await request(target, `/api/remote/devices/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+    },
     getTeamKeys: () => request(target, '/api/team/keys'),
     getTeamStatus: () => request(target, '/api/team/status'),
     startTeam: (input) =>
@@ -1402,6 +1463,16 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
     getContentE2e: () => request(target, '/api/team/content-e2e'),
     enableContentE2e: () =>
       request(target, '/api/team/content-e2e', jsonBody({})),
+    offerPairing: (input) =>
+      request(target, '/api/pair/offer', jsonBody(input)),
+    listDevices: async () =>
+      (await request<{ devices: PairedDevice[] }>(target, '/api/devices'))
+        .devices,
+    revokeDevice: async (id) => {
+      await request(target, `/api/devices/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+    },
     revokeTeamToken: async (handle) => {
       await request(target, `/api/team/tokens/${encodeURIComponent(handle)}`, {
         method: 'DELETE',
@@ -1607,6 +1678,19 @@ export interface A2AApiClient {
     publicUrl: string
   ): Promise<{ id: string; name: string; publicUrl: string; token: string }>;
   removeHost(id: string): Promise<void>;
+  intakeLinks(): Promise<{ links: A2AIntakeLinkSummary[] }>;
+  addIntakeLink(
+    client: string,
+    label?: string
+  ): Promise<{
+    id: string;
+    client: string;
+    label: string;
+    token: string;
+    // Null while the listener is closed: the form lives on it.
+    url: string | null;
+  }>;
+  revokeIntakeLink(id: string): Promise<void>;
   setStandalone(enabled: boolean): Promise<{ standalone: boolean }>;
   createPairing(input: {
     alias: string;
@@ -1640,6 +1724,16 @@ export interface A2AApiClient {
 }
 
 // A standalone host as /api/a2a/hosts lists it; never its token or hash.
+// One row of GET /api/a2a/intake: an intake link, never its token.
+interface A2AIntakeLinkSummary {
+  id: string;
+  client: string;
+  label: string;
+  createdBy: string;
+  createdAt: string;
+  revokedAt: string | null;
+}
+
 interface A2AHostSummary {
   id: string;
   name: string;
@@ -1709,6 +1803,17 @@ export function createA2AApiClient(
     removeHost: (id) =>
       request(target, `/api/a2a/hosts/${encodeURIComponent(id)}`, {
         method: 'DELETE',
+      }),
+    intakeLinks: () => request(target, '/api/a2a/intake'),
+    addIntakeLink: (client, label) =>
+      request(
+        target,
+        '/api/a2a/intake',
+        jsonBody(label === undefined ? { client } : { client, label })
+      ),
+    revokeIntakeLink: (id) =>
+      request(target, `/api/a2a/intake/${encodeURIComponent(id)}/revoke`, {
+        method: 'POST',
       }),
     setStandalone: (enabled) =>
       request(target, '/api/a2a/listener/standalone', {

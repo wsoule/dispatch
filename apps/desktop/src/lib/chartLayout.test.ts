@@ -246,6 +246,58 @@ describe('layoutChart', () => {
     }
   });
 
+  test('nested groups sit inside their parents, parents first', async () => {
+    const layout = await layoutChart({
+      nodes: [node('a', 'ms1'), node('b', 'ms1'), node('c', 'ms2'), node('d')],
+      edges: [edge('a', 'b'), edge('b', 'c'), edge('c', 'd')],
+      groups: [
+        { id: 'ms1', label: 'Beta', parent: 'proj' },
+        { id: 'ms2', label: 'GA', parent: 'proj' },
+        { id: 'proj', label: 'Atlas' },
+        { id: 'loop', label: 'Loop', parent: 'loop' },
+      ],
+    });
+    expect(layout.groups.map((g) => [g.id, g.depth])).toEqual([
+      ['proj', 0],
+      ['ms1', 1],
+      ['ms2', 1],
+    ]);
+    const byId = new Map(layout.groups.map((g) => [g.id, g]));
+    const proj = byId.get('proj');
+    const ms1 = byId.get('ms1');
+    const ms2 = byId.get('ms2');
+    if (proj === undefined || ms1 === undefined || ms2 === undefined) {
+      throw new Error('missing group');
+    }
+    expect(contains(proj, ms1)).toBe(true);
+    expect(contains(proj, ms2)).toBe(true);
+    expect(contains(ms1, boxOf(layout, 'a'))).toBe(true);
+    expect(contains(ms2, boxOf(layout, 'c'))).toBe(true);
+    expect(contains(proj, boxOf(layout, 'd'))).toBe(false);
+    expectLeftToRight(layout, ['a', 'b', 'c', 'd']);
+  });
+
+  test('a group naming itself as parent sits at the root', async () => {
+    const layout = await layoutChart({
+      nodes: [node('a', 'loop')],
+      edges: [],
+      groups: [{ id: 'loop', label: 'Loop', parent: 'loop' }],
+    });
+    expect(layout.groups.map((g) => [g.id, g.depth])).toEqual([['loop', 0]]);
+  });
+
+  test('boxes that share no edge pack into rows, not one tall column', async () => {
+    const ids = Array.from({ length: 30 }, (_, i) => `n${i}`);
+    const layout = await layoutChart({
+      nodes: ids.map((id) => node(id)),
+      edges: [],
+    });
+    // Thirty loose cards stacked would be ~30 cards tall and one wide.
+    expect(layout.width).toBeGreaterThan(layout.height);
+    const xs = new Set(ids.map((id) => boxOf(layout, id).x));
+    expect(xs.size).toBeGreaterThan(3);
+  });
+
   test('a node naming an unknown group sits at the root and empty groups are skipped', async () => {
     const layout = await layoutChart({
       nodes: [node('a', 'g1'), node('b', 'nope'), node('c', null)],

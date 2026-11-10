@@ -1,0 +1,92 @@
+/* Settings → A2A (A2ASection.tsx): the listener, clients, peers, pairing and keys groups. */
+
+.host {
+  width: 200px;
+}
+
+.skills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--s-1);
+}
+
+/* A row's icon actions, tight together. */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* The pairing code (CopyValue) taking the room beside its Done button. */
+.secretLine {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.secretLine > :first-child {
+  flex: 1 1 auto;
+}
+
+.taskList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+/* A subtitle of several lines (status, URL, fingerprint). */
+.lines {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inlineForm {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The add-peer form's paired fields: alias narrow, then URL wide; credential wide, then header. */
+.pairNarrowFirst,
+.pairWideFirst {
+  display: grid;
+  gap: var(--s-2);
+}
+
+.pairNarrowFirst {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+}
+
+.pairWideFirst {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+}
+
+.checks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-4);
+}
+
+.spaced {
+  margin-top: var(--s-2);
+}

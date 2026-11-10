@@ -6,6 +6,7 @@ import {
   KEY_STATEMENT_PATH,
 } from '@dispatch-foo/a2a';
 
+import { isIntakePath, redactIntakePath } from './intake.js';
 import type { ResolvedListener } from './settings.js';
 import { listenerClientIp } from './settings.js';
 
@@ -22,6 +23,12 @@ interface ListenerDeps {
   // The daemon's idle tracker, so a request in flight keeps it awake.
   track?: (fn: () => Promise<Response>) => Promise<Response>;
   log?: (line: string) => void;
+  // The intake form and status pages (/r/<token>, /s/<token>); absent, 404.
+  intake?: {
+    handle(req: Request, clientIp: string | null): Promise<Response>;
+  };
+  // Shared with the intake pages, so a lockout covers both; tests pass one.
+  limiter?: IpLimiter;
 }
 
 // A loopback port nothing holds right now: the OS picks it for a moment's bind.
@@ -45,12 +52,14 @@ export function freeLoopbackPort(): number | null {
 export class A2AListener {
   private server: ReturnType<typeof Bun.serve> | null = null;
   private current: ResolvedListener | null = null;
-  private readonly limiter = new IpLimiter();
+  private readonly limiter: IpLimiter;
 
-  constructor(private readonly deps: ListenerDeps) {}
+  constructor(private readonly deps: ListenerDeps) {
+    this.limiter = deps.limiter ?? new IpLimiter();
+  }
 
   // One access line per request: never the Authorization header, the query
-  // string or a body.
+  // string, a body or an intake token in the path.
   private access(
     clientIp: string | null,
     method: string,
@@ -59,7 +68,7 @@ export class A2AListener {
     started: number
   ): void {
     (this.deps.log ?? console.log)(
-      `a2a: ${clientIp ?? '-'} ${method} ${pathname} ${status} ${Math.round(performance.now() - started)}ms`
+      `a2a: ${clientIp ?? '-'} ${method} ${redactIntakePath(pathname)} ${status} ${Math.round(performance.now() - started)}ms`
     );
   }
 
@@ -70,12 +79,21 @@ export class A2AListener {
   ): Promise<Response> {
     const started = performance.now();
     const { pathname } = new URL(req.url);
-    this.deps.mark?.(`a2a ${req.method} ${pathname}`);
+    this.deps.mark?.(`a2a ${req.method} ${redactIntakePath(pathname)}`);
     const clientIp = listenerClientIp(
       req,
       srv.requestIP(req)?.address ?? null,
       listener
     );
+    const intake = this.deps.intake;
+    if (intake !== undefined && isIntakePath(pathname)) {
+      const serveIntake = () => intake.handle(req, clientIp);
+      const res = await (this.deps.track === undefined
+        ? serveIntake()
+        : this.deps.track(serveIntake));
+      this.access(clientIp, req.method, pathname, res.status, started);
+      return res;
+    }
     if (
       pathname !== CARD_PATH &&
       pathname !== JWKS_PATH &&

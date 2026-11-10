@@ -1,5 +1,4 @@
 import {
-  ASSIGNEES,
   canonicalStatus,
   ConfigError,
   CredentialsUnreadableError,
@@ -11,7 +10,9 @@ import {
   isValidAssignee,
   KINDS,
   loadConfig,
+  parseLinearAccountRecord,
   PRIORITIES,
+  resolvePeople,
   resolveStatusName,
   statusModelOf,
   syncPlace,
@@ -28,6 +29,7 @@ import type {
   FixLoopConfig,
   LinearConfig,
   ModelConfig,
+  PlanningConfig,
   QueueWeights,
   SyncConfig,
   TaskStoreBackend,
@@ -66,6 +68,7 @@ import {
   readOverseerAttachments,
   removeTaskAttachment,
   uploadOverseerAttachments,
+  uploadRunAttachments,
   uploadTaskAttachments,
 } from './api/attachments.js';
 import {
@@ -83,6 +86,7 @@ import {
 import {
   humanActor,
   humanOperator,
+  linearCreditRef,
   requestActor,
   runActorFor,
 } from './api/caller.js';
@@ -93,8 +97,11 @@ import {
   listComments,
   updateComment,
 } from './api/comments.js';
+import { downloadTicketsFor } from './api/downloadTickets.js';
 import { fanoutTask } from './api/fanout.js';
 import {
+  downloadWithTicket,
+  issueDownloadTicket,
   listDirectory,
   rawFile,
   readFile as readWorkspaceFile,
@@ -131,7 +138,10 @@ import {
 } from './api/legacyMilestone.js';
 import { isLinearWebhook, linearWebhook } from './api/linearWebhook.js';
 import { migrateMilestones } from './api/migrations.js';
-import { listPeople } from './api/people.js';
+import { handleMobile } from './api/mobile.js';
+import type { DevicePairing } from './api/pairing.js';
+import { pairingRoutes } from './api/pairing.js';
+import { listPeople, rosterMembers } from './api/people.js';
 import {
   a2aParentRefusal,
   decidingHuman,
@@ -170,6 +180,12 @@ import type { EventBus } from './events.js';
 import type { FindingStorePort } from './findings.js';
 import { PATH_ESCAPE_ERROR, resolveWorktreeFilePath } from './git/commands.js';
 import { GitRepo } from './git/commands.js';
+import {
+  hostedConfigProblem,
+  hostedFixedAnswer,
+  hostedOwnerOnly,
+  hostedPlannerAllows,
+} from './hostedPlanner.js';
 import { expiredTokenMessage, sha256 } from './identity.js';
 import type { TokenIdentity, TokenRegistry } from './identity.js';
 import type { InboxKind } from './inbox.js';
@@ -194,7 +210,8 @@ import { readinessFor, ReadinessStore } from './judgments/readiness.js';
 import type { ReadinessReading } from './judgments/readiness.js';
 import { buildLandingSnapshot } from './landing.js';
 import type { LedgerStorePort } from './ledger.js';
-import { HttpLinearClient } from './linear/client.js';
+import type { LinearPersonEdits } from './linear/personEdits.js';
+import type { LinearSignIn, LinearSignInViewer } from './linear/signIn.js';
 import type { LinearExportScope } from './linear/state.js';
 import type { LinearSync } from './linear/sync.js';
 import {
@@ -247,6 +264,7 @@ import {
   waitForAnswer,
 } from './messaging/routes.js';
 import type { Messaging } from './messaging/service.js';
+import type { MobileHost } from './mobile/host.js';
 import type { Note, NoteKind } from './notes.js';
 import { NOTE_KINDS, type NoteStore } from './notes.js';
 import { buildAgentSessions } from './orchestrator/agentSessions.js';
@@ -284,10 +302,18 @@ import {
 } from './orchestrator/types.js';
 import type { NormalizedEntry, RunMeta } from './orchestrator/types.js';
 import type { VerificationRunner } from './orchestrator/verify.js';
+import {
+  type AllocationRunStore,
+  parseAllocationRunInput,
+} from './planning/allocationRuns.js';
+import { type PlanningAuditStore, planningChanges } from './planning/audit.js';
+import type { WarningStore } from './planning/warningRuns.js';
 import type { PresenceTracker } from './presence.js';
 import type { PreviewState, PreviewSupervisor } from './preview.js';
 import type { PreviewGateway } from './previewGateway.js';
 import type { ReceiptsPush, ReceiptsScheduler } from './receipts/scheduler.js';
+import { handleRemoteRoute } from './remoteAccess/routes.js';
+import type { RemoteAccess } from './remoteAccess/service.js';
 import {
   formatCommentsForAgent,
   resolveAnchor,
@@ -343,6 +369,8 @@ import type { WatchdogStatus } from './watchdog.js';
 // this is what makes it easy to hit with plain fetch() in tests.
 export interface ApiContext {
   rootDir: string;
+  /** Hosted for other people: only hostedPlanner.ts's routes answer. */
+  hostedPlanner?: boolean;
   // The port, not a concrete TaskStore: this daemon owns whichever backend
   // the project was opened with (markdown files or its SQLite database), and
   // every handler below works the same against either. A handler that needs
@@ -366,6 +394,8 @@ export interface ApiContext {
   messaging: Messaging;
   /** The link to the machine hub, when this daemon makes one. */
   hubLink?: DaemonHubLink | null;
+  /** Phones paired through the relay (remoteAccess/). */
+  remoteAccess?: RemoteAccess | null;
   // The docs service (docs/service.ts); unavailable when docs.db did not open.
   docs: DocsService;
   /** The memory store and engine (memory/service.ts). */
@@ -378,6 +408,12 @@ export interface ApiContext {
   prWorktrees: PrWorktreeManager;
   mergeQueue: MergeQueue;
   noteStore: NoteStore;
+  /** The allocation run log; absent in a test context that does not need it. */
+  allocationRuns?: AllocationRunStore;
+  /** The daily digest's warning memory and log; absent in a test context. */
+  warningStore?: WarningStore;
+  /** Who changed which planning setting; absent in a test context. */
+  planningAudit?: PlanningAuditStore;
   inboxStore: InboxStore;
   findingStore: FindingStorePort;
   ledgerStore: LedgerStorePort;
@@ -407,10 +443,12 @@ export interface ApiContext {
   // The one feed of everything awaiting a human — see decisionFeed.ts.
   decisionFeed: DecisionFeed;
   linearSync: LinearSync;
-  // Cached once at boot (see pr.ts's detectPrCapability) — exposed at
-  // GET /api/health as `pr` so a client can hide/disable the PR action
-  // without probing per-run.
-  prCapability: boolean;
+  /** "Sign in with Linear" for this daemon's owner; absent in contexts built
+   *  without a daemon, where the routes answer 404. */
+  linearSignIn?: LinearSignIn;
+  /** Which task parts the owner last set, so their own edits reach Linear
+   *  with their sign-in (linear/personEdits.ts). */
+  linearPersonEdits?: LinearPersonEdits;
   // When this daemon process started, captured once in startServer — the
   // same value the daemon file records, surfaced at GET /api/health so a
   // client can tell which process is answering.
@@ -484,6 +522,9 @@ export interface ApiContext {
   sessionOrigins: ReadonlySet<string>;
   /** Whether this daemon is bound beyond loopback — see shared.ts. */
   shared: boolean;
+  /** The operator's paired devices and open pairing codes (devices.ts);
+   *  absent in harnesses that build a context by hand. */
+  pairing?: DevicePairing;
   /** Who made the request being handled, when their credential resolved.
    *  Set per request by handleApi — never on the daemon-wide context. */
   caller?: TokenIdentity;
@@ -512,6 +553,9 @@ export interface ApiContext {
   ) => Promise<SharingAnswer>;
   /** This server's restart mark while it restarts to turn on sync. */
   sharing?: SharingState;
+  /** Paired phones, their push subscriptions and the mobile listener
+   *  (mobile/host.ts); absent in harnesses that build no daemon. */
+  mobile?: MobileHost;
   /** Exits for another daemon to take over, or names the live work that
    *  stops it. Set by startServer when its process can exit. */
   shutdownForHandover?: (
@@ -528,9 +572,9 @@ export interface ApiContext {
 // the cli/server package boundary — cli is the one that depends on server
 // for `dispatch serve`, not the other way around, and this check is small
 // enough that duplicating it beats introducing a dependency edge for it.
-// Used for status (against the project's configured list), kind, priority,
-// and assignee (against core's fixed enums) — `undefined` means the field
-// was omitted, which every caller here treats as "no change requested."
+// Used for status (against the project's configured list), kind and priority
+// (against core's fixed enums) — `undefined` means the field was omitted,
+// which every caller here treats as "no change requested."
 function validateEnumField(
   value: unknown,
   allowed: readonly string[],
@@ -539,6 +583,21 @@ function validateEnumField(
   if (value === undefined) return null;
   if (typeof value !== 'string' || !allowed.includes(value)) {
     return `invalid ${label}: ${describeValue(value)} (expected ${allowed.join('|')})`;
+  }
+  return null;
+}
+
+// Validates an optional `assignee` against core's actor-ref grammar
+// (packages/core/src/actor.ts) rather than the legacy ASSIGNEES enum: `none`,
+// the bare `human`/`agent` kinds, and the named refs `human:<handle>` and
+// `agent:<operator>/<handle>` that the desktop's assignee picker sends and
+// Linear sync writes. The store applies the same gate at write (taskfile.ts),
+// so a value accepted here never fails later as a 500. Same message shape as
+// validateEnumField, with the grammar in place of a fixed list.
+function validateAssigneeField(value: unknown): string | null {
+  if (value === undefined) return null;
+  if (typeof value !== 'string' || !isValidAssignee(value)) {
+    return `invalid assignee: ${describeValue(value)} (expected an actor ref: none, human, agent, human:<handle> or agent:<operator>/<handle>)`;
   }
   return null;
 }
@@ -708,11 +767,7 @@ function validateTaskFields(
     'priority'
   );
   if (priorityError) return priorityError;
-  const assigneeError = validateEnumField(
-    value.assignee,
-    ASSIGNEES,
-    'assignee'
-  );
+  const assigneeError = validateAssigneeField(value.assignee);
   if (assigneeError) return assigneeError;
   const parentError = validateStringOrNullField(value.parent, 'parent');
   if (parentError) return parentError;
@@ -822,6 +877,10 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
   });
   if (!created.ok) return errorResponse(400, created.error);
   ctx.taskAuthorship?.created(created.doc, humanOperator(ctx));
+  // A human's own credential: their Linear grant may then carry the push.
+  const creditRef = linearCreditRef(ctx);
+  if (creditRef !== null)
+    ctx.linearPersonEdits?.created(created.doc, creditRef);
   return jsonResponse(created.doc, 201);
 }
 
@@ -982,6 +1041,9 @@ async function updateTask(
   const doc = ctx.store.update(id, patch);
   markA2AChild(ctx, id, doc.meta.parent);
   ctx.taskAuthorship?.edited(existing, doc, humanOperator(ctx));
+  const creditRef = linearCreditRef(ctx);
+  if (creditRef !== null)
+    ctx.linearPersonEdits?.edited(existing, doc, creditRef);
   ctx.cache.refresh(ctx.store, [id]);
   ctx.events.broadcast({ type: 'task.changed', ids: [id] });
   return jsonResponse(doc);
@@ -1191,6 +1253,10 @@ function operatorOnlyKeys(body: Record<string, unknown>): string[] {
   if ('prWorktreeDir' in body) keys.push('prWorktreeDir');
   if ('autoCommit' in body) keys.push('autoCommit');
   if (has(body.notifications, 'webhook')) keys.push('notifications.webhook');
+  // Which OAuth app a consent screen names, and where Linear sends the code.
+  for (const field of ['oauthClientId', 'oauthCallbackPort']) {
+    if (has(body.linear, field)) keys.push(`linear.${field}`);
+  }
   for (const field of ['command', 'installCommand']) {
     if (has(body.preview, field)) keys.push(`preview.${field}`);
   }
@@ -1220,6 +1286,33 @@ function objectField(
     return { ok: false, res: errorResponse(400, `${key} must be an object`) };
   }
   return { ok: true, value: value as Record<string, unknown> };
+}
+
+// The planning block as config.yml holds it now; undefined when it has none,
+// null when the file cannot be read (the save then decides what is wrong).
+function readPlanning(rootDir: string): PlanningConfig | undefined | null {
+  try {
+    return loadConfig(rootDir).planning;
+  } catch {
+    return null;
+  }
+}
+
+// Records what a planning patch changed, field by field, with who changed it.
+function auditPlanning(
+  ctx: ApiContext,
+  before: PlanningConfig | undefined,
+  after: DispatchConfig
+): void {
+  if (ctx.planningAudit === undefined) return;
+  const people = resolvePeople(after.people ?? [], rosterMembers(ctx.rootDir));
+  const changes = planningChanges(
+    before,
+    after.planning,
+    (ref) => people.find((person) => person.ref === ref)?.name ?? ref,
+    (taskId) => ctx.store.get(taskId)?.meta.title ?? taskId
+  );
+  ctx.planningAudit.record(changes, humanActor(ctx));
 }
 
 async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
@@ -1252,6 +1345,12 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
       return errorResponse(400, 'autoCommit must be a boolean');
     }
     patch.autoCommit = body.autoCommit;
+  }
+  if ('unlimitedSpend' in body) {
+    if (typeof body.unlimitedSpend !== 'boolean') {
+      return errorResponse(400, 'unlimitedSpend must be a boolean');
+    }
+    patch.unlimitedSpend = body.unlimitedSpend;
   }
   for (const key of [
     'milestoneConcurrency',
@@ -1498,9 +1597,11 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     'remotes',
     'carto',
     'repoDigest',
+    'planning',
     'receipts',
     'sync',
     'preview',
+    'overseer',
     'memory',
     'overseer',
     'runs',
@@ -1512,7 +1613,11 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
   }
 
   try {
+    // The planning block before the save, for the audit (null: unreadable).
+    const planningBefore =
+      patch.planning === undefined ? null : readPlanning(ctx.rootDir);
     const config = updateConfig(ctx.rootDir, patch);
+    if (planningBefore !== null) auditPlanning(ctx, planningBefore, config);
     // The owner chose where the board goes, which outranks an invite's pick.
     const syncPlaceSaved = patch.sync as Record<string, unknown> | undefined;
     if (
@@ -1807,7 +1912,7 @@ async function connectLinear(req: Request, ctx: ApiContext): Promise<Response> {
     return errorResponse(400, 'apiKey must be a non-empty string');
   }
   const apiKey = body.apiKey.trim();
-  const result = await new HttpLinearClient(apiKey).viewer();
+  const result = await ctx.linearSync.clientFor(apiKey).viewer();
   if (!result.ok) return linearErrorResponse(result);
   ctx.linearSync.connect(apiKey);
   ctx.events.broadcast({ type: 'config.changed' });
@@ -1820,6 +1925,104 @@ async function disconnectLinear(ctx: ApiContext): Promise<Response> {
   await ctx.linearSync.disconnect();
   ctx.events.broadcast({ type: 'config.changed' });
   return jsonResponse(ctx.linearSync.status());
+}
+
+// Who is asking for the Linear account view: the owner on their app token,
+// the shared agent token (CLI, agents, a window attached without the app
+// token), or a teammate.
+function linearSignInViewer(ctx: ApiContext): LinearSignInViewer {
+  if (ctx.ownerCredential === true) return 'owner';
+  if (ctx.viaAgentToken === true) return 'agent';
+  return 'teammate';
+}
+
+// Sign-in and sign-out keep a Linear token on this machine, so only its
+// owner, on their own app token, may do either: never a teammate at any
+// tier, the shared agent token, a run or an A2A client.
+function linearSignInOwnerOnly(ctx: ApiContext): Response | null {
+  if (ctx.ownerCredential === true) return null;
+  return authErrorResponse(
+    403,
+    'Linear sign-in keeps a Linear token on this machine, so only its owner can sign in or out, from the Dispatch app.',
+    'linear_sign_in_owner_only'
+  );
+}
+
+// GET /api/linear/account — the "Your Linear account" view for this caller.
+async function linearAccount(ctx: ApiContext): Promise<Response> {
+  const signIn = ctx.linearSignIn;
+  if (signIn === undefined) return errorResponse(404, 'not found');
+  return jsonResponse(await signIn.view(linearSignInViewer(ctx)));
+}
+
+// POST /api/linear/sign-in — starts a sign-in and answers Linear's consent
+// URL for the app to open in the system browser.
+async function startLinearSignIn(
+  req: Request,
+  ctx: ApiContext
+): Promise<Response> {
+  const signIn = ctx.linearSignIn;
+  if (signIn === undefined) return errorResponse(404, 'not found');
+  const refused = linearSignInOwnerOnly(ctx);
+  if (refused !== null) return refused;
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const another = parsed.value.anotherWorkspace;
+  if (another !== undefined && typeof another !== 'boolean')
+    return errorResponse(400, 'anotherWorkspace must be a boolean');
+  const started = await signIn.start({ anotherWorkspace: another === true });
+  if (started.ok)
+    return jsonResponse({ authorizeUrl: started.authorizeUrl }, 202);
+  if ('refusal' in started)
+    return jsonResponse(
+      { error: started.refusal.error, code: started.refusal.code },
+      started.refusal.status
+    );
+  return linearErrorResponse(started.failure);
+}
+
+// DELETE /api/linear/sign-in — cancels a pending sign-in.
+function cancelLinearSignIn(ctx: ApiContext): Response {
+  const signIn = ctx.linearSignIn;
+  if (signIn === undefined) return errorResponse(404, 'not found');
+  const refused = linearSignInOwnerOnly(ctx);
+  if (refused !== null) return refused;
+  signIn.cancel();
+  return new Response(null, { status: 204 });
+}
+
+// POST /api/linear/sign-out `{ workspaceId? }` — deletes the sign-in, then
+// revokes it at Linear. The app names the workspace of the account it shows,
+// so signing out never waits on a Linear lookup; without one, the project
+// connection's workspace.
+async function signOutOfLinear(
+  req: Request,
+  ctx: ApiContext
+): Promise<Response> {
+  const signIn = ctx.linearSignIn;
+  if (signIn === undefined) return errorResponse(404, 'not found');
+  const refused = linearSignInOwnerOnly(ctx);
+  if (refused !== null) return refused;
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const workspaceId = parsed.value.workspaceId;
+  if (
+    workspaceId !== undefined &&
+    (typeof workspaceId !== 'string' || workspaceId.trim() === '')
+  )
+    return errorResponse(400, 'workspaceId must be a non-empty string');
+  const out = await signIn.signOut(workspaceId);
+  if (!out.ok)
+    return 'refusal' in out
+      ? jsonResponse(
+          { error: out.refusal.error, code: out.refusal.code },
+          out.refusal.status
+        )
+      : linearErrorResponse(out.failure);
+  return jsonResponse({
+    revoked: out.revoked,
+    account: await signIn.view('owner'),
+  });
 }
 
 // GET /api/linear/teams — the team picker's options.
@@ -3841,7 +4044,7 @@ async function landMilestone(
   milestoneId: string
 ): Promise<Response> {
   const status = ctx.orchestrator.milestoneLandStatus(milestoneId);
-  if (ctx.prCapability && status.hasChanges) {
+  if (status.hasChanges && (await ctx.prManager.whenCapabilityKnown())) {
     const prUrl = await ctx.prManager.openMilestonePr(milestoneId);
     return jsonResponse({ mode: 'pr', prUrl }, 201);
   }
@@ -3891,6 +4094,42 @@ async function enqueueMergeQueueStack(
 
 // Routes every `/api/*` request. Called only for paths under `/api` — the
 // caller (index.ts) handles `/ws` upgrades and static file serving itself.
+// /api/planning/allocation-runs — the allocation run log. GET lists runs
+// (newest first, no items; `?appliedSince=<iso>` returns whole applied runs
+// instead, for My week's "New to you"), GET /:id one run whole, POST records
+// a dry run or an applied run the client computed and carried out.
+async function allocationRunsRoute(
+  req: Request,
+  ctx: ApiContext,
+  method: string,
+  rest: string[]
+): Promise<Response> {
+  const store = ctx.allocationRuns;
+  if (store === undefined) {
+    return errorResponse(503, 'allocation runs are not kept here');
+  }
+  if (rest.length === 0 && method === 'GET') {
+    const since = new URL(req.url).searchParams.get('appliedSince');
+    return jsonResponse(
+      since === null ? store.list() : store.appliedSince(since)
+    );
+  }
+  if (rest.length === 0 && method === 'POST') {
+    const parsed = await readJsonBody(req);
+    if (!parsed.ok) return parsed.response;
+    const input = parseAllocationRunInput(parsed.value);
+    if (!input.ok) return errorResponse(400, input.error);
+    return jsonResponse(store.record(input.input, humanActor(ctx)), 201);
+  }
+  if (rest.length === 1 && method === 'GET') {
+    const run = store.get(rest[0]);
+    return run === null
+      ? errorResponse(404, `no allocation run ${rest[0]}`)
+      : jsonResponse(run);
+  }
+  return errorResponse(405, 'method not allowed');
+}
+
 // POST /api/notes — create a note/triage/follow-up/todo. Used by the app's
 // Notes tab and (via the MCP `dispatch_note` tool) by agents flagging triage
 // they find mid-run. `createdByRunId` optionally records which agent added it.
@@ -4411,6 +4650,31 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // Saving an agent key writes a machine-wide secret; refresh changes what runs can spawn.
   { method: 'POST', segments: ['setup', 'agent-key'], tier: 'operator' },
   { method: 'POST', segments: ['setup', 'refresh'], tier: 'operator' },
+  // Pairing a phone hands out a way to answer this daemon's gates, and the
+  // device list says who holds one (remoteAccess/routes.ts).
+  { method: 'GET', segments: ['remote'], tier: 'operator' },
+  { method: 'POST', segments: ['remote', 'pair'], tier: 'operator' },
+  { method: 'DELETE', segments: ['remote', 'devices', '*'], tier: 'operator' },
+  // Whether app.dispatch.foo may reach this machine's projects: a
+  // machine-wide switch only the person at this machine turns.
+  { method: 'PUT', segments: ['machine', 'web-access'], tier: 'operator' },
+  // Stored subscription accounts are machine-wide secrets; switching failover
+  // decides which account's usage a run spends.
+  { method: 'POST', segments: ['setup', 'accounts'], tier: 'operator' },
+  {
+    method: 'POST',
+    segments: ['setup', 'accounts', 'failover'],
+    tier: 'operator',
+  },
+  {
+    method: 'DELETE',
+    segments: ['setup', 'accounts', '*', '*'],
+    tier: 'operator',
+  },
+  // The mobile listener's settings decide what this machine exposes to a
+  // tunnel; they belong to the person at the keyboard.
+  { method: 'GET', segments: ['mobile', 'settings'], tier: 'operator' },
+  { method: 'PUT', segments: ['mobile', 'settings'], tier: 'operator' },
   // ---- decide: adjudication -------------------------------------------------
   // Starting a preview runs a command out of the run's own worktree — a
   // worktree the agent just wrote to, including its package.json. On the
@@ -4434,6 +4698,11 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // listing holders tells it whose to go looking for. team/routes.ts further
   // caps what a caller may issue or revoke at their own tier.
   { method: 'GET', segments: ['team', 'tokens'], tier: 'decide' },
+  // Pairing a device mints a credential that speaks for the operator; the
+  // routes also refuse anyone but the operator in person (api/pairing.ts).
+  { method: 'POST', segments: ['pair', 'offer'], tier: 'decide' },
+  { method: 'GET', segments: ['devices'], tier: 'decide' },
+  { method: 'DELETE', segments: ['devices', '*'], tier: 'decide' },
   // Lists machines, fingerprints and problems: whose to go looking for (decision 57).
   { method: 'GET', segments: ['team', 'keys'], tier: 'decide' },
   // GET team/status is absent on purpose: below decide its route answers
@@ -4446,6 +4715,17 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'GET', segments: ['team', 'address'], tier: 'decide' },
   { method: 'POST', segments: ['team', 'tokens'], tier: 'decide' },
   { method: 'DELETE', segments: ['team', 'tokens', '*'], tier: 'decide' },
+  // A teammate's Linear grant is a secret the host holds for them.
+  {
+    method: 'POST',
+    segments: ['team', 'tokens', '*', 'linear'],
+    tier: 'operator',
+  },
+  {
+    method: 'DELETE',
+    segments: ['team', 'tokens', '*', 'linear'],
+    tier: 'operator',
+  },
   // Settings are the project's policy — autonomy gates, caps, what a run may
   // do — so changing them is an adjudication, never something an agent
   // holding the on-disk token may do to itself. Keys that run commands, send
@@ -4476,6 +4756,10 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // Seals the team's content end to end, for good: an admin's roster op.
   { method: 'POST', segments: ['team', 'content-e2e'], tier: 'operator' },
   { method: 'POST', segments: ['team', 'problems', 'ack'], tier: 'decide' },
+  // Hiding an item from the human's queue is an adjudication: an agent holding
+  // the on-disk token must not wave off its own stalled run.
+  { method: 'POST', segments: ['decisions', '*', 'dismiss'], tier: 'decide' },
+  { method: 'DELETE', segments: ['decisions', '*', 'dismiss'], tier: 'decide' },
   // An admin's pick between two machines that each claim a run first.
   {
     method: 'POST',
@@ -4549,6 +4833,15 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'POST', segments: ['a2a', 'pairings', 'accept'], tier: 'decide' },
   { method: 'DELETE', segments: ['a2a', 'pairings', '*'], tier: 'decide' },
   { method: 'GET', segments: ['a2a', 'links'], tier: 'decide' },
+  // An intake link is a credential outside people submit requests with; the
+  // list names every form's label and client.
+  { method: 'GET', segments: ['a2a', 'intake'], tier: 'decide' },
+  { method: 'POST', segments: ['a2a', 'intake'], tier: 'decide' },
+  {
+    method: 'POST',
+    segments: ['a2a', 'intake', '*', 'revoke'],
+    tier: 'decide',
+  },
 
   // ---- operator: acting on the host machine as its owner --------------------
   // Writing a file straight to disk bypasses the orchestrator, which is what
@@ -4585,6 +4878,11 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // forget only holds a local task back, so they stay there too.
   { method: 'POST', segments: ['linear', 'connect'], tier: 'operator' },
   { method: 'POST', segments: ['linear', 'disconnect'], tier: 'operator' },
+  // Signing in stores a person's Linear token on this machine, and its
+  // handlers further require the owner's own app token (D3 in the design).
+  { method: 'POST', segments: ['linear', 'sign-in'], tier: 'operator' },
+  { method: 'DELETE', segments: ['linear', 'sign-in'], tier: 'operator' },
+  { method: 'POST', segments: ['linear', 'sign-out'], tier: 'operator' },
   // Archiving closed issues acts on records teammates made in a shared
   // tracker, not only Dispatch's, so an agent token must not start it. Decide
   // rather than operator: connecting already chose the workspace.
@@ -4700,6 +4998,57 @@ export function isSelfAuthenticated(
   );
 }
 
+// POST /api/team/tokens/<handle>/linear: the host stores a teammate's Linear
+// grant (a LinearAccountRecord) so their own edits reach Linear as them.
+async function setTeammateLinear(
+  req: Request,
+  ctx: ApiContext,
+  handle: string
+): Promise<Response> {
+  if (!/^[a-z0-9][a-z0-9._-]*$/.test(handle))
+    return errorResponse(400, 'Not a handle.');
+  // Only someone holding a teammate token here, and never the owner, whose
+  // sign-in is their own (Settings, not this route).
+  if (
+    `human:${handle}` === ctx.actorContext.humanRef ||
+    ctx.team.teammates.issuedTier(handle) === null
+  )
+    return errorResponse(404, `no issued token for "${handle}"`);
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const record = parseLinearAccountRecord(parsed.value);
+  if (record === null)
+    return errorResponse(400, 'Not a Linear account record.');
+  const saved = await ctx.linearSync.saveTeammateGrant(handle, record);
+  return saved.ok
+    ? new Response(null, { status: 204 })
+    : errorResponse(saved.status, saved.error);
+}
+
+// A hosted planner's checks once the caller is known: members' tokens are
+// the host's alone to mint and revoke, routes whose handlers run commands
+// answer fixed data, and config takes only the planning keys at any tier.
+async function hostedRefusal(
+  req: Request,
+  method: string,
+  segments: readonly string[],
+  ownerCredential: boolean
+): Promise<Response | null> {
+  if (hostedOwnerOnly(segments) && !ownerCredential)
+    return errorResponse(404, 'Not on a hosted planner.');
+  const fixed = hostedFixedAnswer(method, segments);
+  if (fixed !== undefined) return Response.json(fixed);
+  if (method === 'PATCH' && segments.length === 1 && segments[0] === 'config') {
+    const body: unknown = await req
+      .clone()
+      .json()
+      .catch(() => null);
+    const problem = hostedConfigProblem(body, ownerCredential);
+    if (problem !== null) return errorResponse(403, problem);
+  }
+  return null;
+}
+
 /**
  * The tier a request to `/api/<segments>` must present, or null when open.
  * `GET /api/health` is the only open route, because the CLI, MCP and the
@@ -4726,6 +5075,11 @@ function requiredTier(
   ) {
     return null;
   }
+  // Redeeming a pairing code is how a device gets its first credential, so it
+  // cannot require one; the one-time code stands in (api/pairing.ts).
+  if (method === 'POST' && segments.length === 1 && segments[0] === 'pair') {
+    return null;
+  }
   // Self-authenticating routes check via resolvePrincipal in handleApi, not
   // this ladder — returning null here just opens the gate for them.
   if (isSelfAuthenticated(segments, method, query)) return null;
@@ -4738,6 +5092,41 @@ function requiredTier(
     }
   }
   return 'request';
+}
+
+// Whether a request is a download-ticket redemption: `GET /api/files/raw`
+// with a `ticket` query parameter, whatever else it carries.
+function isTicketDownload(
+  method: string,
+  segments: readonly string[],
+  query: URLSearchParams
+): boolean {
+  return (
+    method === 'GET' &&
+    segments.length === 2 &&
+    segments[0] === 'files' &&
+    segments[1] === 'raw' &&
+    query.has('ticket')
+  );
+}
+
+/**
+ * Whether `presented` would still pass handleApi's gate for a route needing
+ * `tier`: a live run's token (which stands at the request tier), or a
+ * registry credential that is neither revoked nor expired and ranks at least
+ * that high. Download tickets run it when they are used, so a ticket never
+ * outlives the credential it was issued to.
+ */
+function credentialStillPasses(
+  ctx: ApiContext,
+  presented: string | null,
+  tier: AuthTier
+): boolean {
+  if (presented === null) return false;
+  const run = runCredential(ctx, presented);
+  if (run !== null) return run.live && tierAllows('request', tier);
+  const found = ctx.tokens.registry.lookup(presented);
+  return found.kind === 'valid' && tierAllows(found.identity.tier, tier);
 }
 
 // POST /api/daemon/shutdown: `dispatch serve` taking this project over. Only
@@ -4800,8 +5189,8 @@ const MISSING_TOKEN_MESSAGE =
 
 const INVALID_TOKEN_MESSAGE =
   'daemon token not recognized: it belongs to a different or restarted daemon. ' +
-  'The app token is the DISPATCH_APP_TOKEN line this daemon printed at startup ' +
-  '(a restarted daemon prints a new one); the CLI and MCP read `agentToken` ' +
+  'The app token is the one this daemon printed or wrote to --app-token-file ' +
+  'at startup (a restarted daemon has a new one); the CLI and MCP read `agentToken` ' +
   'from ~/.dispatch/daemons/<key>.json.';
 
 const INVITE_AS_TOKEN_MESSAGE =
@@ -4815,8 +5204,8 @@ function wrongTierMessage(required: AuthTier, held: AuthTier): string {
   return (
     `this route needs the ${required} tier and this credential carries ` +
     `${held}. On your own machine, pass the daemon app token with --token or ` +
-    'DISPATCH_APP_TOKEN (the DISPATCH_APP_TOKEN line the daemon prints at ' +
-    'startup; restart the daemon if you no longer have it). As a teammate, ask ' +
+    'DISPATCH_APP_TOKEN (the token `dispatch serve --app-token-file <path>` ' +
+    'writes at startup; restart the daemon if you no longer have it). As a teammate, ask ' +
     `whoever runs the daemon for \`dispatch team invite <you> --tier ${required}\`.`
   );
 }
@@ -4959,10 +5348,30 @@ export async function handleApi(
   if (isLinearWebhook(method, segments)) {
     return await linearWebhook(req, daemonCtx);
   }
+  // A hosted planner answers only the planning routes, to every credential,
+  // ahead of the hub link and download tickets as much as the rest.
+  if (
+    daemonCtx.hostedPlanner === true &&
+    !hostedPlannerAllows(method, segments)
+  )
+    return errorResponse(404, 'Not on a hosted planner.');
+
   // The machine hub's calls carry the token this daemon gave it when they
   // linked, not a daemon token (messaging/hubLink.ts).
   if (method === 'POST' && segments.length === 2 && segments[0] === 'hub-link')
     return await hubLinkRoute(req, daemonCtx, segments[1]);
+
+  // A download ticket is the one credential that rides in a URL, and only on
+  // this one route: it stands in for the bearer header a plain link cannot
+  // carry (api/downloadTickets.ts). Anywhere else a `ticket` parameter is
+  // ignored and the request needs a token like any other.
+  if (isTicketDownload(method, segments, url.searchParams)) {
+    return downloadWithTicket(
+      daemonCtx,
+      downloadTicketsFor(daemonCtx.tokens),
+      url.searchParams
+    );
+  }
 
   const presented = presentedCredential(req, daemonCtx.sessionOrigins);
 
@@ -5055,6 +5464,14 @@ export async function handleApi(
     };
   }
   if (principal !== undefined) ctx = { ...ctx, principal };
+  if (caller?.viaWeb === true) {
+    const refused = webRefusal(method, segments);
+    if (refused !== null) return refused;
+  }
+  if (daemonCtx.hostedPlanner === true) {
+    const refused = await hostedRefusal(req, method, segments, ownerCredential);
+    if (refused !== null) return refused;
+  }
   const scope = run === null ? null : a2aRunScope(ctx, run.runId);
   if (scope !== null) {
     const bridge = ctx.a2a;
@@ -5148,7 +5565,8 @@ export async function handleApi(
         identity: identity.identity,
         // Phase 5 P1: whether this project can use the PR review action
         // (gh on PATH + a configured git remote), detected once at boot.
-        pr: ctx.prCapability,
+        // False while that probe is still running; `health.changed` follows.
+        pr: ctx.prManager.capable,
         // origin's browser URL when it is on GitHub, so a landed run can
         // link its commit. Absent with no remote or a non-GitHub one.
         originWebUrl: ctx.orchestrator.originWebUrl(),
@@ -5171,6 +5589,18 @@ export async function handleApi(
       });
     }
 
+    const remoteRoute = handleRemoteRoute(ctx.remoteAccess, method, segments);
+    if (remoteRoute !== null) return remoteRoute;
+    // GET/PUT /api/machine/web-access — the machine hub's web switch
+    // (messaging/hubLink.ts); 409 when no hub runs here.
+    if (
+      segments.length === 2 &&
+      segments[0] === 'machine' &&
+      segments[1] === 'web-access' &&
+      (method === 'GET' || method === 'PUT')
+    )
+      return await machineWebAccess(req, ctx, method);
+
     if (segments[0] === 'team' && isFederationRoute(segments)) {
       return await handleFederationRoute(req, ctx, segments, method);
     }
@@ -5181,6 +5611,18 @@ export async function handleApi(
       }
       if (segments.length === 3 && method === 'DELETE') {
         return await revokeTeamToken(ctx, segments[2]);
+      }
+      if (segments.length === 4 && segments[3] === 'linear') {
+        if (method === 'POST')
+          return await setTeammateLinear(req, ctx, segments[2] ?? '');
+        if (method === 'DELETE') {
+          const removed = await ctx.linearSync.removeTeammateGrant(
+            segments[2] ?? ''
+          );
+          return removed > 0
+            ? new Response(null, { status: 204 })
+            : errorResponse(404, `no Linear grant for "${segments[2] ?? ''}"`);
+        }
       }
     }
 
@@ -5315,6 +5757,10 @@ export async function handleApi(
       return jsonResponse(ctx.caller);
     }
 
+    // /api/pair and /api/devices — pairing the operator's own other devices.
+    const pairingResponse = await pairingRoutes(req, ctx, segments);
+    if (pairingResponse !== null) return pairingResponse;
+
     // POST /api/session — a teammate's browser trades the token it was given
     // for an HttpOnly session cookie, so the page never has to hold it.
     // DELETE clears it. Both sit behind rejectUntrustedOrigin above, so a
@@ -5374,6 +5820,18 @@ export async function handleApi(
       }
       if (segments[1] === 'disconnect' && method === 'POST') {
         return await disconnectLinear(ctx);
+      }
+      if (segments[1] === 'account' && method === 'GET') {
+        return await linearAccount(ctx);
+      }
+      if (segments[1] === 'sign-in' && method === 'POST') {
+        return await startLinearSignIn(req, ctx);
+      }
+      if (segments[1] === 'sign-in' && method === 'DELETE') {
+        return cancelLinearSignIn(ctx);
+      }
+      if (segments[1] === 'sign-out' && method === 'POST') {
+        return await signOutOfLinear(req, ctx);
       }
       if (segments[1] === 'teams' && method === 'GET') {
         return await linearTeams(ctx);
@@ -5445,6 +5903,17 @@ export async function handleApi(
       }
       if (segments[1] === 'raw' && method === 'GET') {
         return rawFile(ctx, url.searchParams);
+      }
+      // The ticket is checked against the tier the raw route needs, with the
+      // credential that asked for it, again when it is used.
+      if (segments[1] === 'download-ticket' && method === 'POST') {
+        const rawTier = requiredTier('GET', ['files', 'raw']) ?? 'request';
+        return await issueDownloadTicket(
+          req,
+          ctx,
+          downloadTicketsFor(daemonCtx.tokens),
+          () => credentialStillPasses(daemonCtx, presented, rawTier)
+        );
       }
       if (segments[1] === 'search' && method === 'GET') {
         return await searchFiles(ctx, url.searchParams);
@@ -5802,6 +6271,8 @@ export async function handleApi(
       return jsonResponse(ctx.planManager.list());
     }
 
+    if (segments[0] === 'mobile') return await handleMobile(req, ctx, segments);
+
     if (segments[0] === 'runs') {
       if (segments.length === 1 && method === 'GET') {
         ctx.orchestrator.backfillLastSteps();
@@ -5837,6 +6308,26 @@ export async function handleApi(
       }
       if (segments.length === 3 && segments[2] === 'preview') {
         return await handleRunPreview(req, ctx, segments[1], method);
+      }
+      // POST /api/runs/:id/attachments — files a human dropped, pasted or picked
+      // in the run's follow-up composer, uploaded ahead of the message that
+      // names them. A human's, like the overseer's: an agent token is refused,
+      // so a run cannot fill the disk through the daemon.
+      if (segments.length === 3 && segments[2] === 'attachments') {
+        if (method !== 'POST') return errorResponse(405, 'method not allowed');
+        if (ctx.viaAgentToken === true) {
+          return jsonResponse(
+            {
+              error: 'an agent cannot attach files to a run; a human does',
+              code: 'auth_agent_token',
+            },
+            403
+          );
+        }
+        if (ctx.orchestrator.getRun(segments[1]) === null) {
+          return errorResponse(404, `run not found: ${segments[1]}`);
+        }
+        return await uploadRunAttachments(req, ctx.rootDir, segments[1]);
       }
       // POST /api/runs/:id/stop — the graceful counterpart to cancel: the agent
       // finishes what it is doing and then stops, so its work is committed.
@@ -6227,7 +6718,8 @@ export async function handleApi(
     // it. `?disposition=blocking|recorded` is the policy engine's filter (see
     // decisionFeed.ts); `?resolved=1` also returns the items the feed has just
     // watched resolve, so a surface can show a row settling instead of
-    // vanishing.
+    // vanishing; `?dismissed=1` also returns items a human dismissed, for a
+    // surface that offers the undo.
     if (segments[0] === 'decisions' && segments.length === 1) {
       if (method === 'GET') {
         const raw = url.searchParams.get('disposition');
@@ -6244,9 +6736,36 @@ export async function handleApi(
                 | DecisionDisposition
                 | undefined,
               includeResolved: url.searchParams.get('resolved') === '1',
+              includeDismissed: url.searchParams.get('dismissed') === '1',
             })
             .filter(decisionVisibleTo(ctx)),
         });
+      }
+    }
+
+    // POST /api/decisions/:id/dismiss hides a derived item (a stalled run,
+    // say) until the condition behind it changes; DELETE undoes that. Gates
+    // and floor holds are refused: those leave the feed only by an answer.
+    if (
+      segments[0] === 'decisions' &&
+      segments.length === 3 &&
+      segments[2] === 'dismiss'
+    ) {
+      const id = decodeURIComponent(segments[1]);
+      if (method === 'POST') {
+        const result = ctx.decisionFeed.dismiss(id);
+        if (result.ok) return jsonResponse({ item: result.item });
+        return result.error === 'not-found'
+          ? errorResponse(404, `no open decision ${id}`)
+          : errorResponse(
+              409,
+              `${id} is human-gated: answer it rather than dismissing it`
+            );
+      }
+      if (method === 'DELETE') {
+        return ctx.decisionFeed.restore(id)
+          ? jsonResponse({ ok: true })
+          : errorResponse(404, `${id} is not dismissed`);
       }
     }
 
@@ -6389,6 +6908,36 @@ export async function handleApi(
       if (segments.length === 1 && method === 'GET') {
         return jsonResponse(await ctx.orchestrator.listBranches());
       }
+    }
+
+    if (
+      segments[0] === 'planning' &&
+      segments[1] === 'audit' &&
+      segments.length === 2 &&
+      method === 'GET'
+    ) {
+      // GET /api/planning/audit — who changed which planning setting, when,
+      // and from what to what (Better Tracker's Settings → Audit), newest first.
+      return ctx.planningAudit === undefined
+        ? errorResponse(503, 'the planning audit is not kept here')
+        : jsonResponse(ctx.planningAudit.list());
+    }
+
+    if (
+      segments[0] === 'planning' &&
+      segments[1] === 'digests' &&
+      segments.length === 2 &&
+      method === 'GET'
+    ) {
+      // GET /api/planning/digests — the daily digests the daemon sent or
+      // logged, newest first (Better Tracker's Settings → Notifications).
+      return ctx.warningStore === undefined
+        ? errorResponse(503, 'digests are not kept here')
+        : jsonResponse(ctx.warningStore.digests());
+    }
+
+    if (segments[0] === 'planning' && segments[1] === 'allocation-runs') {
+      return await allocationRunsRoute(req, ctx, method, segments.slice(2));
     }
 
     if (segments[0] === 'notes') {
@@ -6893,7 +7442,49 @@ export async function handleApi(
   }
 }
 
-// POST /api/hub-link/{mail,state,agents}: one call from the linked machine hub.
+// What a request forwarded from the web may not do, even at the decide tier:
+// hand out lasting access (pairing a device, a team token, a phone), change
+// the machine's own switches, or touch setup. Those outlive web access being
+// turned off, so they are for the person at the machine (or a paired
+// device) only.
+const WEB_REFUSED = new Set(['pair', 'devices', 'remote', 'machine', 'setup']);
+
+function webRefusal(
+  method: string,
+  segments: readonly string[]
+): Response | null {
+  const first = segments[0] ?? '';
+  const refused =
+    WEB_REFUSED.has(first) ||
+    (first === 'team' && method !== 'GET' && method !== 'HEAD');
+  return refused
+    ? errorResponse(403, 'Not from the web: do this on the machine itself.')
+    : null;
+}
+
+// The machine hub's web-access switch, through this project's hub link.
+async function machineWebAccess(
+  req: Request,
+  ctx: ApiContext,
+  method: string
+): Promise<Response> {
+  const link = ctx.hubLink ?? null;
+  let enabled: boolean | undefined;
+  if (method === 'PUT') {
+    const parsed = await readJsonBody(req);
+    if (!parsed.ok) return parsed.response;
+    const value = (parsed.value as { enabled?: unknown }).enabled;
+    if (typeof value !== 'boolean')
+      return errorResponse(400, 'expected { enabled: boolean }');
+    enabled = value;
+  }
+  const state = link === null ? null : await link.webAccess(enabled);
+  return state === null
+    ? errorResponse(409, 'No Dispatch hub runs on this machine.')
+    : jsonResponse({ enabled: state });
+}
+
+// POST /api/hub-link/{mail,state,agents,http}: one call from the linked machine hub.
 async function hubLinkRoute(
   req: Request,
   ctx: ApiContext,
@@ -6909,6 +7500,8 @@ async function hubLinkRoute(
     );
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
+  // A request a person sent from the web to this machine (phase 4).
+  if (kind === 'http') return jsonResponse(await link.forward(parsed.value));
   try {
     return jsonResponse(await link.receive(kind, parsed.value));
   } catch (err) {

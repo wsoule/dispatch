@@ -1,0 +1,38 @@
+/* A side page's head under Tasks (components/tasks/TasksPageHeader.tsx):
+   PageHead in a 44px bar ruled off from the page below, and the crumb
+   segment that walks back up ("All docs"), drawn as a quiet link. */
+
+.bar {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex-shrink: 0;
+  min-height: 44px;
+  padding: var(--s-2) var(--s-4);
+  border-bottom: 1px solid var(--divider);
+}
+
+/* A crumb you can follow: the ancestor's own colour and weight, the text
+   brightening and underlined on hover. */
+.crumbLink {
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.crumbLink:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) {
+  .crumbLink:hover {
+    color: var(--text);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+}

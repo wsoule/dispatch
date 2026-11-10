@@ -6,6 +6,7 @@ import type {
   ExecutorRun,
   ExecutorStartOptions,
   NormalizedEntry,
+  UsageLimitStop,
 } from '../types.js';
 
 // One scripted step: stream live text, emit a log entry, write (and commit)
@@ -48,6 +49,8 @@ interface FakeFinish {
   turns?: number;
   sessionId?: string;
   error?: string;
+  // Reports the run as stopped by its account's usage limit.
+  usageLimit?: UsageLimitStop;
 }
 
 export interface FakeExecutorScript {

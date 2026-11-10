@@ -1,0 +1,209 @@
+/* The message composer (PromptBar.tsx): a --surface box in a 1px --border at
+   --r-lg holding the attachment and reference chips, the inline '/' command
+   list, the auto-growing textarea and the footer of selects and buttons. The box
+   draws the field ring while anything in it has focus; the textarea inside it is
+   the global .textarea primitive with its own box taken away. Tokens only. */
+.box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: var(--text);
+}
+
+/* The field ring, as the global .input and .textarea draw it, on the box. */
+.box:focus-within {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 0 0 4px var(--accent-soft);
+}
+
+/* A file dragged over the box: the same ring, so the drop target shows. */
+.box[data-dragging='true'] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 2px 2px 0;
+  list-style: none;
+}
+
+.chipItem {
+  display: inline-flex;
+  min-width: 0;
+}
+
+/* An image waiting to go out: a small thumbnail inside its chip. */
+.thumb {
+  display: block;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-xs);
+  object-fit: cover;
+}
+
+.file {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.fileName {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.referenceIcon {
+  display: inline-flex;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+/* The '/' command list, inline above the textarea (the picker's option look:
+   the active option on --surface-2 with a 2px accent bar inside its edge). */
+.commands {
+  max-height: 240px;
+  margin: 0;
+  padding: 2px 0 6px;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--divider);
+  list-style: none;
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: var(--h-md);
+  padding: 4px var(--s-2);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-size: var(--fs);
+  cursor: pointer;
+}
+
+.option[aria-selected='true'] {
+  background: var(--surface-2);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* A command's name and its argument hint are typed as they read: Geist Mono. */
+.commandLabel {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+
+.commandDescription {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commandHint {
+  flex: none;
+  max-width: 40%;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.noCommands {
+  margin: 0;
+  padding: 6px var(--s-2);
+  border-bottom: 1px solid var(--divider);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+
+/* The global .textarea without its box: the composer's box is the field. 18px
+   lines and 5px of padding above and below, which autosize() mirrors. (Two
+   classes, so these win over the global primitive whatever the sheet order.) */
+.box .textarea {
+  width: 100%;
+  min-height: 0;
+  padding: 5px 4px;
+  border: 0;
+  background: transparent;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+  resize: none;
+}
+
+.box .textarea:disabled {
+  background: transparent;
+}
+
+/* The ring is the box's; the textarea keeps the global transparent outline,
+   which forced colours draw. */
+.box .textarea:focus-visible {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 0 2px 2px;
+}
+
+.group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* The global .select at the footer's 26px, its chevron's room kept. */
+.footer .select {
+  min-height: var(--h-sm);
+  max-width: 180px;
+  padding-left: 8px;
+  font-size: var(--fs-sm);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .box {
+    transition:
+      border-color var(--dur) ease,
+      box-shadow var(--dur) ease;
+  }
+}
+
+/* Forced colours drop the shadows: the active option keeps a Highlight ring and
+   the drop target a thicker edge. */
+@media (forced-colors: active) {
+  .option[aria-selected='true'] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+
+  .box[data-dragging='true'] {
+    outline: 2px solid Highlight;
+  }
+}

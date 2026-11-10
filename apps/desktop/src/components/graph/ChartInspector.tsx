@@ -1,3 +1,4 @@
+import { Button, Chip, Kbd, SectionHeader } from '@dispatch/ui';
 import type { ReactNode } from 'react';
 
 import type { ContainerStatus } from '../../lib/containerStatus';
@@ -6,21 +7,15 @@ import {
   type ChartTask,
   traceChart,
 } from '../../lib/dependencyChart';
-import { HEALTH, shortDate } from '../tasks/MilestoneStatusCells';
 import { StatusIcon } from '../tasks/StatusIcon';
 import { TraceSwatch } from './ChartCanvas';
-import { CHART_STATE } from './ChartNodes';
-import { cn } from '@/lib/utils';
-import { LabelPill, Pill } from '@/ui/ai/pill';
-import { RowButton } from '@/ui/ai/row-button';
-import { Button } from '@/ui/button';
-import { HintText, MetaText, SectionLabel } from '@/ui/chrome';
-import { Kbd } from '@/ui/kbd';
+import styles from './ChartInspector.module.css';
+import { CHART_STATE, HEALTH, shortDate } from './chartTones';
 
 // How many rows a list shows before folding the rest into "+N more".
 const LIST_LIMIT = 8;
 
-/** The inspector's frame: a kicker, a title, then sections. */
+/** The inspector's frame: a kicker, a title, then sections and the actions. */
 function Frame({
   kicker,
   title,
@@ -35,20 +30,14 @@ function Frame({
   actions?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <MetaText className="truncate">{kicker}</MetaText>
-        <h2 className="text-foreground text-[15px] leading-snug font-semibold text-balance">
-          {title}
-        </h2>
-        {meta !== undefined && (
-          <div className="mt-1.5 flex flex-wrap gap-1.5">{meta}</div>
-        )}
+    <div className={styles.frame}>
+      <div className={styles.head}>
+        <span className={styles.kicker}>{kicker}</span>
+        <h2 className={styles.title}>{title}</h2>
+        {meta !== undefined && <div className={styles.meta}>{meta}</div>}
       </div>
+      {actions !== undefined && <div className={styles.actions}>{actions}</div>}
       {children}
-      {actions !== undefined && (
-        <div className="flex flex-wrap gap-2">{actions}</div>
-      )}
     </div>
   );
 }
@@ -65,17 +54,20 @@ function Section({
   children: ReactNode;
 }) {
   return (
-    <section className="flex flex-col gap-1.5">
-      <SectionLabel
+    <section className={styles.section}>
+      <SectionHeader
+        name={label}
         count={count}
-        rule
-        trailing={dir === undefined ? undefined : <TraceSwatch dir={dir} />}
-      >
-        {label}
-      </SectionLabel>
+        as="h3"
+        icon={dir === undefined ? undefined : <TraceSwatch dir={dir} />}
+      />
       {children}
     </section>
   );
+}
+
+function Hint({ children }: { children: ReactNode }) {
+  return <p className={styles.hint}>{children}</p>;
 }
 
 /** A task as an inspector row: status glyph, id, title, and a muted note. A click hands the
@@ -92,44 +84,45 @@ function TaskRow({
   onPick?: (id: string) => void;
 }) {
   const body = (
-    <>
-      {task !== undefined ? (
-        <StatusIcon status={task.status} className="size-3 shrink-0" />
-      ) : (
-        <span aria-hidden className="size-3 shrink-0" />
-      )}
-      <span className="text-muted-foreground font-book shrink-0 tracking-(--id-tracking)">
-        {id}
-      </span>
+    <span className={styles.rowBody}>
+      <span className={styles.rowId}>{id}</span>
       <span
-        className={cn(
-          'min-w-0 flex-1 truncate',
-          task === undefined && 'text-muted-foreground'
-        )}
+        className={styles.rowTitle}
+        data-missing={task === undefined || undefined}
       >
         {task?.title ?? 'Not on this chart'}
       </span>
-      {note !== undefined && (
-        <span className="text-muted-foreground shrink-0">{note}</span>
-      )}
-    </>
+      {note !== undefined && <span className={styles.rowNote}>{note}</span>}
+    </span>
   );
+  const icon =
+    task === undefined ? (
+      <span aria-hidden className={styles.rowIconGap} />
+    ) : (
+      <StatusIcon status={task.status} size={12} />
+    );
   if (onPick === undefined || task === undefined) {
     return (
-      <li className="flex h-5 min-w-0 items-center gap-1.5 text-[12px]">
+      <li className={styles.row}>
+        {icon}
         {body}
       </li>
     );
   }
   return (
     <li>
-      <RowButton
+      <Button
+        variant="quiet"
+        size="sm"
+        block
+        align="start"
+        icon={icon}
         data-testid="chart-inspector-task"
         title={task.title}
         onClick={() => onPick(id)}
       >
         {body}
-      </RowButton>
+      </Button>
     </li>
   );
 }
@@ -150,12 +143,12 @@ function TaskList({
   note?: (id: string) => string | undefined;
 }) {
   if (ids.length === 0) {
-    return empty === undefined ? null : <HintText>{empty}</HintText>;
+    return empty === undefined ? null : <Hint>{empty}</Hint>;
   }
   const shown = ids.slice(0, limit);
   return (
     <>
-      <ul className="flex flex-col">
+      <ul className={styles.list}>
         {shown.map((id) => (
           <TaskRow
             key={id}
@@ -167,17 +160,36 @@ function TaskList({
         ))}
       </ul>
       {ids.length > shown.length && (
-        <HintText>+{ids.length - shown.length} more</HintText>
+        <Hint>+{ids.length - shown.length} more</Hint>
       )}
     </>
   );
 }
 
-/** The state word as a pill in the state's colour. */
-function StatePill({ task }: { task: ChartTask }) {
-  const tone = CHART_STATE[task.state];
-  return <LabelPill color={tone.color}>{tone.label}</LabelPill>;
+/**
+ * What the card view's cards are, in the words the chart uses: milestones by default, or
+ * projects or initiatives on the Graph's upper levels. `drill` names a card's way down
+ * ("Show its milestones"), when the host offers one.
+ */
+export interface ChartUnit {
+  one: string;
+  many: string;
+  drill?: string;
 }
+
+export const MILESTONE_UNIT: ChartUnit = {
+  one: 'milestone',
+  many: 'milestones',
+};
+
+/** "a" or "an" before a word ("an initiative"). */
+const VOWELS = new Set(['a', 'e', 'i', 'o', 'u']);
+const article = (word: string): string =>
+  VOWELS.has(word.charAt(0).toLowerCase()) ? 'an' : 'a';
+
+/** "milestone" → "Milestone". */
+export const capital = (word: string): string =>
+  word.charAt(0).toUpperCase() + word.slice(1);
 
 export interface OverviewProps {
   chart: ChartModel;
@@ -188,8 +200,44 @@ export interface OverviewProps {
   onShowUnlinked: () => void;
 }
 
-/** What the inspector shows with nothing selected: how to read the chart, the headline
- * numbers, and the lists worth starting from (the longest chain, what can start now). */
+/** How to read the chart and its keys, behind the Graph toolbar's help button. */
+export function ChartHelp({
+  view,
+  unit = MILESTONE_UNIT,
+}: {
+  view: 'milestones' | 'tasks';
+  unit?: ChartUnit;
+}) {
+  return (
+    <div data-testid="chart-help" className={styles.howTo}>
+      {view === 'tasks' ? (
+        <p>
+          Click a task to trace it. Lines turn{' '}
+          <span className={styles.up}>amber</span> back through everything it
+          waits on and <span className={styles.down}>teal</span> forward through
+          everything it unblocks. Double-click a task to open it.
+        </p>
+      ) : (
+        <p>
+          Click {article(unit.one)} {unit.one} to see its neighbours. Lines turn{' '}
+          <span className={styles.up}>amber</span> to the {unit.many} it waits
+          on and <span className={styles.down}>teal</span> to the ones it
+          unblocks. The number on a line counts the task waits behind it; click
+          it to list them.
+          {unit.drill !== undefined &&
+            ` Double-click ${article(unit.one)} ${unit.one} to go into it.`}
+        </p>
+      )}
+      <p className={styles.keys}>
+        <Kbd>/</Kbd> find · <Kbd>Esc</Kbd> clear · <Kbd>0</Kbd> fit ·{' '}
+        <Kbd>+</Kbd> <Kbd>−</Kbd> zoom
+      </p>
+    </div>
+  );
+}
+
+/** What the inspector shows with nothing selected: the lists worth starting from (the
+ * longest chain, what can start now). The toolbar's chips carry the counts. */
 export function InspectorOverview({
   chart,
   view,
@@ -197,59 +245,8 @@ export function InspectorOverview({
   onPick,
   onShowUnlinked,
 }: OverviewProps) {
-  const open = [...chart.tasks.values()].filter(
-    (t) => t.state !== 'landed'
-  ).length;
-  const facts: [string, number][] = [
-    ['Open', open],
-    ['Ready', chart.readyNow.length],
-    ['In progress', chart.inProgress.length],
-    ['Needs you', chart.needsYou.length],
-    ['Waits', chart.edges.length],
-    ['Longest chain', chart.longestChain.length],
-  ];
   return (
-    <div data-testid="chart-inspector-overview" className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1.5 text-[12px] leading-[18px] text-(--text-secondary)">
-        {view === 'tasks' ? (
-          <p>
-            Click a task to trace it. Lines turn{' '}
-            <span className="font-semibold text-(--state-waiting-fg)">
-              amber
-            </span>{' '}
-            back through everything it waits on and{' '}
-            <span className="font-semibold text-(--teal)">teal</span> forward
-            through everything it unblocks. Double-click a task to open it.
-          </p>
-        ) : (
-          <p>
-            Click a milestone to see its neighbours. Lines turn{' '}
-            <span className="font-semibold text-(--state-waiting-fg)">
-              amber
-            </span>{' '}
-            to the milestones it waits on and{' '}
-            <span className="font-semibold text-(--teal)">teal</span> to the
-            ones it unblocks. The number on a line counts the task waits behind
-            it; click it to list them.
-          </p>
-        )}
-        <p className="text-muted-foreground">
-          Drag to pan · scroll to zoom · <Kbd>/</Kbd> find · <Kbd>Esc</Kbd>{' '}
-          clear · <Kbd>0</Kbd> fit · <Kbd>+</Kbd> <Kbd>−</Kbd> zoom
-        </p>
-      </div>
-      <dl className="grid grid-cols-3 gap-x-3 gap-y-2">
-        {facts.map(([label, n]) => (
-          <div key={label} className="min-w-0">
-            <dt className="text-muted-foreground truncate text-[11px]">
-              {label}
-            </dt>
-            <dd className="text-foreground text-[17px] leading-6 font-semibold tabular-nums">
-              {n}
-            </dd>
-          </div>
-        ))}
-      </dl>
+    <div data-testid="chart-inspector-overview" className={styles.frame}>
       <Section label="Longest open chain" count={chart.longestChain.length}>
         <TaskList
           ids={chart.longestChain}
@@ -275,12 +272,12 @@ export function InspectorOverview({
       )}
       {view === 'tasks' && unlinkedHidden > 0 && (
         <Section label="Not on the chart" count={unlinkedHidden}>
-          <HintText>
+          <Hint>
             Open tasks with no waits either way are left off so the chains stay
             readable.
-          </HintText>
+          </Hint>
           <div>
-            <Button size="xs" variant="outline" onClick={onShowUnlinked}>
+            <Button size="sm" variant="secondary" onClick={onShowUnlinked}>
               Show unlinked tasks
             </Button>
           </div>
@@ -297,6 +294,8 @@ export interface TaskInspectorProps {
   onFitChain: (ids: ReadonlySet<string>) => void;
   onOpen: (id: string) => void;
   onClear: () => void;
+  /** The host's own verbs for this task (a plan's Send agent), after Open task. */
+  extraActions?: ReactNode;
 }
 
 /** A selected task: where it sits, its state, what it waits on and what it unblocks (direct
@@ -308,6 +307,7 @@ export function TaskInspector({
   onFitChain,
   onOpen,
   onClear,
+  extraActions,
 }: TaskInspectorProps) {
   const task = chart.tasks.get(id);
   if (task === undefined) return null;
@@ -320,43 +320,39 @@ export function TaskInspector({
     (x) => chart.tasks.get(x)?.state !== 'landed'
   ).length;
   const { meta } = task.doc;
+  const state = CHART_STATE[task.state];
   return (
     <Frame
       kicker={task.milestoneTitle}
       title={
         <>
-          <span className="text-muted-foreground font-book tracking-(--id-tracking)">
-            {id}
-          </span>{' '}
-          {task.title}
+          <span className={styles.titleId}>{id}</span> {task.title}
         </>
       }
       meta={
         <>
-          <StatePill task={task} />
-          <Pill>
-            <StatusIcon status={task.status} className="size-3" />
-            {task.status}
-          </Pill>
+          <Chip tone={state.tone}>{state.label}</Chip>
+          <Chip>{task.status}</Chip>
           {meta.assignee !== 'none' && meta.assignee !== '' && (
-            <Pill>{meta.assignee}</Pill>
+            <Chip>{meta.assignee}</Chip>
           )}
-          {meta.priority !== 'none' && <Pill>{meta.priority}</Pill>}
+          {meta.priority !== 'none' && <Chip>{meta.priority}</Chip>}
         </>
       }
       actions={
         <>
-          <Button size="sm" onClick={() => onOpen(id)}>
+          <Button size="sm" variant="primary" onClick={() => onOpen(id)}>
             Open task
           </Button>
+          {extraActions}
           <Button
             size="sm"
-            variant="outline"
+            variant="secondary"
             onClick={() => onFitChain(new Set([...up, ...down, id]))}
           >
             Fit its chain
           </Button>
-          <Button size="sm" variant="ghost" onClick={onClear}>
+          <Button size="sm" variant="quiet" onClick={onClear}>
             Clear
           </Button>
         </>
@@ -376,15 +372,15 @@ export function TaskInspector({
           }
         />
         {hidden.length > 0 && (
-          <HintText>
+          <Hint>
             Also waits on {hidden.join(', ')}, outside this view (filtered out,
             archived or dropped).
-          </HintText>
+          </Hint>
         )}
         {up.size > blockers.length && (
-          <HintText>
+          <Hint>
             {up.size} tasks upstream in all, {openUp} still open.
-          </HintText>
+          </Hint>
         )}
       </Section>
       <Section label="Unblocks" count={dependents.length} dir="down">
@@ -395,7 +391,7 @@ export function TaskInspector({
           empty="Nothing waits on it."
         />
         {down.size > dependents.length && (
-          <HintText>{down.size} tasks downstream in all.</HintText>
+          <Hint>{down.size} tasks downstream in all.</Hint>
         )}
       </Section>
     </Frame>
@@ -416,8 +412,15 @@ export interface MilestoneInspectorProps {
   onPick: (id: string) => void;
   onPickMilestone: (id: string) => void;
   onOpenPlan: (id: string) => void;
-  onShowTasks: (id: string) => void;
+  /** Switches to its tasks on the Tasks chart; absent when the chart has no Tasks view. */
+  onShowTasks?: (id: string) => void;
+  /** Goes a level down into it (`unit.drill` names the button). */
+  onDrill?: (id: string) => void;
+  /** What the card is (milestone, project, initiative). */
+  unit?: ChartUnit;
   onClear: () => void;
+  /** The host's own verbs for this milestone (a plan band's fan-out controls). */
+  extraActions?: ReactNode;
 }
 
 /** A selected milestone: progress, the milestones on either side with the task waits behind
@@ -435,7 +438,10 @@ export function MilestoneInspector({
   onPickMilestone,
   onOpenPlan,
   onShowTasks,
+  onDrill,
+  unit = MILESTONE_UNIT,
   onClear,
+  extraActions,
 }: MilestoneInspectorProps) {
   const health = HEALTH[status.health];
   const links = (
@@ -447,56 +453,70 @@ export function MilestoneInspector({
         dir === 'up' ? `${other.id}\u0000${id}` : `${id}\u0000${other.id}`;
       const pairs = chart.milestonePairs.get(key) ?? [];
       return (
-        <div key={other.id} className="flex flex-col gap-0.5">
-          <RowButton
+        <div key={other.id} className={styles.link}>
+          <Button
+            variant="quiet"
+            size="sm"
+            block
+            align="start"
             data-testid="chart-inspector-milestone"
             onClick={() => onPickMilestone(other.id)}
-            className="font-medium"
           >
-            <span className="min-w-0 flex-1 truncate">{other.title}</span>
-            <span className="text-muted-foreground shrink-0 tabular-nums">
-              {pairs.length} {pairs.length === 1 ? 'wait' : 'waits'}
+            <span className={styles.rowBody}>
+              <span className={styles.linkTitle}>{other.title}</span>
+              <span className={styles.rowNote}>
+                {pairs.length} {pairs.length === 1 ? 'wait' : 'waits'}
+              </span>
             </span>
-          </RowButton>
+          </Button>
           <PairList pairs={pairs} chart={chart} onPick={onPick} />
         </div>
       );
     });
   return (
     <Frame
-      kicker="Milestone"
+      kicker={capital(unit.one)}
       title={title}
       meta={
         <>
-          <Pill>
+          <Chip>
             {status.done}/{status.total} landed
-          </Pill>
-          <span
-            className={cn(
-              'rounded-pill inline-flex h-6 items-center px-2 text-[12px]',
-              health.tone
-            )}
-          >
-            {health.label}
-          </span>
-          {dueDate !== null && <Pill>due {shortDate(dueDate)}</Pill>}
+          </Chip>
+          <Chip tone={health.tone}>{health.label}</Chip>
+          {dueDate !== null && <Chip>due {shortDate(dueDate)}</Chip>}
         </>
       }
       actions={
         <>
+          {onDrill !== undefined && unit.drill !== undefined && (
+            <Button
+              size="sm"
+              variant="primary"
+              data-testid="chart-inspector-drill"
+              onClick={() => onDrill(id)}
+            >
+              {unit.drill}
+            </Button>
+          )}
           <Button
             size="sm"
+            variant={onDrill === undefined ? 'primary' : 'secondary'}
             data-testid="milestone-node-open"
             onClick={() => onOpenPlan(id)}
           >
-            Open flight plan
+            Open {unit.one}
           </Button>
-          {taskIds.length > 0 && (
-            <Button size="sm" variant="outline" onClick={() => onShowTasks(id)}>
+          {onShowTasks !== undefined && taskIds.length > 0 && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => onShowTasks(id)}
+            >
               Show its tasks
             </Button>
           )}
-          <Button size="sm" variant="ghost" onClick={onClear}>
+          {extraActions}
+          <Button size="sm" variant="quiet" onClick={onClear}>
             Clear
           </Button>
         </>
@@ -504,14 +524,14 @@ export function MilestoneInspector({
     >
       <Section label="Waits on" count={waitsOn.length} dir="up">
         {waitsOn.length === 0 ? (
-          <HintText>No other milestone.</HintText>
+          <Hint>No other {unit.one}.</Hint>
         ) : (
           links(waitsOn, 'up')
         )}
       </Section>
       <Section label="Unblocks" count={unblocks.length} dir="down">
         {unblocks.length === 0 ? (
-          <HintText>No other milestone.</HintText>
+          <Hint>No other {unit.one}.</Hint>
         ) : (
           links(unblocks, 'down')
         )}
@@ -541,7 +561,7 @@ function PairList({
 }) {
   if (pairs.length === 0) return null;
   return (
-    <ul className="flex flex-col pl-2">
+    <ul className={styles.pairs}>
       {pairs.map(([from, to]) => (
         <TaskRow
           key={`${from}\u0000${to}`}
@@ -561,23 +581,26 @@ export interface LinkInspectorProps {
   to: { id: string; title: string };
   onPick: (id: string) => void;
   onClear: () => void;
+  /** What the two ends are. */
+  unit?: ChartUnit;
 }
 
-/** A selected milestone link: every task wait it stands for. */
+/** A selected card link: every task wait it stands for. */
 export function LinkInspector({
   chart,
   from,
   to,
   onPick,
   onClear,
+  unit = MILESTONE_UNIT,
 }: LinkInspectorProps) {
   const pairs = chart.milestonePairs.get(`${from.id}\u0000${to.id}`) ?? [];
   return (
     <Frame
-      kicker="Milestone link"
+      kicker={`${capital(unit.one)} link`}
       title={`${to.title} waits on ${from.title}`}
       actions={
-        <Button size="sm" variant="ghost" onClick={onClear}>
+        <Button size="sm" variant="quiet" onClick={onClear}>
           Clear
         </Button>
       }
@@ -612,12 +635,12 @@ export function SetInspector({
       kicker="Highlighted"
       title={`${label} · ${ids.length}`}
       actions={
-        <Button size="sm" variant="ghost" onClick={onClear}>
+        <Button size="sm" variant="quiet" onClick={onClear}>
           Clear
         </Button>
       }
     >
-      <HintText className="text-[12px]">{blurb}</HintText>
+      <Hint>{blurb}</Hint>
       <TaskList
         ids={ids}
         chart={chart}

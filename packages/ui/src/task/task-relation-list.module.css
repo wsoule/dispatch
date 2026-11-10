@@ -1,0 +1,239 @@
+/* Related tasks as Gr8r's drawer sub-rows: flat rows with no rules, each a
+   6px-radius hover fill (gated off touch), the state glyph, the mono key
+   and the title on the first line, the facts under the title in the meta
+   voice, and a small ghost remove button at the right.
+
+   The list owns the columns (glyph, key, title, and the remove button
+   when a row has one); items and rows take them through subgrid, so the
+   key column is as wide as the longest key ("PLATFORM-10417" beside
+   "ENG-24") and every title starts at the same x. The glyph track is
+   max-content, not 14px: a subgrid hands the row's padding to its edge
+   items as margin, and a fixed track would push the glyph into the key. */
+
+.list {
+  display: grid;
+  grid-template-columns: max-content minmax(52px, max-content) minmax(0, 1fr);
+  gap: 2px 10px;
+  margin: 0 -8px;
+}
+
+.removable {
+  grid-template-columns:
+    max-content minmax(52px, max-content) minmax(0, 1fr)
+    auto;
+}
+
+.item {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+  border-radius: var(--r-sm);
+  transition: background-color var(--dur) ease;
+}
+
+/* The fallback track list is for engines without subgrid. */
+.row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: 14px minmax(52px, max-content) minmax(0, 1fr);
+  grid-template-columns: subgrid;
+  gap: 1px 10px;
+  align-items: baseline;
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 8px;
+  border-radius: var(--r-sm);
+  text-align: left;
+  color: var(--text);
+}
+
+/* Pinned to the title's first line (13.5px x 1.4), not the row's centre,
+   so a wrapped title never pulls the glyph down. */
+.glyph {
+  display: inline-flex;
+  align-self: start;
+  margin-top: 2px;
+}
+
+.key {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-regular);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.title {
+  font-size: var(--fs);
+  font-weight: var(--fw-regular);
+  line-height: 1.4;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  grid-column: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-regular);
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+/* State, assignee and context run as one line of text so they wrap like
+   a sentence, the separators staying inline. */
+.facts {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.dot {
+  color: var(--text-4);
+}
+
+.state {
+  white-space: nowrap;
+}
+
+/* An open relation nobody holds: "Unassigned" in the amber warning hue
+   (docs/architecture.md §8.2). */
+.unassigned {
+  font-weight: var(--fw-medium);
+  color: var(--amber);
+}
+
+/* A blocker that has landed no longer holds anything back. */
+.resolved .title {
+  color: var(--text-3);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--text-4);
+}
+
+/* The unlink button: a 26px ghost icon button in the row's last column. */
+.removable .row {
+  grid-column: 1 / 4;
+}
+
+.remove {
+  grid-column: 4;
+  display: grid;
+  place-items: center;
+  width: var(--h-sm);
+  height: var(--h-sm);
+  margin-right: 5px;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  transition:
+    background-color var(--dur) ease,
+    color var(--dur) ease;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .item:hover {
+    background: var(--surface-2);
+  }
+
+  .remove:not([aria-disabled='true']):hover {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+}
+
+/* A removal in flight: the row goes quiet until it settles. */
+.remove[aria-disabled='true'] {
+  cursor: progress;
+}
+
+.item:has(> .remove[aria-busy='true']) > .row {
+  opacity: 0.5;
+}
+
+/* A removal that failed: one line under the row, across every column. */
+.removeError {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  padding: 0 8px 8px 32px;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.removeErrorKey {
+  flex: none;
+  font-weight: var(--fw-semibold);
+  color: var(--red);
+}
+
+.empty {
+  font-size: var(--fs);
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+.interactive {
+  cursor: pointer;
+}
+
+.interactive:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+  border-radius: var(--r-sm);
+}
+
+.interactive:active {
+  background: var(--surface-3);
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .interactive:hover .title {
+    text-decoration: underline;
+    text-decoration-color: var(--border-strong);
+    text-underline-offset: 3px;
+  }
+
+  .resolved .interactive:hover .title {
+    text-decoration: line-through;
+  }
+}
+
+@media (width <= 640px) {
+  .list {
+    grid-template-columns: max-content minmax(48px, max-content) minmax(0, 1fr);
+    column-gap: 8px;
+  }
+
+  .removable {
+    grid-template-columns:
+      max-content minmax(48px, max-content) minmax(0, 1fr)
+      auto;
+  }
+
+  .row {
+    column-gap: 8px;
+    padding: 9px 8px;
+  }
+
+  /* A touch target worth the name. */
+  .remove {
+    width: 40px;
+    height: 40px;
+    margin-right: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .item,
+  .remove {
+    transition: none;
+  }
+}

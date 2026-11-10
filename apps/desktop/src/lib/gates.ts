@@ -5,6 +5,7 @@ export {
   foldsIntoOpenApproval,
   gateNotification,
   gateOf,
+  gateReminderNotification,
   isSystemMarker,
   openGatesAfter,
   openGatesKey,

@@ -10,9 +10,7 @@ import {
   PRIORITY_ORDER,
 } from '@dispatch-foo/core/browser';
 
-import { statusColor } from '../components/tasks/StatusIcon';
 import { isMilestoneFinished, rollupMilestoneStatus } from './milestoneRollup';
-import { colorForMilestone } from './projectColor';
 import { activeStatusModel } from './statusModel';
 import {
   assigneeLabel,
@@ -24,15 +22,16 @@ import type { TasksDisplayPrefs, TasksGrouping } from './tasksPrefs';
 
 /**
  * The list's grouping model: `groupTasks` turns the visible tasks plus the display prefs into
- * the ordered sections the list (and the Milestones page) render — one `GroupHeader` per
- * group over a run of `ListRow`s. Every grouping (status, parent, milestone, assignee,
- * priority, none) comes out in the same shape so the view has one rendering path, and the
- * ordering / completed-by-recency / nested-sub-task rules apply identically to all of them.
+ * the ordered sections the list (and the Milestones page) render — `adapters/rows.ts` maps
+ * each onto one of `@dispatch/ui` TaskGroupTable's groups (its header) over its rows. Every
+ * grouping (status, parent, milestone, assignee, priority, none) comes out in the same shape
+ * so the view has one rendering path, and the ordering / completed-by-recency /
+ * nested-sub-task rules apply identically to all of them.
  */
 
 /** What the group's 14px glyph is — the view maps this to a `StatusIcon`, a parent swatch, a
  * milestone target, an avatar or a priority glyph. */
-export type GroupIcon =
+type GroupIcon =
   | { kind: 'status'; status: string }
   | { kind: 'parent'; parentId: string | null }
   | { kind: 'milestone'; status: string }
@@ -53,8 +52,6 @@ export interface ListGroup {
   key: string;
   kind: TasksGrouping | 'archived';
   label: string;
-  /** The status colour the header's left edge picks up, or none for a neutral bar. */
-  tint: string | null;
   icon: GroupIcon;
   rows: ListGroupRow[];
   /** What a `+` on this header pre-fills into the task creator: a status, or the
@@ -76,7 +73,7 @@ export interface GroupContext {
   milestones: readonly TaskListItem[];
   /** Appended as a trailing `Archived` group when non-empty (the "Show archived" toggle). */
   archivedTasks?: readonly TaskListItem[];
-  /** The project's statuses, which tint headers, roll milestones up and sink finished work.
+  /** The project's statuses, which roll milestones up and sink finished work.
    * A memo keyed on config passes that config's: the module-level one updates a render
    * later. */
   model?: StatusModel;
@@ -160,7 +157,7 @@ export function sortTasks(
 /** Lays a sorted group out as rows: with `nestedSubtasks`, a task whose parent is also in
  * the group moves directly under that parent (children keep their sorted order, and their
  * own children follow them, depth-first); otherwise every task is a top-level row in sorted
- * order. `indent` is at most 1 — the `ListRow` API draws one tree level — so a deeper
+ * order. `indent` is at most 1 — TaskGroupTable's rows draw one tree level — so a deeper
  * descendant sits at the same indent as its parent, but never vanishes. A row whose parent
  * chain never reaches a top-level row (a cycle) falls back to the top level. */
 export function nestRows(
@@ -210,7 +207,6 @@ function isSubtask(
 interface Bucket {
   key: string;
   label: string;
-  tint: string | null;
   icon: GroupIcon;
   preset: ListGroup['preset'];
   milestoneId: string | null;
@@ -226,11 +222,7 @@ function bucket(
 
 // Buckets by status in config order, with a trailing bucket per status the config does not
 // list but a task still carries (a renamed status must not vanish from the list).
-function byStatus(
-  tasks: TaskListItem[],
-  ctx: GroupContext,
-  model: StatusModel
-): Bucket[] {
+function byStatus(tasks: TaskListItem[], ctx: GroupContext): Bucket[] {
   const buckets = new Map<string, Bucket>();
   const add = (status: string) =>
     buckets.set(
@@ -238,7 +230,6 @@ function byStatus(
       bucket({
         key: `status:${status}`,
         label: statusLabel(status),
-        tint: statusColor(status, model),
         icon: { kind: 'status', status },
         preset: { status },
         milestoneId: null,
@@ -256,11 +247,10 @@ function byStatus(
 // docs themselves are headers, not rows: a task sits under its direct parent.
 function byParent(tasks: TaskListItem[], ctx: GroupContext): Bucket[] {
   const buckets = new Map<string, Bucket>();
-  const parentBucket = (id: string, label: string, tint: string | null) =>
+  const parentBucket = (id: string, label: string) =>
     bucket({
       key: `parent:${id}`,
       label,
-      tint,
       icon: { kind: 'parent', parentId: id },
       preset: { milestone: id },
       milestoneId: id,
@@ -268,11 +258,7 @@ function byParent(tasks: TaskListItem[], ctx: GroupContext): Bucket[] {
   for (const milestone of ctx.milestones) {
     buckets.set(
       milestone.meta.id,
-      parentBucket(
-        milestone.meta.id,
-        milestone.meta.title,
-        colorForMilestone(milestone.meta.id)
-      )
+      parentBucket(milestone.meta.id, milestone.meta.title)
     );
   }
   const noParent: TaskListItem[] = [];
@@ -285,7 +271,7 @@ function byParent(tasks: TaskListItem[], ctx: GroupContext): Bucket[] {
     }
     let target = buckets.get(parent);
     if (target === undefined) {
-      target = parentBucket(parent, parent, null);
+      target = parentBucket(parent, parent);
       buckets.set(parent, target);
     }
     target.tasks.push(doc);
@@ -300,7 +286,6 @@ function noParentBucket(label: string, tasks: TaskListItem[]): Bucket {
     {
       key: NO_PARENT_KEY,
       label,
-      tint: null,
       icon: { kind: 'parent', parentId: null },
       preset: {},
       milestoneId: null,
@@ -417,7 +402,6 @@ function byMilestone(
               outer === undefined
                 ? c.meta.title
                 : `${outer.meta.title} › ${c.meta.title}`,
-            tint: null,
             icon: { kind: 'milestone', status: 'draft' },
             preset: { milestone: id },
             milestoneId: id,
@@ -436,7 +420,6 @@ function byMilestone(
         {
           key: `milestone:${id}`,
           label: known.get(id)?.meta.title ?? id,
-          tint: null,
           icon: { kind: 'milestone', status: 'draft' },
           preset: { milestone: id },
           milestoneId: id,
@@ -449,7 +432,6 @@ function byMilestone(
   for (const b of result) {
     const rollup = rollupMilestoneStatus(b.tasks, model);
     b.icon = { kind: 'milestone', status: rollup };
-    b.tint = statusColor(rollup, model);
   }
   const finished = (b: Bucket) => isMilestoneFinished(b.tasks, model);
   const ordered = [
@@ -472,7 +454,6 @@ function byAssignee(tasks: TaskListItem[]): Bucket[] {
       target = bucket({
         key: `assignee:${assignee}`,
         label: assigneeLabel(assignee),
-        tint: null,
         icon: { kind: 'assignee', assignee },
         preset: {},
         milestoneId: null,
@@ -501,7 +482,6 @@ function byPriority(tasks: TaskListItem[]): Bucket[] {
       bucket({
         key: `priority:${priority}`,
         label: priorityLabel(priority),
-        tint: null,
         icon: { kind: 'priority', priority },
         preset: {},
         milestoneId: null,
@@ -533,7 +513,7 @@ export function groupTasks(
   let buckets: Bucket[];
   switch (prefs.grouping) {
     case 'status':
-      buckets = byStatus(visible, ctx, model);
+      buckets = byStatus(visible, ctx);
       break;
     case 'parent':
       buckets = byParent(visible, ctx);
@@ -553,7 +533,6 @@ export function groupTasks(
           {
             key: 'all',
             label: '',
-            tint: null,
             icon: null,
             preset: {},
             milestoneId: null,
@@ -570,7 +549,6 @@ export function groupTasks(
       key: b.key,
       kind: prefs.grouping,
       label: b.label,
-      tint: b.tint,
       icon: b.icon,
       rows: nestRows(sortTasks(b.tasks, prefs, model), prefs),
       preset: b.preset,
@@ -584,7 +562,6 @@ export function groupTasks(
       key: ARCHIVED_KEY,
       kind: 'archived',
       label: 'Archived',
-      tint: null,
       icon: null,
       rows: nestRows(sortTasks([...archived], prefs, model), prefs),
       preset: {},

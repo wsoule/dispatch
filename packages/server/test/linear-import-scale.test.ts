@@ -246,6 +246,8 @@ describe(`importing ${ISSUES} issues through the GraphQL client`, () => {
     await sync.syncOnce();
 
     expect(requests.map((r) => r.operation)).toEqual(['Probe']);
+    // The project connection still sends its API key bare, never `Bearer`.
+    expect(requests[0]?.authorization).toBe('lin_api_test');
   }, 60_000);
 });
 

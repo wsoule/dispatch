@@ -1,7 +1,7 @@
 import {
-  ASSIGNEES,
   ConfigError,
   FileCommentStore,
+  isValidAssignee,
   KINDS,
   loadConfig,
   PRIORITIES,
@@ -36,6 +36,7 @@ import {
   readDaemonFile,
   requestDeadline,
   startDaemon,
+  startDaemonAdvice,
 } from './daemon.js';
 import { registerDocTools, taskDocLines } from './docs.js';
 import { registerMemoryTools } from './memory.js';
@@ -88,6 +89,20 @@ function validate<T extends string>(
   return value as T;
 }
 
+// Validates `assignee` against core's actor-ref grammar rather than the
+// legacy agent|human|none enum, so task_save accepts the named refs the
+// daemon and the desktop use (`human:<handle>`, `agent:<operator>/<handle>`).
+// Mirrors the CLI's validateAssignee message-for-message.
+function validateAssignee(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  if (!isValidAssignee(value)) {
+    throw new ToolError(
+      `invalid assignee: ${value} (expected an actor ref: none, human, agent, human:<handle> or agent:<operator>/<handle>)`
+    );
+  }
+  return value;
+}
+
 // A caller's status as one of config.statuses: exact, then case-insensitive,
 // then a legacy alias, then a built-in word read through statusRoles (core's
 // resolveStatusName). Mirrors the CLI's resolveStatus message for message.
@@ -124,8 +139,8 @@ const taskSummaryShape = {
   labels: z.array(z.string()),
   priority: z.enum(PRIORITIES as unknown as [string, ...string[]]),
   // A named assignee (e.g. `human:wyat`, `agent:wyat/claude`) is valid on
-  // disk but not one of the legacy ASSIGNEES enum values — same reasoning
-  // as `status` above, which already widened for custom statuses.
+  // disk but not one of the legacy agent|human|none enum values — same
+  // reasoning as `status` above, which already widened for custom statuses.
   assignee: z.string(),
   // Drives review depth and model tier, so an agent picking work needs it.
   risk: z.enum(TASK_RISKS as unknown as [string, ...string[]]),
@@ -254,9 +269,14 @@ function formatDaemonProblems(problems: string[]): string[] {
 // there.
 // ---------------------------------------------------------------------------
 
-const DAEMON_REQUIRED =
-  "dispatchd is not running — this project keeps its tasks in the daemon's " +
-  'database, which only dispatchd may open. Start it with: dispatch serve';
+// A function rather than a constant: the advice depends on whether the
+// desktop app is installed, which can change while this server runs.
+function daemonRequired(): string {
+  return (
+    "dispatchd is not running — this project keeps its tasks in the daemon's " +
+    `database, which only dispatchd may open. ${startDaemonAdvice()}`
+  );
+}
 
 type StoreRoute =
   | {
@@ -287,7 +307,7 @@ async function resolveStoreRoute(rootDir: string): Promise<StoreRoute> {
     };
   }
   if (daemonOwnsStore(projRoot)) {
-    return { via: 'refused', message: DAEMON_REQUIRED };
+    return { via: 'refused', message: daemonRequired() };
   }
   return { via: 'local', configRoot: rootDir };
 }
@@ -576,7 +596,7 @@ async function taskSave(
   const config = loadConfig(route.configRoot);
   const status = resolveStatus(input.status, config);
   const priority = validate(input.priority, PRIORITIES, 'priority');
-  const assignee = validate(input.assignee, ASSIGNEES, 'assignee');
+  const assignee = validateAssignee(input.assignee);
 
   if (input.id === undefined) {
     if (input.title === undefined || input.title.trim() === '') {
@@ -791,7 +811,7 @@ async function taskComment(
   if (daemonOwnsStore(projRoot)) {
     return toolError(
       proxyFailure === null
-        ? DAEMON_REQUIRED
+        ? daemonRequired()
         : `could not record the comment: ${proxyFailure}`
     );
   }
@@ -830,7 +850,9 @@ async function dispatchNote(
     // direct path to fall back to — start one if this process can.
     daemon = (await startDaemon(projRoot))?.info ?? null;
     if (daemon === null) {
-      return toolError('dispatchd not running — cannot add a note');
+      return toolError(
+        `dispatchd not running — cannot add a note. ${startDaemonAdvice()}`
+      );
     }
   }
   // Writes to the brain-dump inbox, which replaced the notes store. The tool's own vocabulary
@@ -901,7 +923,9 @@ async function recordEvidence(
   }
   const daemon = readDaemonFile(projectRoot(rootDir));
   if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
-    return toolError('dispatchd not running — cannot record evidence');
+    return toolError(
+      `dispatchd not running — cannot record evidence. ${startDaemonAdvice()}`
+    );
   }
   try {
     const res = await fetch(
@@ -941,7 +965,9 @@ async function recordMutation(
   }
   const daemon = readDaemonFile(projectRoot(rootDir));
   if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
-    return toolError('dispatchd not running — cannot record a mutation result');
+    return toolError(
+      `dispatchd not running — cannot record a mutation result. ${startDaemonAdvice()}`
+    );
   }
   try {
     const res = await fetch(

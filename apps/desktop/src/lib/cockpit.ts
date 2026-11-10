@@ -22,7 +22,6 @@ import type {
 import { isTerminalRunState } from './runState';
 import type { TaskAttention } from './taskAttention';
 import { assigneeRef } from './taskDisplay';
-import type { RowGroup } from './virtualRows';
 
 // The Cockpit's three lanes, derived purely from data the app already caches: the task
 // list, the run list, the attention map and the live fan-out sessions. No fetch of its own,
@@ -473,6 +472,14 @@ export function buildCockpit(input: CockpitInput): CockpitLanes {
   }
 
   return { ready, flight, needs };
+}
+
+/** One group of a grouped list: its header and the items under it. */
+interface RowGroup<H, I> {
+  key: string;
+  /** `null` draws no header row — a single ungrouped run of items. */
+  header: H | null;
+  items: readonly I[];
 }
 
 /** A roster group's header: one person (or the agents/nobody bucket). */

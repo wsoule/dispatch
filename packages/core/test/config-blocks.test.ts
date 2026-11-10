@@ -202,11 +202,11 @@ describe('updateConfig stream switches', () => {
       overseer: { stream: 'narration' },
       runs: { stream: 'off' },
     });
-    expect(cfg.overseer).toEqual({ stream: 'narration' });
+    expect(cfg.overseer).toEqual({ stream: 'narration', autonomy: 'balanced' });
     expect(cfg.runs).toEqual({ stream: 'off' });
     expect(loadConfig(dir).overseer?.stream).toBe('narration');
     const cleared = updateConfig(dir, { overseer: { stream: null } });
-    expect(cleared.overseer).toEqual({ stream: 'live' });
+    expect(cleared.overseer).toEqual({ stream: 'live', autonomy: 'balanced' });
     expect(cleared.runs).toEqual({ stream: 'off' });
     // The emptied block goes, rather than reading back as `overseer: {}`.
     expect(read(dir)).toBe('runs:\n  stream: off\n');

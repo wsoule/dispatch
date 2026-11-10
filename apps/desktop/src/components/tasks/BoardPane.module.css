@@ -1,0 +1,13 @@
+/* The board's track (components/tasks/BoardPane.tsx): the focusable
+   region around the board that takes j/k. Focus moves to the cards, so
+   the track's own ring is drawn inset, inside the pane's clip. */
+.track {
+  flex: 1;
+  min-height: 0;
+  padding: var(--s-3) var(--s-4);
+}
+
+.track:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}

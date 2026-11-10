@@ -1,6 +1,6 @@
 ---
 import AppDemo from './AppDemo.astro';
-import { DMG, RELEASES } from '../../lib/downloads';
+import { DMG, RELEASES, WEB_APP } from '../../lib/downloads';
 import InstallCommand from './InstallCommand.astro';
 ---
 
@@ -13,14 +13,15 @@ import InstallCommand from './InstallCommand.astro';
           The shared board your team’s agents work from, on your own machines. Plan in one
           sentence, watch agents work through it, and see exactly what stands between you and v1.
         </p>
-        <a class="new" href="#two-views"><b>New</b> Overseer attachments <span aria-hidden="true">→</span></a>
+        <a class="new" href="#web"><b>New</b> Dispatch on the web <span aria-hidden="true">→</span></a>
       </div>
       <div class="actions" id="install">
         <a class="btn btn-primary" href={DMG.arm}>Download for Mac</a>
         <InstallCommand />
       </div>
       <p class="alt">
-        Apple Silicon. <a href={DMG.x64}>Intel Mac</a> or <a href={RELEASES}>Linux</a>.
+        Apple Silicon. <a href={DMG.x64}>Intel Mac</a> or <a href={RELEASES}>Linux</a>. Or{' '}
+        <a href={WEB_APP}>open the web app</a>.
       </p>
     </div>
   </div>

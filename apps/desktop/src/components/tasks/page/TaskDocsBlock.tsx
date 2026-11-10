@@ -1,4 +1,5 @@
 import type { ApiClient, DocLinking } from '@dispatch/client';
+import { Button, TaskDetailSection } from '@dispatch/ui';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 
@@ -10,9 +11,7 @@ import {
 } from '../../../hooks/useDocs';
 import { describeError } from '../../../lib/actionFeedback';
 import { docBadges, filterDocs } from '../../../lib/docs';
-import { MainSection } from '../detail/MainSection';
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
+import styles from './pageBlocks.module.css';
 
 // How many docs the Link doc picker lists for its query.
 const PICKER_ROWS = 8;
@@ -102,22 +101,17 @@ export function TaskDocsBlock({
     <li key={`${label}-${l.doc.id}`}>
       <button
         type="button"
-        className="flex h-7 w-full min-w-0 items-center gap-2 text-left text-[13px] hover:underline"
+        className={styles.docRow}
         onClick={() => onOpenDoc(l.doc.id)}
       >
-        <span className="text-muted-foreground shrink-0 text-[12px]">
-          {label}
-        </span>
-        <span className="truncate">{l.doc.title}</span>
+        <span className={styles.docRole}>{label}</span>
+        <span className={styles.docTitle}>{l.doc.title}</span>
         {docBadges(l.doc)
           .filter(
             (b) => b === 'personal' || b === 'unreviewed' || b === 'accepted'
           )
           .map((b) => (
-            <span
-              key={b}
-              className="shrink-0 rounded bg-[var(--color-muted)] px-1 text-[10px]"
-            >
+            <span key={b} className={styles.docBadge}>
               {b}
             </span>
           ))}
@@ -125,19 +119,19 @@ export function TaskDocsBlock({
     </li>
   );
   return (
-    <MainSection
+    <TaskDetailSection
       title="Docs"
-      trailing={
+      meta={
         mayAct ? (
           <>
             {!g.specs.some((l) => l.doc.scope === 'team') && (
-              <Button size="xs" variant="ghost" onClick={newSpec}>
+              <Button size="sm" variant="quiet" onClick={newSpec}>
                 New spec
               </Button>
             )}
             <Button
-              size="xs"
-              variant="ghost"
+              size="sm"
+              variant="quiet"
               aria-expanded={picking}
               onClick={() => setPicking((p) => !p)}
             >
@@ -158,24 +152,22 @@ export function TaskDocsBlock({
         />
       )}
       {error !== null && (
-        <p role="alert" className="text-destructive text-[12px]">
+        <p role="alert" className={styles.docError} data-tone="danger">
           {error}
         </p>
       )}
       {linkingError !== null && (
-        <p className="text-muted-foreground text-[12px]">
-          {describeError(linkingError)}
-        </p>
+        <p className={styles.docNote}>{describeError(linkingError)}</p>
       )}
       {linking.length > 0 && (
-        <ul className="flex flex-col">
+        <ul className={styles.docList}>
           {g.specs.map((l) => row(l, 'spec'))}
           {g.plans.map((l) => row(l, 'plan'))}
           {g.context.map((l) => row(l, 'context'))}
           {g.fromParents.map((l) => row(l, `from parent · ${l.rel}`))}
         </ul>
       )}
-    </MainSection>
+    </TaskDetailSection>
   );
 }
 
@@ -224,23 +216,24 @@ function DocPicker({
     matches.push(d);
   }
   return (
-    <div className="flex flex-col gap-1">
-      <Input
+    <div className={styles.docPicker}>
+      <input
         ref={field}
+        className="input"
         aria-label="Find a doc"
         placeholder="Find a doc…"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
       />
-      <ul className="flex flex-col">
+      <ul className={styles.docList}>
         {matches.map((d) => (
           <li key={d.id}>
             <button
               type="button"
-              className="flex h-7 w-full min-w-0 items-center text-left text-[13px] hover:underline"
+              className={styles.docRow}
               onClick={() => onPick(d.id)}
             >
-              <span className="truncate">{d.title}</span>
+              <span className={styles.docTitle}>{d.title}</span>
             </button>
           </li>
         ))}

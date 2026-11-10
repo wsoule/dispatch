@@ -1,6 +1,8 @@
 import type {
   ActorContext,
+  DifficultyJudgment,
   FloorCheck,
+  GateRuling,
   PolicyGate,
   PolicyRuling,
   TaskRisk,
@@ -10,6 +12,10 @@ import {
   consultPolicy,
   describeFloorHold,
   describePolicyAuthorization,
+  DIFFICULTY_LIFT_GATES,
+  difficultyEligibility,
+  difficultyPolicy,
+  effectiveRung,
   loadConfig,
   projectPolicy,
 } from '@dispatch-foo/core';
@@ -24,6 +30,7 @@ import {
   deletesOutsideDeclaredWrites,
   scopeRequestEscapesRepo,
 } from './floor.js';
+import { autoLandSafetyGate } from './judgments/difficulty.js';
 import type { LedgerStorePort } from './ledger.js';
 import type { FixLoopState } from './orchestrator/fixLoop.js';
 import type { RunMeta } from './orchestrator/types.js';
@@ -168,7 +175,10 @@ interface PolicyEngineRuns {
     requestId: string
   ): { requestId: string; toolName: string; input: unknown } | undefined;
   /** The run's working diff against its base — what auto-merge would land. */
-  diff(runId: string): { files: { path: string; status: string }[] };
+  diff(runId: string): {
+    files: { path: string; status: string }[];
+    patch: string;
+  };
 }
 
 interface PolicyEngineFixLoop {
@@ -196,6 +206,7 @@ interface PolicyEngineTasks {
       risk: TaskRisk;
       writes: string[];
       fixLoop?: boolean;
+      labels?: string[];
     };
   } | null;
 }
@@ -212,6 +223,9 @@ export interface PolicyEngineContext {
   actorContext: Pick<ActorContext, 'humanRef'>;
   /** See ApprovalFloor. Absent: the approval gate never auto-allows. */
   approvalFloor?: ApprovalFloor;
+  /** The difficulty evaluator (judgments/difficulty.ts) for one task. Absent:
+   *  the difficulty lift never applies and every gate is the rung's alone. */
+  judgeDifficulty?: (taskId: string) => Promise<DifficultyJudgment | null>;
   /** The Activity half of every receipt (policyActivityAppender). Optional
    *  so the ledger half still lands where no task store is wired. */
   appendActivity?: (taskId: string, text: string) => void;
@@ -261,6 +275,14 @@ export function describeToolInput(input: unknown): string {
  * with an unreviewed budget-exhausted run gets no auto-ignite or auto-retry,
  * and a run whose diff deletes outside its declared writes gets no
  * auto-enqueue — at every rung, with a ledger receipt saying why.
+ *
+ * The difficulty lift (`policy.difficulty.autoLand`, core/policy.ts
+ * difficultyEligibility) demotes the verify-retry and merge gates for ONE
+ * task when the rung would block them: a routine task the evaluator judges at
+ * or below the threshold gets its review loop and merge hand-off automated.
+ * A lifted merge must also pass autoLandSafetyGate (small diff, proven green)
+ * — a run that fails it is held with a receipt naming the check. A per-gate
+ * `block` pin beats the lift, as does a task's `no-auto-land` label.
  */
 export class PolicyEngine {
   // The failed-result timestamp each task's verify retry was dispatched for,
@@ -272,6 +294,14 @@ export class PolicyEngine {
   // `fixloop.changed` broadcasts of one completed loop enqueue (and record)
   // once, not per event.
   private readonly enqueuedRuns = new Set<string>();
+  // Runs whose merge decision is awaiting a difficulty judgment, so a second
+  // broadcast during the await does not judge and enqueue the run twice.
+  private readonly enqueuing = new Set<string>();
+
+  // Difficulty safety-gate holds already recorded, keyed `<run id>:<reason>`,
+  // so one held run gets one receipt per reason however often its loop
+  // re-broadcasts.
+  private readonly recordedDifficultyHolds = new Set<string>();
 
   // Floor holds already written to the ledger, keyed `<check>:<run id>`, so a
   // re-broadcast of the same signal records the hold once, not per event.
@@ -325,6 +355,65 @@ export class PolicyEngine {
 
   private riskOf(taskId: string): TaskRisk | undefined {
     return this.ctx.store.get(taskId)?.meta.risk;
+  }
+
+  // The rung's ruling on `gate` for a task, or — when the rung blocks — the
+  // difficulty lift's. Async only for the judgment: a gate the rung already
+  // demotes never asks the evaluator.
+  private async rulingFor(
+    taskId: string,
+    gate: PolicyGate
+  ): Promise<GateRuling> {
+    const task = this.ctx.store.get(taskId);
+    const ruling = consultProjectPolicy(
+      this.ctx.rootDir,
+      gate,
+      task?.meta.risk
+    );
+    if (ruling.mode === 'auto' || task === null) return ruling;
+    return this.difficultyLift(taskId, gate, task.meta);
+  }
+
+  // The lift itself. Fails closed like consultProjectPolicy: an unreadable
+  // config, a missing evaluator, a `block` pin on the gate, or any reason
+  // difficultyEligibility gives leaves the gate blocking.
+  private async difficultyLift(
+    taskId: string,
+    gate: PolicyGate,
+    meta: { risk: TaskRisk; labels?: string[] }
+  ): Promise<GateRuling> {
+    const block: GateRuling = { mode: 'block' };
+    const judge = this.ctx.judgeDifficulty;
+    if (judge === undefined || !DIFFICULTY_LIFT_GATES.includes(gate)) {
+      return block;
+    }
+    let policy;
+    try {
+      policy = projectPolicy(loadConfig(this.ctx.rootDir));
+    } catch {
+      return block;
+    }
+    // A human's per-gate `block` pin means "always ask here", for easy work too.
+    if (policy.gates[gate] === 'block') return block;
+    const difficulty = difficultyPolicy(policy);
+    // Checked ahead of the judgment so a project with the lift off never
+    // spends a request on it.
+    if (!difficulty.autoLand) return block;
+    const eligibility = difficultyEligibility(
+      difficulty,
+      'land',
+      meta,
+      await judge(taskId)
+    );
+    if (!eligibility.eligible) return block;
+    return {
+      mode: 'auto',
+      gate,
+      rung: effectiveRung(policy, meta.risk),
+      authorizedBy: 'difficulty',
+      judgment: eligibility.judgment,
+      threshold: eligibility.threshold,
+    };
   }
 
   // A tool call referred to a human: at rung `approval` the daemon answers its
@@ -396,13 +485,27 @@ export class PolicyEngine {
   // capped one is waiting on a ruling the policy must not bypass.
   private async onVerificationChanged(taskId: string): Promise<void> {
     const result = this.ctx.verificationRunner.getLatestResult(taskId);
-    if (result === null || result.pass) return;
+    if (result === null) return;
+    if (result.pass) {
+      await this.onVerifiedGreen(taskId);
+      return;
+    }
     await this.igniteFixLoop(
       taskId,
       this.operatorOfRun(result.runId),
       `Verify retry auto-started for ${taskId}`,
       `verification run ${result.runId} failed; the fix loop was ignited in place of a human review request, and its round cap still bounds the retries`
     );
+  }
+
+  // A green verification over a completed loop: decide the merge again. The
+  // difficulty safety gate holds a run whose verification was red or stale,
+  // and the re-verify that clears it lands here; a run already enqueued is a
+  // no-op (enqueueForMerge's own guard).
+  private async onVerifiedGreen(taskId: string): Promise<void> {
+    if (this.ctx.fixLoop.get(taskId)?.state !== 'complete') return;
+    const latest = this.latestFinishedExecuteRun(taskId);
+    if (latest !== null) await this.enqueueForMerge(latest);
   }
 
   // The shared ignition behind both rung-3 triggers. A task that opted out of
@@ -416,11 +519,7 @@ export class PolicyEngine {
   ): Promise<void> {
     const task = this.ctx.store.get(taskId);
     if (task === null || task.meta.fixLoop === false) return;
-    const ruling = consultProjectPolicy(
-      this.ctx.rootDir,
-      'verify-retry',
-      task.meta.risk
-    );
+    const ruling = await this.rulingFor(taskId, 'verify-retry');
     if (ruling.mode !== 'auto') return;
     if (this.budgetFloorHolds(taskId, 'fix loop auto-ignite')) return;
     if (this.ctx.fixLoop.get(taskId) !== null) return;
@@ -446,7 +545,7 @@ export class PolicyEngine {
       await this.retryVerification(taskId, result, loop.operator ?? null);
     }
     const latest = this.latestFinishedExecuteRun(taskId);
-    if (latest !== null) this.enqueueForMerge(latest);
+    if (latest !== null) await this.enqueueForMerge(latest);
   }
 
   // `operator` is the completed loop's: the retry follows its last round.
@@ -455,11 +554,7 @@ export class PolicyEngine {
     failed: VerificationResult,
     operator: string | null
   ): Promise<void> {
-    const ruling = consultProjectPolicy(
-      this.ctx.rootDir,
-      'verify-retry',
-      this.riskOf(taskId)
-    );
+    const ruling = await this.rulingFor(taskId, 'verify-retry');
     if (ruling.mode !== 'auto') return;
     if (this.budgetFloorHolds(taskId, 'verification auto-retry')) return;
     if (this.retriedVerifications.get(taskId) === failed.createdAt) return;
@@ -513,15 +608,37 @@ export class PolicyEngine {
     );
   }
 
-  private enqueueForMerge(meta: RunMeta): void {
-    if (this.enqueuedRuns.has(meta.id)) return;
-    const ruling = consultProjectPolicy(
-      this.ctx.rootDir,
-      'merge',
-      this.riskOf(meta.taskId)
-    );
+  private async enqueueForMerge(meta: RunMeta): Promise<void> {
+    if (this.enqueuedRuns.has(meta.id) || this.enqueuing.has(meta.id)) return;
+    this.enqueuing.add(meta.id);
+    try {
+      await this.decideMerge(meta);
+    } finally {
+      this.enqueuing.delete(meta.id);
+    }
+  }
+
+  private async decideMerge(meta: RunMeta): Promise<void> {
+    const ruling = await this.rulingFor(meta.taskId, 'merge');
     if (ruling.mode !== 'auto') return;
-    if (this.deletesOutsideWritesHold(meta)) return;
+    const diff = this.readDiff(meta);
+    if (diff === null || this.deletesOutsideWritesHold(meta, diff.files)) {
+      return;
+    }
+    let gateSummary: string | null = null;
+    if (ruling.authorizedBy === 'difficulty') {
+      const gate = autoLandSafetyGate(
+        difficultyPolicy(projectPolicy(loadConfig(this.ctx.rootDir))),
+        diff,
+        this.freshVerification(meta.taskId),
+        this.hasMergeCheck()
+      );
+      if (!gate.ok) {
+        this.recordDifficultyHold(meta, gate.reason);
+        return;
+      }
+      gateSummary = gate.summary;
+    }
     try {
       this.ctx.mergeQueue.enqueue(meta.id);
     } catch (err) {
@@ -532,12 +649,90 @@ export class PolicyEngine {
       throw err;
     }
     this.enqueuedRuns.add(meta.id);
+    const safety =
+      gateSummary === null
+        ? ''
+        : `; difficulty safety gate passed (${gateSummary})`;
     this.record(
       ruling,
       meta.taskId,
       `Run ${meta.id} auto-enqueued for merge`,
-      `its fix loop completed green and run ${meta.id} entered the merge queue; the queue's existing green check still gates landing`
+      `its fix loop completed green and run ${meta.id} entered the merge queue${safety}; the queue's existing green check still gates landing`
     );
+  }
+
+  // The task's latest verification, but only when it postdates every
+  // implementer and fix round on the task — the runs that commit to the
+  // branch. A result records no head SHA, so one older than the last commit
+  // vouches for code it never checked; the safety gate then reads "never
+  // verified" and leans on the merge-time check, which always runs on the
+  // landing head.
+  private freshVerification(taskId: string): VerificationResult | null {
+    const result = this.ctx.verificationRunner.getLatestResult(taskId);
+    if (result === null) return null;
+    const verifiedAt = Date.parse(result.createdAt);
+    const stale = this.ctx.orchestrator
+      .list()
+      .some(
+        (run) =>
+          run.taskId === taskId &&
+          runKind(run) === 'execute' &&
+          Date.parse(run.updatedAt) > verifiedAt
+      );
+    return stale ? null : result;
+  }
+
+  // Whether the merge queue runs a verify check of its own before landing.
+  private hasMergeCheck(): boolean {
+    try {
+      const config = loadConfig(this.ctx.rootDir);
+      return (
+        (config.verifySteps?.length ?? 0) > 0 ||
+        config.verifyCommand !== undefined
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  // The run's diff, or null — with the run held for a human — when it cannot
+  // be read (no worktree, no snapshot): auto-merge errs toward a needless
+  // question, never a silent landing.
+  private readDiff(meta: RunMeta): {
+    files: { path: string; status: string }[];
+    patch: string;
+  } | null {
+    try {
+      return this.ctx.orchestrator.diff(meta.id);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(
+        `dispatchd: policy merge hook could not read the diff of ${meta.id}, holding it for a human: ${message}`
+      );
+      return null;
+    }
+  }
+
+  // The receipt for a run the difficulty lift would have landed but its
+  // safety gate stopped: a ledger decision and an Activity line naming the
+  // check, once per run, so the human sees why this easy task is waiting.
+  private recordDifficultyHold(meta: RunMeta, reason: string): void {
+    const key = `${meta.id}:${reason}`;
+    if (this.recordedDifficultyHolds.has(key)) return;
+    this.recordedDifficultyHolds.add(key);
+    const title = `Run ${meta.id} held from difficulty auto-land`;
+    const detail = `${reason}, so policy did not enqueue it — the task was judged easy enough to land unattended, but its change must also be small and proven green`;
+    const task = this.ctx.store.get(meta.taskId);
+    this.ctx.ledgerStore.add({
+      milestoneId: task?.meta.parent ?? null,
+      sourceTaskId: meta.taskId,
+      kind: 'decision',
+      title,
+      detail,
+      authoredBy: this.ctx.actorContext.humanRef,
+    });
+    this.ctx.events.broadcast({ type: 'ledger.changed' });
+    this.ctx.appendActivity?.(meta.taskId, `[policy] ${title} — ${reason}`);
   }
 
   // The floor's budget-cap member on the spend paths: while the task has a run
@@ -561,23 +756,13 @@ export class PolicyEngine {
 
   // The floor's delete-outside-writes member on auto-merge: a run whose diff
   // deletes a file no declared write covers never enters the queue on policy's
-  // say-so. A diff that cannot be read (no worktree, no snapshot) is held as
-  // well — the floor errs toward a needless question, never a silent landing.
-  private deletesOutsideWritesHold(meta: RunMeta): boolean {
+  // say-so. (A diff that cannot be read never gets here: see readDiff.)
+  private deletesOutsideWritesHold(
+    meta: RunMeta,
+    files: { path: string; status: string }[]
+  ): boolean {
     const writes = this.ctx.store.get(meta.taskId)?.meta.writes ?? [];
-    let deleted: string[];
-    try {
-      deleted = deletesOutsideDeclaredWrites(
-        writes,
-        this.ctx.orchestrator.diff(meta.id).files
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(
-        `dispatchd: policy merge hook could not read the diff of ${meta.id}, holding it for a human: ${message}`
-      );
-      return true;
-    }
+    const deleted = deletesOutsideDeclaredWrites(writes, files);
     if (deleted.length === 0) return false;
     this.recordFloorHold(
       'delete-outside-writes',
@@ -619,7 +804,7 @@ export class PolicyEngine {
   // instruction the policy is, with the authorization line marking it as
   // auto-decided; findings and evidence untouched.
   private record(
-    ruling: Extract<PolicyRuling, { mode: 'auto' }>,
+    ruling: Extract<GateRuling, { mode: 'auto' }>,
     taskId: string,
     title: string,
     detail: string

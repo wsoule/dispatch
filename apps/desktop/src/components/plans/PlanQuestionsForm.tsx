@@ -1,15 +1,15 @@
 import type { PlannerQuestion } from '@dispatch/client';
-import { MessageCircleQuestion } from 'lucide-react';
+import { Button, cx, TextArea } from '@dispatch/ui';
 import { useState } from 'react';
 
+import { DecisionCard } from '../gates/DecisionCard';
 import { Markdown } from '../runs/Markdown';
+import styles from './PlanQuestionsForm.module.css';
 import {
   composeAnswers,
   questionsSignature,
   unansweredCount,
 } from '@/lib/planQuestions';
-import { Button } from '@/ui/button';
-import { Textarea } from '@/ui/textarea';
 
 interface PlanQuestionsFormProps {
   questions: PlannerQuestion[];
@@ -20,7 +20,9 @@ interface PlanQuestionsFormProps {
 }
 
 /** The planner's batch of clarifying questions, answered together in local state and sent
- * as one composed follow-up — "Skip" sends that same composition with nothing filled in. */
+ * as one composed follow-up — "Skip" sends that same composition with nothing filled in.
+ * A warning-toned DecisionCard (it waits on you) with no radio answers: each question's
+ * option buttons and answer box sit in its children, Skip and Send in its actions. */
 export function PlanQuestionsForm({
   questions,
   disabled,
@@ -62,22 +64,48 @@ export function PlanQuestionsForm({
   const busy = disabled || sending;
 
   return (
-    <div className="bg-state-waiting-surface rounded-card flex flex-col gap-3 border-[0.5px] border-(--state-waiting-edge) px-3 py-2.5">
-      <div className="text-state-waiting flex items-center gap-1.5 text-[12px] font-medium">
-        <MessageCircleQuestion className="size-3.5 shrink-0" />
-        The planner is asking you
-      </div>
+    <DecisionCard
+      tone="warning"
+      question="The planner is asking you"
+      actions={
+        <>
+          <Button
+            type="button"
+            variant="quiet"
+            size="sm"
+            disabled={busy}
+            onClick={() => void send({})}
+          >
+            Skip
+          </Button>
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            disabled={busy}
+            onClick={() => void send(answers)}
+          >
+            {sending
+              ? 'Sending…'
+              : remaining > 0
+                ? `Send answers (${questions.length - remaining}/${questions.length})`
+                : 'Send answers'}
+          </Button>
+        </>
+      }
+    >
       {questions.map((q) => (
-        <div key={q.id} className="flex flex-col gap-1.5">
-          <Markdown content={q.question} className="text-[13px]" />
+        <div key={q.id} className={styles.question}>
+          <Markdown content={q.question} className={styles.prompt} />
           {q.options.length > 0 && (
-            <div className="flex flex-wrap gap-2">
+            <div className={styles.options}>
               {q.options.map((option) => (
                 <Button
                   key={option}
                   type="button"
-                  variant={answers[q.id] === option ? 'default' : 'secondary'}
+                  variant="secondary"
                   size="sm"
+                  aria-pressed={answers[q.id] === option}
                   disabled={busy}
                   onClick={() => setAnswer(q.id, option)}
                 >
@@ -86,7 +114,7 @@ export function PlanQuestionsForm({
               ))}
             </div>
           )}
-          <Textarea
+          <TextArea
             rows={1}
             value={answers[q.id] ?? ''}
             onChange={(e) => setAnswer(q.id, e.target.value)}
@@ -97,36 +125,18 @@ export function PlanQuestionsForm({
             }
             disabled={busy}
             aria-label={q.question}
-            className="min-h-0 resize-y"
           />
         </div>
       ))}
       {error !== null && (
-        <div className="text-state-failed text-[12px]">{error}</div>
+        <div
+          role="alert"
+          className={cx(styles.error, 'toneText')}
+          data-tone="danger"
+        >
+          {error}
+        </div>
       )}
-      <div className="flex justify-end gap-2">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          disabled={busy}
-          onClick={() => void send({})}
-        >
-          Skip
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          disabled={busy}
-          onClick={() => void send(answers)}
-        >
-          {sending
-            ? 'Sending…'
-            : remaining > 0
-              ? `Send answers (${questions.length - remaining}/${questions.length})`
-              : 'Send answers'}
-        </Button>
-      </div>
-    </div>
+    </DecisionCard>
   );
 }

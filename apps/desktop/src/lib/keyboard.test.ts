@@ -139,6 +139,11 @@ describe('resolveGlobalKeyCommand', () => {
     expect(resolveGlobalKeyCommand(key('c'), armed)).toBe('goto-control-room');
     expect(resolveGlobalKeyCommand(key('a'), armed)).toBe('goto-overseer');
     expect(resolveGlobalKeyCommand(key('m'), armed)).toBe('goto-threads');
+    expect(resolveGlobalKeyCommand(key('l'), armed)).toBe('goto-timeline');
+    expect(resolveGlobalKeyCommand(key('q'), armed)).toBe('goto-landing');
+    // A second `g` completes the Graph chord rather than re-arming the prefix.
+    expect(resolveGlobalKeyCommand(key('g'), armed)).toBe('goto-graph');
+    expect(resolveChordPrefix(key('g'), armed)).toBeNull();
     // A miss is nothing — not the key's own bare meaning.
     expect(resolveGlobalKeyCommand(key('['), armed)).toBeNull();
     expect(resolveGlobalKeyCommand(key('z'), armed)).toBeNull();
@@ -340,6 +345,53 @@ describe('isTypingTagName', () => {
     expect(isTypingTagName('BUTTON', false)).toBe(false);
     expect(isTypingTagName('DIV', false)).toBe(false);
   });
+
+  // A checkbox (a review criterion) or a button input takes no letters, so with its type
+  // given it is not typing; radio and range keep their arrow keys, and an input whose type
+  // is not given counts as before.
+  test('an INPUT counts by its type when one is given', () => {
+    expect(isTypingTagName('INPUT', false, 'checkbox')).toBe(false);
+    expect(isTypingTagName('INPUT', false, 'button')).toBe(false);
+    expect(isTypingTagName('INPUT', false, 'submit')).toBe(false);
+    expect(isTypingTagName('INPUT', false, 'text')).toBe(true);
+    expect(isTypingTagName('INPUT', false, 'search')).toBe(true);
+    expect(isTypingTagName('INPUT', false, 'radio')).toBe(true);
+    expect(isTypingTagName('INPUT', false, 'range')).toBe(true);
+    expect(isTypingTagName('INPUT', false)).toBe(true);
+  });
+
+  // A native <select>'s typeahead jumps to the option starting with the letter pressed
+  // (SnippetComposer still has one), so a focused select is typing: a bare `g` there picks
+  // an option instead of arming the global chord.
+  test('is true for a focused SELECT, so bare keys stay with its typeahead', () => {
+    expect(isTypingTagName('SELECT', false)).toBe(true);
+    const inSelect: GlobalKeyboardContext = {
+      ...baseGlobalCtx,
+      isTyping: isTypingTagName('SELECT', false),
+    };
+    expect(resolveChordPrefix(key('g'), inSelect)).toBeNull();
+    expect(resolveGlobalKeyCommand(key('g'), inSelect)).toBeNull();
+    expect(resolveGlobalKeyCommand(key('c'), inSelect)).toBeNull();
+    expect(resolveGlobalKeyCommand(key('['), inSelect)).toBeNull();
+    expect(resolveGlobalKeyCommand(key('1'), inSelect)).toBeNull();
+  });
+
+  test('a focused SELECT still lets Escape and modifier chords through', () => {
+    const inSelect: GlobalKeyboardContext = {
+      ...baseGlobalCtx,
+      isTyping: isTypingTagName('SELECT', false),
+    };
+    expect(resolveGlobalKeyCommand(key('Escape'), inSelect)).toBe('escape');
+    expect(resolveGlobalKeyCommand(key('k', { metaKey: true }), inSelect)).toBe(
+      'open-palette'
+    );
+    expect(resolveGlobalKeyCommand(key(',', { metaKey: true }), inSelect)).toBe(
+      'goto-settings'
+    );
+    expect(resolveGlobalKeyCommand(key('2', { ctrlKey: true }), inSelect)).toBe(
+      'goto-2'
+    );
+  });
 });
 
 describe('isInteractiveControlTagName', () => {
@@ -402,7 +454,7 @@ describe('navigation shortcuts', () => {
   });
 });
 
-describe('Two views shortcuts', () => {
+describe('the place shortcuts', () => {
   test('⌘, opens Settings, even while typing', () => {
     expect(
       resolveGlobalKeyCommand(key(',', { metaKey: true }), baseGlobalCtx)
@@ -418,5 +470,99 @@ describe('Two views shortcuts', () => {
   test('g o goes to Overseer, like g a', () => {
     const armed = { ...baseGlobalCtx, pendingPrefix: 'g' as const };
     expect(resolveGlobalKeyCommand(key('o'), armed)).toBe('goto-overseer');
+  });
+});
+
+describe('Go to file (⌘P on macOS, Ctrl+P elsewhere)', () => {
+  const mac: GlobalKeyboardContext = {
+    ...baseGlobalCtx,
+    isApplePlatform: true,
+  };
+  const other: GlobalKeyboardContext = {
+    ...baseGlobalCtx,
+    isApplePlatform: false,
+  };
+
+  test('off macOS, Meta+P and Ctrl+P resolve to quick-open, with Shift (P) too', () => {
+    for (const ctx of [other, baseGlobalCtx]) {
+      expect(resolveGlobalKeyCommand(key('p', { metaKey: true }), ctx)).toBe(
+        'quick-open'
+      );
+      expect(resolveGlobalKeyCommand(key('p', { ctrlKey: true }), ctx)).toBe(
+        'quick-open'
+      );
+      expect(resolveGlobalKeyCommand(key('P', { ctrlKey: true }), ctx)).toBe(
+        'quick-open'
+      );
+    }
+  });
+
+  test('on macOS, Cmd+P resolves to quick-open, with Shift (P) too', () => {
+    expect(resolveGlobalKeyCommand(key('p', { metaKey: true }), mac)).toBe(
+      'quick-open'
+    );
+    expect(resolveGlobalKeyCommand(key('P', { metaKey: true }), mac)).toBe(
+      'quick-open'
+    );
+  });
+
+  // Owner decision 2026-11-03: Ctrl+P on macOS is Cocoa's "previous line" in a
+  // text field, so the app never claims it there, typing or not.
+  test('on macOS, Ctrl+P resolves to nothing, typing or not', () => {
+    for (const isTyping of [false, true]) {
+      for (const k of ['p', 'P']) {
+        expect(
+          resolveGlobalKeyCommand(key(k, { ctrlKey: true }), {
+            ...mac,
+            isTyping,
+          })
+        ).toBeNull();
+      }
+    }
+  });
+
+  // Still resolved over a modal, so the hook claims the key and the
+  // browser's print dialog never opens in its place; App does nothing with it.
+  test('over a modal (the open quick open included) it is blocked, not dropped', () => {
+    for (const mods of [{ metaKey: true }, { ctrlKey: true }]) {
+      expect(
+        resolveGlobalKeyCommand(key('p', mods), { ...other, modalOpen: true })
+      ).toBe('quick-open-blocked');
+    }
+    expect(
+      resolveGlobalKeyCommand(key('p', { metaKey: true }), {
+        ...mac,
+        modalOpen: true,
+      })
+    ).toBe('quick-open-blocked');
+    // macOS Ctrl+P over a modal is the modal's text field's, not the app's.
+    expect(
+      resolveGlobalKeyCommand(key('p', { ctrlKey: true }), {
+        ...mac,
+        modalOpen: true,
+      })
+    ).toBeNull();
+  });
+
+  test('fires while typing, like ⌘K: the Files editor is a text field', () => {
+    expect(
+      resolveGlobalKeyCommand(key('p', { metaKey: true }), {
+        ...mac,
+        isTyping: true,
+      })
+    ).toBe('quick-open');
+    for (const k of ['p', 'P']) {
+      expect(
+        resolveGlobalKeyCommand(key(k, { ctrlKey: true }), {
+          ...other,
+          isTyping: true,
+        })
+      ).toBe('quick-open');
+    }
+  });
+
+  test('a bare "p" is nothing at the global layer', () => {
+    expect(resolveGlobalKeyCommand(key('p'), baseGlobalCtx)).toBeNull();
+    expect(resolveGlobalKeyCommand(key('P'), baseGlobalCtx)).toBeNull();
   });
 });

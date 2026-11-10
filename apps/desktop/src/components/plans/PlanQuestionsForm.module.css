@@ -1,0 +1,24 @@
+/* The planner's clarifying questions (PlanQuestionsForm.tsx) inside a
+   warning-toned DecisionCard, which draws the tint, its edge and the
+   heading: here only each question, its option buttons and answer box, and
+   the send error. */
+.question {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.prompt {
+  font-size: var(--fs);
+  color: var(--text);
+}
+
+.options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.error {
+  font-size: var(--fs-xs);
+}

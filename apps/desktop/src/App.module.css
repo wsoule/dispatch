@@ -1,0 +1,41 @@
+/* The window frame behind the gate and shell slots: the page colour under everything. */
+.frame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* App's own frames around a full-view state (a resolution error, loading the project, a page
+   this window may not open): the empty state centred in the space it fills. */
+.centred {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  height: 100%;
+  padding: var(--s-6);
+}
+
+/* The resolution error's icon in the danger tone its data-tone sets. */
+.alertIcon {
+  color: var(--tone);
+}
+
+/* A hosted view's guard page (daemon unavailable, operator only): the back
+   chip on top, the guard filling the rest. */
+.hostedPage {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.hostedHead {
+  flex-shrink: 0;
+  padding: var(--s-2) var(--s-4) 0;
+}

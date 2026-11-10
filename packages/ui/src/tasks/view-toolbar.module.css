@@ -1,0 +1,150 @@
+/* Gr8r's list toolbar (.toolbar): one 44px row with a soft rule under it,
+   a 26px search field (SearchField at size sm, search-field.module.css:
+   a leading icon and a --control-border edge, 3:1), then the host's ghost
+   triggers and, at the right edge, its trailing actions (.end sits inside
+   .controls, pushed right by its auto margin). With no search (.noSearch)
+   the controls are the first cell, starting at the left gutter, and .end
+   is the bar's own cell after them: still pushed right on their row, and
+   wrapping under them (still at the right) when the row is too narrow for
+   both. The horizontal padding is the page gutter; a host that places the
+   bar inside a padded column sets --view-toolbar-gutter (0 there). While
+   busy, a 2px accent rule runs along the bottom edge. */
+
+/* flex-shrink 0: in a host's flex column (a page that owns its scroller
+   under the bar) the bar keeps its full height when its end actions wrap
+   to a second row, instead of being squeezed and letting them spill over
+   the list below. */
+.bar {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-height: 44px;
+  padding: 8px var(--view-toolbar-gutter, var(--gutter));
+  border-bottom: 1px solid var(--border);
+}
+
+.search {
+  position: relative;
+  display: flex;
+  flex: 0 1 220px;
+  align-items: center;
+  min-width: 140px;
+}
+
+.controls {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.end {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+/* The count of set filters on the Filter trigger: an accent pill. */
+.badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  line-height: 1;
+  color: var(--on-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Loading: an accent segment sliding along the bottom edge, for people who
+   have not asked for less motion; the static fallback is a fainter rule
+   along the whole edge. */
+.progress {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.progress::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  background: var(--accent);
+  opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .progress::after {
+    width: 30%;
+    opacity: 1;
+    animation: slide 1.1s var(--ease) infinite;
+  }
+}
+
+@keyframes slide {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(340%);
+  }
+}
+
+/* Phone: the search takes the first row; the controls keep one line and
+   scroll sideways under it, the trailing actions with them (no scrollbar
+   drawn, no page scroll). Without a search the controls take the first
+   row and scroll the same way, and the trailing actions take a row of
+   their own under them, from the left edge: a sideways scroller draws no
+   scrollbar, so actions inside it would sit off-screen with nothing to
+   say they are there. A scroller clips at its padding edge, so
+   the row pads 4px round its controls and takes the room back with a
+   matching negative margin (nothing moves): a focus ring standing outside
+   a control (3px, or the segmented control's 2px past its track) is drawn
+   whole. */
+@media (width <= 640px) {
+  .search {
+    flex: 1 1 100%;
+  }
+
+  .controls {
+    flex: 1 1 100%;
+    margin: -4px;
+    padding: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    overscroll-behavior-x: contain;
+  }
+
+  .controls::-webkit-scrollbar {
+    display: none;
+  }
+
+  .controls > *,
+  .end > * {
+    flex: none;
+  }
+
+  .noSearch > .end {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    margin-left: 0;
+  }
+}

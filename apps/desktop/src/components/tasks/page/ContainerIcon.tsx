@@ -1,3 +1,4 @@
+import { cx } from '@dispatch/ui';
 import {
   Banknote,
   BookOpen,
@@ -37,7 +38,7 @@ import {
 } from 'lucide-react';
 
 import { containerIconSource } from '../../../lib/containerIcon';
-import { cn } from '@/lib/utils';
+import styles from './pageBlocks.module.css';
 
 const KIND_ICON: Record<string, LucideIcon> = {
   initiative: Target,
@@ -47,7 +48,7 @@ const KIND_ICON: Record<string, LucideIcon> = {
 };
 
 /** A kind's own glyph: a target for an initiative, a box for a project, and so on. */
-export function kindIcon(kind: string): LucideIcon {
+function kindIcon(kind: string): LucideIcon {
   return KIND_ICON[kind] ?? CircleDot;
 }
 
@@ -107,10 +108,7 @@ export function ContainerIcon({
       <span
         aria-hidden
         data-slot="container-icon"
-        className={cn(
-          'inline-flex size-3.5 shrink-0 items-center justify-center text-[12px] leading-none',
-          className
-        )}
+        className={cx(styles.containerEmoji, className)}
       >
         {source.emoji}
       </span>
@@ -122,7 +120,9 @@ export function ContainerIcon({
     <Icon
       aria-hidden
       data-slot="container-icon"
-      className={cn('text-muted-foreground', className)}
+      size={14}
+      strokeWidth={1.8}
+      className={cx(styles.containerGlyph, className)}
       style={color === null ? undefined : { color }}
     />
   );

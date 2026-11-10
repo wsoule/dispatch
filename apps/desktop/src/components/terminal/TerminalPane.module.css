@@ -1,0 +1,75 @@
+/* One terminal pane (TerminalPane.tsx): a bordered box, its toolbar on a sunken strip, the
+   screen under it. The focused pane's edge takes the accent. */
+.pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+
+.pane[data-focused] {
+  border-color: var(--accent);
+}
+
+/* Forced colours drop the accent edge, so the focused pane keeps a heavier
+   border as its cue. */
+@media (forced-colors: active) {
+  .pane[data-focused] {
+    border-width: 2px;
+  }
+}
+
+/* Wraps in a narrow pane (a divider dragged far over), so the session picker
+   keeps a readable width and the buttons move to a second row instead of
+   being clipped by the pane. */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 2px var(--s-2);
+  border-bottom: 1px solid var(--divider);
+  background: var(--sunken);
+}
+
+.session {
+  flex: 1 1 10rem;
+  min-width: min(10rem, 100%);
+}
+
+.state {
+  flex: none;
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+}
+
+.search {
+  padding: var(--s-1) var(--s-2);
+  border-bottom: 1px solid var(--divider);
+}
+
+/* The keyboard surface under the toolbar. The pane clips its overflow, so
+   the focus ring is drawn inset. */
+.surface {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.surface:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  height: 100%;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}

@@ -1,7 +1,7 @@
+import { Button, cx, TextField } from '@dispatch/ui';
 import { useEffect, useId, useRef, useState } from 'react';
 
-import { Button } from '@/ui/button';
-import { Input } from '@/ui/input';
+import styles from './QuestionAnswerForm.module.css';
 
 export interface QuestionAnswerFormProps {
   /** Sends the typed answer; a rejection shows as an error under the box. */
@@ -35,7 +35,7 @@ export function QuestionAnswerForm({
   if (!open) {
     return (
       <div>
-        <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+        <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>
           Answer…
         </Button>
       </div>
@@ -61,37 +61,37 @@ export function QuestionAnswerForm({
   return (
     <form
       data-slot="question-answer"
-      className="flex min-w-0 flex-col gap-1.5"
+      className={styles.form}
       onSubmit={(e) => {
         e.preventDefault();
         void submit();
       }}
     >
-      <label htmlFor={inputId} className="text-muted-foreground text-[12px]">
+      <label htmlFor={inputId} className={styles.label}>
         Answer {asker}
       </label>
-      <div className="flex min-w-0 items-center gap-1.5">
-        <Input
+      <div className={styles.row}>
+        <TextField
           id={inputId}
           ref={inputRef}
           value={body}
-          className="min-w-0 flex-1"
+          size="sm"
+          className={styles.input}
           placeholder="Type your answer"
           onChange={(e) => setBody(e.target.value)}
         />
         <Button
           size="sm"
+          variant="primary"
           type="submit"
-          className="shrink-0"
           disabled={pending || body.trim() === ''}
         >
           {pending ? 'Sending…' : 'Send answer'}
         </Button>
         <Button
           size="sm"
-          variant="ghost"
+          variant="quiet"
           type="button"
-          className="shrink-0"
           onClick={() => {
             setOpen(false);
             setError(null);
@@ -101,7 +101,11 @@ export function QuestionAnswerForm({
         </Button>
       </div>
       {error !== null && (
-        <p role="alert" className="text-destructive text-[12px] break-words">
+        <p
+          role="alert"
+          className={cx(styles.error, 'toneText')}
+          data-tone="danger"
+        >
           {error}
         </p>
       )}

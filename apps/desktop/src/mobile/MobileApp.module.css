@@ -1,0 +1,93 @@
+/* Layout for the phone app: one narrow column that respects the notch and
+   home-indicator insets. Colours come from @dispatch/ui's tokens. */
+.shell {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 0 auto;
+  max-width: 36rem;
+  min-height: 100dvh;
+  padding: max(16px, env(safe-area-inset-top)) 16px
+    max(16px, env(safe-area-inset-bottom));
+}
+
+.heading {
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.pairHeading {
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+  padding-top: 32px;
+}
+
+.muted {
+  color: var(--text-3);
+  font-size: 14px;
+  margin: 0;
+}
+
+.small {
+  font-size: 12px;
+}
+
+.right {
+  text-align: right;
+}
+
+.error {
+  color: var(--red);
+  font-size: 14px;
+  margin: 0;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.header {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.footer {
+  display: flex;
+  justify-content: center;
+  margin-top: auto;
+}
+
+.end {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.question {
+  color: var(--text);
+  font-size: 15px;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

@@ -8,12 +8,15 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react';
 import { afterEach, expect, mock, test } from 'bun:test';
 
 const openUrl = mock(() => Promise.resolve());
-// bun replaces the whole module, so stub the one export AgentStep uses.
-void mock.module('../../lib/tauri', () => ({ openUrl }));
+// bun replaces the whole module for every file in the run, so keep the real exports
+// (isTauri and the rest, which other files import) and stub the one AgentStep calls.
+const realTauri = await import('../../lib/tauri');
+void mock.module('../../lib/tauri', () => ({ ...realTauri, openUrl }));
 
 const { AgentStep } = await import('./AgentStep');
 
@@ -120,6 +123,8 @@ function setup(r = report()) {
       })
     ),
     sendTerminalInput: mock(() => Promise.resolve()),
+    // CommandTerminal ends a still-running command when it unmounts.
+    closeTerminal: mock((_id: string) => Promise.resolve()),
   };
   const onSetDefault = mock((_id: string) => Promise.resolve());
   const onContinue = mock(() => {});
@@ -381,5 +386,153 @@ test('re-checks the machine after an install command exits', async () => {
   await waitFor(() => expect(client.refreshSetup).toHaveBeenCalled());
   await waitFor(() =>
     expect(client.fetchSetup.mock.calls.length).toBeGreaterThan(1)
+  );
+});
+
+test('the step is a section named by its h2, with a toned status glyph', async () => {
+  setup();
+  const section = await screen.findByRole('region', { name: 'Your AI agent' });
+  const heading = within(section).getByRole('heading', {
+    level: 2,
+    name: 'Your AI agent',
+  });
+  expect(section.getAttribute('aria-labelledby')).toBe(heading.id);
+  const glyph = within(section).getByRole('img', { name: 'Needs you' });
+  expect(glyph.getAttribute('data-tone')).toBe('warning');
+});
+
+test('Install and Sign in sit beside the card, outside the radio name', async () => {
+  setup();
+  const radio = await screen.findByRole('radio', { name: 'Use Claude Code' });
+  expect(radio.getAttribute('aria-label')).toBe('Use Claude Code');
+  expect(radio.closest('label')?.textContent).not.toContain('Sign in');
+  // The state chip and the buttons are real controls, not part of any radio.
+  const signIn = screen.getByRole('button', { name: 'Sign in' });
+  expect(signIn.closest('label')).toBeNull();
+  expect(screen.getByText('Signed out')).toBeTruthy();
+  const install = screen.getByRole('button', { name: 'Install Codex' });
+  expect(install.closest('label')).toBeNull();
+  // A provider that is not installed cannot be picked.
+  const codex = screen.getByRole<HTMLInputElement>('radio', {
+    name: 'Use Codex',
+  });
+  expect(codex.disabled).toBe(true);
+});
+
+test('the API key block shows only under the checked card', async () => {
+  const both = report();
+  both.providers[1] = {
+    ...both.providers[1],
+    installed: true,
+    works: true,
+    ready: true,
+    auth: 'signed-in',
+  };
+  setup(both);
+  const claude = await screen.findByRole<HTMLInputElement>('radio', {
+    name: 'Use Claude Code',
+  });
+  expect(claude.checked).toBe(true);
+  expect(screen.getAllByText('Use an API key instead')).toHaveLength(1);
+  await click(screen.getByRole('radio', { name: 'Use Codex' }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole<HTMLInputElement>('radio', { name: 'Use Codex' }).checked
+    ).toBe(true)
+  );
+  // Still one offer: Codex's, now that its card is the checked one.
+  expect(screen.getAllByText('Use an API key instead')).toHaveLength(1);
+  await click(screen.getByText('Use an API key instead'));
+  expect(screen.getByLabelText('Codex API key')).toBeTruthy();
+  expect(screen.queryByLabelText('Claude Code API key')).toBeNull();
+});
+
+test('a step the machine could not check says so with a grey glyph', async () => {
+  setup(
+    report({
+      steps: [
+        {
+          id: 'agent',
+          status: 'unknown',
+          message: "Couldn't check your agents.",
+        },
+      ],
+    })
+  );
+  const glyph = await screen.findByRole('img', { name: "Couldn't check" });
+  expect(glyph.getAttribute('data-tone')).toBe('muted');
+});
+
+test('a running sign-in keeps its terminal while another card is picked, and starts once', async () => {
+  const both = report();
+  both.providers[1] = {
+    ...both.providers[1],
+    installed: true,
+    works: true,
+    ready: true,
+    auth: 'signed-in',
+  };
+  const { client } = setup(both);
+  await click(await screen.findByRole('button', { name: 'Sign in' }));
+  await waitFor(() => expect(client.createTerminal).toHaveBeenCalledTimes(1));
+  expect(screen.getByLabelText('Sign in to Claude Code')).toBeTruthy();
+  // Picking Codex hides Claude's key controls but not the running command.
+  await click(screen.getByRole('radio', { name: 'Use Codex' }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole<HTMLInputElement>('radio', { name: 'Use Codex' }).checked
+    ).toBe(true)
+  );
+  const terminal = screen.getByLabelText('Sign in to Claude Code');
+  // Back to Claude: the same terminal, and the login was not started again.
+  await click(screen.getByRole('radio', { name: 'Use Claude Code' }));
+  expect(screen.getByLabelText('Sign in to Claude Code') === terminal).toBe(
+    true
+  );
+  expect(client.createTerminal).toHaveBeenCalledTimes(1);
+  // The terminal sits outside every card, so no radio's label holds it.
+  expect(terminal.closest('label')).toBeNull();
+});
+
+test('another action leaves a running install to finish, and ends a running sign-in', async () => {
+  const { client } = setup();
+  let started = 0;
+  client.createTerminal.mockImplementation(() => {
+    started += 1;
+    return Promise.resolve({ id: `t${started}`, state: 'running', pty: true });
+  });
+  await click(await screen.findByRole('button', { name: 'Install Codex' }));
+  await waitFor(() => expect(client.createTerminal).toHaveBeenCalledTimes(1));
+  // Signing in to Claude replaces the install's terminal, but a half-done
+  // `brew install` is never stopped.
+  await click(screen.getByRole('button', { name: 'Sign in' }));
+  await waitFor(() => expect(client.createTerminal).toHaveBeenCalledTimes(2));
+  expect(screen.getByLabelText('Sign in to Claude Code')).toBeTruthy();
+  expect(client.closeTerminal).not.toHaveBeenCalled();
+  // Starting the install again replaces the sign-in, which nobody could
+  // answer any more, so it ends.
+  await click(screen.getByRole('button', { name: 'Install Codex' }));
+  await waitFor(() => expect(client.createTerminal).toHaveBeenCalledTimes(3));
+  expect(client.closeTerminal.mock.calls).toEqual([['t2']]);
+});
+
+test('a key typed for one agent is not carried to another', async () => {
+  const both = report();
+  both.providers[1] = {
+    ...both.providers[1],
+    installed: true,
+    works: true,
+    ready: true,
+    auth: 'signed-in',
+  };
+  setup(both);
+  await click(await screen.findByText('Use an API key instead'));
+  fireEvent.change(screen.getByLabelText('Claude Code API key'), {
+    target: { value: 'sk-ant-1' },
+  });
+  await click(screen.getByRole('radio', { name: 'Use Codex' }));
+  await click(screen.getByText('Use an API key instead'));
+  expect(screen.getByLabelText<HTMLInputElement>('Codex API key').value).toBe(
+    ''
   );
 });

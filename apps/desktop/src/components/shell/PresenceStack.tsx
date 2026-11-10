@@ -1,7 +1,7 @@
 import type { PresenceEntry } from '@dispatch/client';
+import { cx, InitialsAvatar, Tooltip } from '@dispatch/ui';
 
-import { cn } from '@/lib/utils';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
+import styles from './PresenceStack.module.css';
 
 interface PresenceStackProps {
   presence: PresenceEntry[];
@@ -9,23 +9,37 @@ interface PresenceStackProps {
    *  words rather than an id. Absent, the id is shown. */
   taskTitle?: (id: string) => string | undefined;
   className?: string;
-  /** Makes each face a button that opens that person (Two views' person peek). */
+  /** Makes each face a button that opens that person's peek (a drawer over the view). */
   onOpenPerson?: (ref: string) => void;
 }
 
-// At most this many initials before collapsing the rest into "+N". Three
+// At most this many faces before collapsing the rest into "+N". Three
 // fits the 36px strip at any window width the app supports; past that a
-// row of letters stops being glanceable, which is the strip's whole job.
+// row of faces stops being glanceable, which is the strip's whole job.
 const MAX_SHOWN = 3;
 
-/** Up to two letters from a handle, for the chip. Handles are
- *  `[a-z0-9._-]`, so splitting on the separators gives a sensible "AL" for
- *  `ada.lovelace` and "AD" for plain `ada`. */
-export function initialsFor(handle: string): string {
-  const parts = handle.split(/[._-]+/).filter((p) => p !== '');
-  const letters =
-    parts.length >= 2 ? `${parts[0][0]}${parts[1][0]}` : handle.slice(0, 2);
-  return letters.toUpperCase();
+/** The name an avatar reads its initials from: a handle's separators
+ *  (`[._-]`) as spaces, so `ada.lovelace` reads "AL" and `ada` reads "A". */
+function avatarName(handle: string): string {
+  return handle.replace(/[._-]+/g, ' ');
+}
+
+/** One person's face: their avatar with the handle beside it for screen
+ *  readers (so a name is never initials only), ringed in the info hue
+ *  while they have a live agent. */
+function Face({ entry }: { entry: PresenceEntry }) {
+  return (
+    <>
+      <span
+        className={styles.ring}
+        data-tone={entry.runs.length > 0 ? 'info' : undefined}
+        aria-hidden="true"
+      >
+        <InitialsAvatar name={avatarName(entry.handle)} size="sm" />
+      </span>
+      <span className="srOnly">{entry.handle}</span>
+    </>
+  );
 }
 
 /** One line of tooltip per person: who, since when, what they are running,
@@ -50,7 +64,7 @@ export function presenceLine(
 }
 
 /**
- * Who else is on this daemon, as a row of initials on the status strip.
+ * Who else is on this daemon, as a row of avatars in the topbar.
  *
  * Renders nothing when only one person is present. That is every solo
  * project, and a lone chip reading "you are here" is noise; the stack earns
@@ -67,68 +81,47 @@ export function PresenceStack({
   const hidden = presence.length - shown.length;
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            data-slot="presence-stack"
-            tabIndex={0}
-            role="group"
-            aria-label={`${presence.length} people here`}
-            className={cn(
-              'focus-visible:ring-ring flex items-center rounded-full outline-none focus-visible:ring-2',
-              className
-            )}
-          />
-        }
+    <Tooltip
+      side="bottom"
+      content={
+        <ul className={styles.lines}>
+          {presence.map((entry) => (
+            <li key={entry.handle}>{presenceLine(entry, taskTitle)}</li>
+          ))}
+        </ul>
+      }
+    >
+      <span
+        data-slot="presence-stack"
+        tabIndex={0}
+        role="group"
+        aria-label={`${presence.length} people here`}
+        className={cx(styles.stack, className)}
       >
-        {shown.map((entry, i) => {
-          const face = cn(
-            'bg-surface-quaternary border-border-chip flex size-5 items-center justify-center rounded-full border text-[9px] font-medium',
-            i > 0 && 'ml-0.5',
-            entry.runs.length > 0 && 'ring-state-review ring-1'
-          );
-          return onOpenPerson !== undefined ? (
+        {shown.map((entry) =>
+          onOpenPerson !== undefined ? (
             <button
               key={entry.handle}
               type="button"
               aria-label={`Open ${entry.handle}`}
               onClick={() => onOpenPerson(entry.ref)}
-              className={cn(face, 'hover:bg-surface-hover')}
+              className={styles.face}
             >
-              {initialsFor(entry.handle)}
+              <Face entry={entry} />
             </button>
           ) : (
-            <span
-              key={entry.handle}
-              aria-hidden
-              className={cn(
-                'bg-surface-quaternary border-border-chip flex size-5 items-center justify-center rounded-full border text-[9px] font-medium',
-                // Side by side, not overlapped: two-letter initials stacked
-                // over each other read as one run-together word, not two people.
-                i > 0 && 'ml-0.5',
-                // A ring on anyone with a live agent, so "who is busy" reads
-                // without opening the tooltip.
-                entry.runs.length > 0 && 'ring-state-review ring-1'
-              )}
-            >
-              {initialsFor(entry.handle)}
+            // Side by side, not overlapped, and ringed while that person has a live agent.
+            <span key={entry.handle} className={styles.face}>
+              <Face entry={entry} />
             </span>
-          );
-        })}
+          )
+        )}
         {hidden > 0 && (
-          <span aria-hidden className="text-muted-foreground ml-1">
+          <span aria-hidden="true" className={styles.more}>
             +{hidden}
           </span>
         )}
-      </TooltipTrigger>
-      <TooltipContent side="top">
-        <ul className="flex flex-col gap-0.5">
-          {presence.map((entry) => (
-            <li key={entry.handle}>{presenceLine(entry, taskTitle)}</li>
-          ))}
-        </ul>
-      </TooltipContent>
+      </span>
     </Tooltip>
   );
 }
@@ -140,7 +133,7 @@ interface AlsoViewingProps {
 }
 
 /**
- * Who else has this task open, as initials in the task header. The question
+ * Who else has this task open, as avatars in the task header. The question
  * it answers is "am I about to trip over someone" — two people editing one
  * task's body, or both about to dispatch it — so it shows only when the
  * answer is yes.
@@ -153,32 +146,20 @@ export function AlsoViewing({ viewers }: AlsoViewingProps) {
       ? `${names[0]} also has this open`
       : `${names.slice(0, -1).join(', ')} and ${names.at(-1)} also have this open`;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            data-slot="also-viewing"
-            tabIndex={0}
-            role="group"
-            aria-label={sentence}
-            className="focus-visible:ring-ring flex items-center rounded-full outline-none focus-visible:ring-2"
-          />
-        }
+    <Tooltip side="bottom" content={sentence}>
+      <span
+        data-slot="also-viewing"
+        tabIndex={0}
+        role="group"
+        aria-label={sentence}
+        className={styles.stack}
       >
-        {viewers.slice(0, MAX_SHOWN).map((v, i) => (
-          <span
-            key={v.handle}
-            aria-hidden
-            className={cn(
-              'bg-surface-quaternary border-border-chip flex size-5 items-center justify-center rounded-full border text-[9px] font-medium',
-              i > 0 && 'ml-0.5'
-            )}
-          >
-            {initialsFor(v.handle)}
+        {viewers.slice(0, MAX_SHOWN).map((v) => (
+          <span key={v.handle} className={styles.face}>
+            <Face entry={v} />
           </span>
         ))}
-      </TooltipTrigger>
-      <TooltipContent side="bottom">{sentence}</TooltipContent>
+      </span>
     </Tooltip>
   );
 }

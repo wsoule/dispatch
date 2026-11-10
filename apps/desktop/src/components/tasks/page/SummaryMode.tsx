@@ -5,7 +5,15 @@ import {
   statusLabel,
 } from '@dispatch-foo/core/browser';
 import type { RunMeta } from '@dispatch/client';
-import type { ReactNode } from 'react';
+import {
+  cx,
+  Register,
+  RegisterCell,
+  RegisterRow,
+  SkeletonText,
+  type StatCell,
+  StatsStrip,
+} from '@dispatch/ui';
 import { useMemo } from 'react';
 
 import {
@@ -36,22 +44,10 @@ import { VerificationSection } from '../detail/VerificationSection';
 import { StatusIcon } from '../StatusIcon';
 import { ActivityTimeline } from './ActivityTimeline';
 import { OutcomeCard } from './OutcomeCard';
-import type { TaskPageModel } from './pageModel';
+import { type TaskPageModel, verificationTaskId } from './pageModel';
 import { FilesTouched } from './RunStrip';
-import { formatElapsed } from '@/ui/ai/use-elapsed';
-
-function Figure({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex min-w-0 flex-col gap-0.5">
-      <span className="text-foreground truncate text-[15px] font-semibold tabular-nums">
-        {children}
-      </span>
-      <span className="text-muted-foreground font-book text-[12px]">
-        {label}
-      </span>
-    </div>
-  );
-}
+import styles from './SummaryMode.module.css';
+import { formatElapsed } from '@/hooks/useElapsed';
 
 /** From the first dispatch to the last time a run moved, as `3d 4h` / `2h 10m` / `12:04`. */
 function span(runs: readonly RunMeta[]): string | null {
@@ -82,36 +78,61 @@ function SubIssueOutcomes({
 }) {
   if (rollup.subIssues.length === 0) return null;
   return (
-    <section data-slot="sub-issue-outcomes" className="flex flex-col gap-1">
-      <h3 className="text-muted-foreground flex h-6 items-center text-[12px] font-medium">
-        Sub-issues
-      </h3>
-      <ul className="-mx-2 flex flex-col">
+    <section data-slot="sub-issue-outcomes" className={styles.section}>
+      <h3 className={styles.heading}>Sub-issues</h3>
+      <Register
+        label="Sub-issues"
+        columns="minmax(0, 1fr) auto"
+        stackWithin={480}
+        stackedColumns="minmax(0, 1fr)"
+      >
         {rollup.subIssues.map(({ task, landedBy }) => (
-          <li key={task.meta.id} className="flex h-8 items-center gap-2 px-2">
-            <StatusIcon status={task.meta.status} className="size-3.5" />
-            <button
-              type="button"
-              onClick={() => onOpenTask(task.meta.id)}
-              className="flex min-w-0 flex-1 items-center gap-2 text-left outline-none focus-visible:underline"
-            >
-              <span className="text-muted-foreground font-book shrink-0 text-[12px] tracking-(--id-tracking)">
-                {task.meta.id}
+          <RegisterRow
+            key={task.meta.id}
+            rowLabel={`${task.meta.id} ${task.meta.title}`}
+            onActivate={() => onOpenTask(task.meta.id)}
+          >
+            <RegisterCell variant="name">
+              <span className={styles.subject}>
+                <StatusIcon status={task.meta.status} />
+                <span className={cx(styles.id, 'mono')}>{task.meta.id}</span>
+                <span className={styles.title}>{task.meta.title}</span>
               </span>
-              <span className="font-book hover:text-foreground min-w-0 truncate text-[13px] text-(--text-secondary)">
-                {task.meta.title}
-              </span>
-            </button>
-            {landedBy !== undefined && (
-              <span className="font-book flex shrink-0 items-center gap-2 text-[12px]">
+            </RegisterCell>
+            <RegisterCell align="end">
+              {landedBy !== undefined && (
                 <LandedAs run={landedBy} originWebUrl={originWebUrl} />
-              </span>
-            )}
-          </li>
+              )}
+            </RegisterCell>
+          </RegisterRow>
         ))}
-      </ul>
+      </Register>
     </section>
   );
+}
+
+/** The run figures as stat cells: how many runs, what they cost, their turns, and the time
+ * from the first dispatch to the last run that moved. */
+function figureCells(
+  runs: readonly RunMeta[],
+  totalCost: number,
+  totalTurns: number,
+  took: string | null
+): StatCell[] {
+  return [
+    {
+      id: 'runs',
+      label: runs.length === 1 ? 'Run' : 'Runs',
+      value: runs.length,
+    },
+    { id: 'spent', label: 'Spent', value: `$${totalCost.toFixed(2)}` },
+    { id: 'turns', label: 'Turns', value: totalTurns },
+    {
+      id: 'span',
+      label: 'First dispatch to last run',
+      value: took ?? '—',
+    },
+  ];
 }
 
 /**
@@ -146,7 +167,7 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
   const canceled = isCanceledStatus(meta.status, page.statusModel);
   const done = isDoneStatus(meta.status, page.statusModel);
   const { result: verification, error: verificationError } =
-    useTaskVerification(project.client, project.port, meta.id);
+    useTaskVerification(project.client, project.port, verificationTaskId(page));
   const { entries: milestoneLedger } = useMilestoneLedger(
     project.client,
     project.port,
@@ -184,8 +205,8 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
             : 'Not finished yet.';
 
   return (
-    <div data-slot="summary-mode" className="flex flex-col gap-6 px-4 pb-10">
-      <section className="flex flex-col gap-3">
+    <div data-slot="summary-mode" className={styles.root}>
+      <section className={styles.outcome}>
         {ending !== null ? (
           <OutcomeCard
             outcome={ending}
@@ -195,16 +216,14 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
           />
         ) : (
           <>
-            <div className="flex items-center gap-2">
-              <StatusIcon status={meta.status} className="size-4" />
-              <h3 className="text-foreground text-[15px] font-semibold">
-                {statusLabel(meta.status)}
-              </h3>
-              <span className="text-muted-foreground font-book text-[13px]">
+            <div className={styles.statusLine}>
+              <StatusIcon status={meta.status} size={16} />
+              <h3 className={styles.status}>{statusLabel(meta.status)}</h3>
+              <span className={cx(styles.date, 'num')}>
                 {formatShortDate(meta.updated)}
               </span>
             </div>
-            <div className="font-book flex flex-wrap items-center gap-2 text-[13px] text-(--text-secondary)">
+            <div className={styles.outcomeLine}>
               {outcome !== null && <span>{outcome}</span>}
               {landed !== undefined && (
                 <LandedAs
@@ -217,14 +236,10 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
           </>
         )}
         {runs.length > 0 && (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <Figure label={runs.length === 1 ? 'run' : 'runs'}>
-              {runs.length}
-            </Figure>
-            <Figure label="spent">${totalCost.toFixed(2)}</Figure>
-            <Figure label="turns">{totalTurns}</Figure>
-            <Figure label="first dispatch to last run">{took ?? '—'}</Figure>
-          </div>
+          <StatsStrip
+            label="Run figures"
+            cells={figureCells(runs, totalCost, totalTurns, took)}
+          />
         )}
         {landed !== undefined && <FilesTouched files={landed.claims ?? []} />}
       </section>
@@ -238,41 +253,43 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
       )}
 
       {rollup === null && runs.length > 0 && (
-        <section className="flex flex-col gap-1">
-          <h3 className="text-muted-foreground flex h-6 items-center text-[12px] font-medium">
-            Runs
-          </h3>
-          <ul className="-mx-2 flex flex-col">
+        <section className={styles.section}>
+          <h3 className={styles.heading}>Runs</h3>
+          <Register
+            label="Runs"
+            columns="auto minmax(0, 1fr) auto auto"
+            stackWithin={480}
+          >
             {runs.map((r) => (
-              <li key={r.id}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    page.selectRun(r.id);
-                    page.selectMode('run');
-                  }}
-                  className="hover:bg-surface-hover rounded-control focus-visible:ring-ring flex h-8 w-full items-center gap-2 px-2 text-left outline-none focus-visible:ring-2"
-                >
-                  <RunStatePill meta={r} compact />
-                  <span className="font-book text-[13px] tracking-(--id-tracking) text-(--text-secondary)">
-                    {r.id}
+              <RegisterRow
+                key={r.id}
+                rowLabel={`Open run ${r.id}`}
+                onActivate={() => {
+                  page.selectRun(r.id);
+                  page.selectMode('run');
+                }}
+              >
+                <RegisterCell variant="name">
+                  <span className={styles.subject}>
+                    <RunStatePill meta={r} compact />
+                    <span className={cx(styles.id, 'mono')}>{r.id}</span>
                   </span>
-                  <span className="text-muted-foreground font-book min-w-0 flex-1 truncate text-[12px]">
+                </RegisterCell>
+                <RegisterCell>
+                  <span className={styles.executor}>
                     {r.executor}
                     {r.model !== undefined && ` · ${modelLabel(r.model)}`}
                   </span>
-                  {r.costUsd !== undefined && (
-                    <span className="text-muted-foreground font-book text-[12px] tabular-nums">
-                      ${r.costUsd.toFixed(2)}
-                    </span>
-                  )}
-                  <span className="text-muted-foreground font-book w-14 text-right text-[12px]">
-                    {formatShortDate(r.updatedAt)}
-                  </span>
-                </button>
-              </li>
+                </RegisterCell>
+                <RegisterCell variant="mono" align="end">
+                  {r.costUsd !== undefined && `$${r.costUsd.toFixed(2)}`}
+                </RegisterCell>
+                <RegisterCell variant="mono" align="end">
+                  {formatShortDate(r.updatedAt)}
+                </RegisterCell>
+              </RegisterRow>
             ))}
-          </ul>
+          </Register>
         </section>
       )}
 
@@ -297,16 +314,12 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
       )}
       <ReceiptsSection entries={ledger} />
 
-      <section className="flex flex-col gap-2">
-        <h3 className="text-muted-foreground flex h-6 items-center text-[12px] font-medium">
-          Timeline
-        </h3>
+      <section className={styles.section}>
+        <h3 className={styles.heading}>Timeline</h3>
         {page.bodyLoaded ? (
           <ActivityTimeline items={timeline} />
         ) : (
-          <p className="text-muted-foreground font-book text-[12px]">
-            Loading the history…
-          </p>
+          <SkeletonText lines={3} label="Loading the history" />
         )}
       </section>
     </div>

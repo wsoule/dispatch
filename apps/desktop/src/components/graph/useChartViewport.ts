@@ -23,7 +23,12 @@ export interface ChartViewportApi {
   /** Fit a world box; animate defaults to true. */
   fit: (
     box: Box,
-    opts?: { maxScale?: number; padding?: number; animate?: boolean }
+    opts?: {
+      maxScale?: number;
+      minScale?: number;
+      padding?: number;
+      animate?: boolean;
+    }
   ) => void;
   /** The stage's current client size (0x0 before mount or in happy-dom). */
   size: () => Size;
@@ -115,7 +120,7 @@ interface ChartViewport {
  * here, not in React state, and is written straight to the layer's style: panning and
  * zooming never re-render the chart.
  */
-function createChartViewport(): ChartViewport {
+function createChartViewport(options: ChartViewportOptions): ChartViewport {
   let current: ViewTransform = IDENTITY;
   let stage: HTMLDivElement | null = null;
   let layer: HTMLDivElement | null = null;
@@ -307,7 +312,8 @@ function createChartViewport(): ChartViewport {
     function onWheel(e: WheelEvent): void {
       // A plain scroll over an overlay is left to the overlay (it may scroll); a pinch
       // always zooms the chart, or the webview would zoom the whole page instead.
-      if (!e.ctrlKey && isIgnored(e.target)) return;
+      if (!e.ctrlKey && (options.pageScroll === true || isIgnored(e.target)))
+        return;
       e.preventDefault();
       // WebKit reports a pinch through gesture events; never zoom twice for one.
       if (e.ctrlKey && gestureScale !== null) return;
@@ -545,14 +551,22 @@ function createChartViewport(): ChartViewport {
   };
 }
 
+export interface ChartViewportOptions {
+  /** A chart embedded in a scrolling page: a plain scroll is left to the page, and only a
+   * pinch (or ctrl+scroll) zooms. */
+  pageScroll?: boolean;
+}
+
 /**
  * Pan and zoom for the dependency chart: scroll or pinch to zoom around the pointer, drag
  * empty space or nodes to pan, plus animated `zoomBy`/`fit` for the zoom controls and
  * click-to-trace. Keyboard focus moving onto an off-stage node pans it into view. The
  * returned object and its functions are stable across renders.
  */
-export function useChartViewport(): ChartViewportApi {
-  const [viewport] = useState(createChartViewport);
+export function useChartViewport(
+  options: ChartViewportOptions = {}
+): ChartViewportApi {
+  const [viewport] = useState(() => createChartViewport(options));
   useEffect(() => {
     viewport.resume();
     return viewport.suspend;

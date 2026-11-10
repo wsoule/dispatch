@@ -172,6 +172,22 @@ describe('PATCH /api/config — orchestrator caps', () => {
     const res = await patchConfig({ maxBudgetUsd: -5 });
     expect(res.status).toBe(400);
   });
+
+  it('turns on unlimitedSpend, which hides the budget cap', async () => {
+    await patchConfig({ maxBudgetUsd: 12.5 });
+    const res = await patchConfig({ unlimitedSpend: true });
+    expect(res.status).toBe(200);
+    const config = await json<{
+      orchestrator: { unlimitedSpend: boolean; maxBudgetUsd?: number };
+    }>(res);
+    expect(config.orchestrator.unlimitedSpend).toBe(true);
+    expect(config.orchestrator.maxBudgetUsd).toBeUndefined();
+  });
+
+  it('rejects a non-boolean unlimitedSpend with 400', async () => {
+    const res = await patchConfig({ unlimitedSpend: 'yes' });
+    expect(res.status).toBe(400);
+  });
 });
 
 // The fan-out ceilings: the hard concurrency cap and the per-run cost
@@ -293,7 +309,9 @@ describe('PATCH /api/config — chat streaming', () => {
     });
     expect(res.status).toBe(200);
     const config = await json<Streams>(res);
-    expect(config.overseer).toEqual({ stream: 'narration' });
+    // The block holds other overseer settings too (autonomy); this test is
+    // about the stream switch alone.
+    expect(config.overseer.stream).toBe('narration');
     expect(config.runs).toEqual({ stream: 'off' });
     const again = await json<Streams>(await fetch(`${baseUrl}/api/config`));
     expect(again.overseer.stream).toBe('narration');

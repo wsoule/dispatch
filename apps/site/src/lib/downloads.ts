@@ -5,3 +5,6 @@ export const DMG = {
   arm: `${RELEASES}/download/Dispatch_aarch64.dmg`,
   x64: `${RELEASES}/download/Dispatch_x64.dmg`,
 } as const;
+
+// The hosted planner: a team's Linear workspace on the web, nothing to install.
+export const WEB_APP = 'https://app.dispatch.foo';

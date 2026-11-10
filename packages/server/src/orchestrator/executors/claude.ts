@@ -35,6 +35,7 @@ import { activeExperiments } from '../experiments.js';
 import type { ExperimentName } from '../experiments.js';
 import { floorGuard } from '../floorHook.js';
 import type { FloorPolicy } from '../floorHook.js';
+import { withProtoPath } from '../protoShims.js';
 import { DEFAULT_EXECUTOR_PROFILE } from '../types.js';
 import type {
   ApprovalDecision,
@@ -44,6 +45,8 @@ import type {
   ExecutorRun,
   ExecutorStartOptions,
   NormalizedEntry,
+  RunAccount,
+  UsageLimitStop,
 } from '../types.js';
 import { ClaudeUsageMeter } from './claudeUsage.js';
 import { isSubagentSpawn, SubagentTracker } from './subagentTracker.js';
@@ -190,9 +193,12 @@ export const LEAN_TOOL_EXCLUSIONS = [
 
 // The SDK options each active experiment changes. `env` replaces the CLI's
 // environment wholesale rather than merging into it (sdk.d.ts), so it is
-// always set: this process's environment without its tokens.
+// always set: this process's environment without its tokens, with the
+// worktree's proto shims first on PATH (see withProtoPath).
 export function experimentOptions(
-  experiments: readonly ExperimentName[]
+  experiments: readonly ExperimentName[],
+  cwd: string,
+  account?: RunAccount
 ): Pick<Options, 'disallowedTools' | 'env'> {
   const disallowed: string[] = [...UNUSABLE_IN_DISPATCHED_RUN];
   if (experiments.includes('lean-tools')) {
@@ -200,10 +206,39 @@ export function experimentOptions(
   }
   return {
     disallowedTools: disallowed,
-    env: agentEnv(
-      experiments.includes('cache-1h') ? { ENABLE_PROMPT_CACHING_1H: '1' } : {}
+    env: withAccount(
+      withProtoPath(
+        cwd,
+        agentEnv(
+          experiments.includes('cache-1h')
+            ? { ENABLE_PROMPT_CACHING_1H: '1' }
+            : {}
+        )
+      ),
+      account
     ),
   };
+}
+
+// The env vars the CLI signs in with ahead of an OAuth token. A run placed on
+// a stored account drops them, or the CLI would keep billing the key it found
+// first and the account switch would change nothing.
+const AUTH_ENV_AHEAD_OF_OAUTH = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'];
+
+// Signs a run's CLI in as a stored subscription account: its long-lived
+// OAuth token as CLAUDE_CODE_OAUTH_TOKEN. The config directory is left alone,
+// so the session transcripts a resume reads are the same on every account.
+export function withAccount(
+  env: Record<string, string>,
+  account: RunAccount | undefined
+): Record<string, string> {
+  if (account?.token === undefined) return env;
+  const next: Record<string, string> = {
+    ...env,
+    CLAUDE_CODE_OAUTH_TOKEN: account.token,
+  };
+  for (const key of AUTH_ENV_AHEAD_OF_OAUTH) delete next[key];
+  return next;
 }
 
 /**
@@ -696,7 +731,7 @@ function reasonForTruncation(message: SDKResultMessage): string | null {
 // then only `'api_error'`; without remembering it, a usage-limit stop is
 // recorded as "the Claude API errored" and the real reason lives only in the
 // transcript (2026-09-04: seven runs, all diagnosed by hand).
-interface ApiErrorNote {
+export interface ApiErrorNote {
   kind: string;
   text: string;
 }
@@ -738,6 +773,42 @@ function withApiErrorDetail(
   }
   const lead = API_ERROR_MESSAGES[apiError.kind] ?? truncation;
   return apiError.text === '' ? lead : `${lead} (${apiError.text})`;
+}
+
+// Whether a run's terminal result means its account ran out of usage, and
+// when that limit resets. Three signals, any one enough: the CLI's own
+// `blocking_limit` stop, the synthetic `rate_limit` API-error message that
+// precedes an `api_error` stop, and a `rate_limit_event` the SDK reported as
+// `rejected`. `rejectedResetsAt` is that event's reset time, already ISO.
+// Undefined when the run was not stopped by a usage limit — a short
+// `rapid_refill_breaker` pause is not one, since a fresh account would not
+// help.
+export function usageLimitFromResult(
+  message: SDKResultMessage,
+  apiError: ApiErrorNote | undefined,
+  rejected: { resetsAt?: string } | undefined
+): UsageLimitStop | undefined {
+  const reason = (message as { terminal_reason?: string }).terminal_reason;
+  const limited =
+    reason === 'blocking_limit' ||
+    (apiError?.kind === 'rate_limit' &&
+      (reason === 'api_error' || reason === 'model_error')) ||
+    (rejected !== undefined && reason !== 'completed');
+  if (!limited) return undefined;
+  return rejected?.resetsAt === undefined
+    ? {}
+    : { resetsAt: rejected.resetsAt };
+}
+
+// The SDK's `resetsAt` as ISO. It is epoch seconds (the API's
+// `anthropic-ratelimit-unified-reset` header); a value already in
+// milliseconds is taken as is.
+export function resetTimeIso(resetsAt: number | undefined): string | undefined {
+  if (resetsAt === undefined || !Number.isFinite(resetsAt) || resetsAt <= 0) {
+    return undefined;
+  }
+  const ms = resetsAt < 1e12 ? resetsAt * 1000 : resetsAt;
+  return new Date(ms).toISOString();
 }
 
 // Turns the SDK's terminal `result` message into the ExecutorEvents.onFinish
@@ -1120,7 +1191,7 @@ export class ClaudeExecutor implements Executor {
       settingSources: ['user', 'project', 'local'],
       // Stream events only when someone shows the text as it is written.
       ...(events.onDelta !== undefined ? { includePartialMessages: true } : {}),
-      ...experimentOptions(experiments),
+      ...experimentOptions(experiments, opts.cwd, opts.account),
       // Bug fix (fix/executor-mcp-wiring): `query()` does NOT auto-load a
       // project's committed `.mcp.json` the way the interactive `claude` CLI
       // does — without this, a dispatched run has no dispatch MCP tools at
@@ -1238,6 +1309,9 @@ export class ClaudeExecutor implements Executor {
       // 'rate_limit'` and friends), so the terminal result can name the real
       // reason the run stopped — see withApiErrorDetail.
       let lastApiError: ApiErrorNote | undefined;
+      // The latest `rate_limit_event` that refused the account, with its
+      // reset time — what usageLimitFromResult reads at the result.
+      let rejectedLimit: { resetsAt?: string } | undefined;
       // Set only by the 'result' branch below — tracks whether the loop
       // actually reached a terminal SDK message, as opposed to the
       // underlying async iterator simply running out (the CLI process
@@ -1312,6 +1386,12 @@ export class ClaudeExecutor implements Executor {
               if (delta !== null) {
                 events.onDelta?.(delta.segmentId, delta.text);
               }
+            }
+          } else if (message.type === 'rate_limit_event') {
+            const info = message.rate_limit_info;
+            if (info.status === 'rejected') {
+              const resetsAt = resetTimeIso(info.resetsAt);
+              rejectedLimit = resetsAt === undefined ? {} : { resetsAt };
             }
           } else if (message.type === 'user') {
             const ts = new Date().toISOString();
@@ -1433,16 +1513,22 @@ export class ClaudeExecutor implements Executor {
             await windDown(backgroundTasks, cliVersion);
             if (!interrupted) {
               finished = true;
+              const finish = guardZeroTurnFinish(
+                finishFromResult(message, lastApiError),
+                {
+                  sawAssistantOutput,
+                  resumed: opts.resumeSessionId !== undefined,
+                }
+              );
+              const usageLimit =
+                finish.state === 'failed'
+                  ? usageLimitFromResult(message, lastApiError, rejectedLimit)
+                  : undefined;
               events.onFinish({
-                ...guardZeroTurnFinish(
-                  finishFromResult(message, lastApiError),
-                  {
-                    sawAssistantOutput,
-                    resumed: opts.resumeSessionId !== undefined,
-                  }
-                ),
+                ...finish,
                 usage: usageMeter.fromResult(message),
                 ...experimentStamp,
+                ...(usageLimit === undefined ? {} : { usageLimit }),
               });
             }
             break;

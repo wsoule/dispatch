@@ -1,6 +1,7 @@
 import type { Finding } from '@dispatch/client';
+import { Button, ViewToolbar } from '@dispatch/ui';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, PanelLeftIcon } from 'lucide-react';
+import { ArrowLeft, PanelLeft, PanelRight } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import { PierreReviewDiff } from '../components/runs/PierreReviewDiff';
@@ -8,10 +9,7 @@ import { PrReviewPanel } from '../components/runs/PrReviewPanel';
 import { ReviewFileTree } from '../components/runs/ReviewFileTree';
 import { ReviewThreadIndex } from '../components/runs/ReviewThreadIndex';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
-import {
-  TasksBackButton,
-  TasksPageHeader,
-} from '../components/tasks/TasksPageHeader';
+import { PageHead } from '../components/shell/PageHead';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { repoPrsKey } from '../hooks/useDispatchProject';
 import { usePrFindings } from '../hooks/useOrchestration';
@@ -19,8 +17,9 @@ import { repoPrDetailKey, useRepoPrDetail } from '../hooks/useRepoPrDetail';
 import { readPanelOpen, writePanelOpen } from '../lib/reviewPanels';
 import { reviewTargetKey } from '../lib/reviewTarget';
 import { readViewed, toggleViewed, writeViewed } from '../lib/reviewViewed';
-import { IconButton } from '@/ui/ai/icon-button';
-import { PageHeader, SidePanelIconButton } from '@/ui/ai/page-header';
+import styles from './PrReviewView.module.css';
+
+const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
 
 interface PrReviewViewProps {
   data: DispatchProjectData;
@@ -29,7 +28,9 @@ interface PrReviewViewProps {
   /** Which repo pull request is open — `navReducer`'s `activePrNumber`. */
   prNumber: number;
   onBack: () => void;
-  /** Two views: "‹ tasks" leads the header and the crumb starts at Pull requests. */
+  /** Hosted as a page under Tasks: the Tasks back chip leads the header and the crumb
+   * starts at Pull requests. Unset inside a task page, where the crumb walks back
+   * through the merge queue and a Back button closes the review. */
   tasksPage?: boolean;
 }
 
@@ -171,12 +172,14 @@ export function PrReviewView({
       />
     );
     return tasksPage ? (
-      <div className="flex h-full min-h-0 flex-col">
-        <TasksPageHeader
-          onBack={onBack}
-          crumb={['Pull requests', `#${prNumber}`]}
-        />
-        <div className="min-h-0 flex-1">{unavailable}</div>
+      <div className={styles.page}>
+        <div className={styles.head}>
+          <PageHead
+            onBack={onBack}
+            crumbs={['Pull requests', `#${prNumber}`]}
+          />
+        </div>
+        <div className={styles.unavailable}>{unavailable}</div>
       </div>
     ) : (
       unavailable
@@ -187,87 +190,108 @@ export function PrReviewView({
   const railCount = repoPr.prDetail?.conversation.length ?? 0;
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      {/* Project › Landing › #123 Title — the PR page is a leaf of Landing, so the crumb
-          walks back to it and the back button does the same in one click. */}
-      <PageHeader
-        leading={
-          tasksPage ? (
-            <TasksBackButton onBack={onBack} />
-          ) : (
-            <IconButton label="Back" onClick={onBack}>
-              <ArrowLeft />
-            </IconButton>
-          )
-        }
-        crumb={
-          tasksPage
-            ? [
-                'Pull requests',
-                `#${prNumber} ${repoPr.prDetail?.status.title ?? selectedRepoPr?.title ?? ''}`.trim(),
-              ]
-            : [
-                ...(projectName !== undefined && projectName !== null
-                  ? [projectName]
-                  : []),
-                'Merge queue',
-                `#${prNumber} ${title}`,
-              ]
-        }
-        actions={
-          <>
-            <IconButton
-              label={filesOpen ? 'Hide files' : 'Show files'}
-              active={filesOpen}
-              onClick={() => setFilesOpen((v) => !v)}
-            >
-              <PanelLeftIcon />
-            </IconButton>
-            <SidePanelIconButton
-              label={railOpen ? 'Hide review' : `Review (${railCount})`}
-              active={railOpen}
-              onClick={() => setRailOpen((v) => !v)}
-            />
-          </>
-        }
-      />
+    <div className={styles.page}>
+      {/* Project › Merge queue › #123 Title — the PR page is a leaf of the
+          merge queue, so the crumb walks back to it and Back does the same in
+          one click. Under Tasks the head leads with the Tasks back chip
+          instead, and the crumb starts at Pull requests. */}
+      <div className={styles.head}>
+        <PageHead
+          onBack={tasksPage ? onBack : undefined}
+          crumbs={
+            tasksPage
+              ? [
+                  'Pull requests',
+                  `#${prNumber} ${repoPr.prDetail?.status.title ?? selectedRepoPr?.title ?? ''}`.trim(),
+                ]
+              : [
+                  ...(projectName !== undefined && projectName !== null
+                    ? [projectName]
+                    : []),
+                  'Merge queue',
+                  `#${prNumber} ${title}`,
+                ]
+          }
+        />
+        <ViewToolbar
+          label="Review layout"
+          controls={
+            <>
+              {!tasksPage && (
+                <Button
+                  variant="quiet"
+                  size="sm"
+                  icon={<ArrowLeft {...ICON} />}
+                  onClick={onBack}
+                >
+                  Back
+                </Button>
+              )}
+              {/* Both side toggles keep one name and say their state
+                  through aria-pressed: a name that flipped to "Hide files"
+                  would be announced "Hide files, pressed", which
+                  contradicts itself. */}
+              <Button
+                variant="quiet"
+                size="sm"
+                aria-pressed={filesOpen}
+                icon={<PanelLeft {...ICON} />}
+                onClick={() => setFilesOpen((v) => !v)}
+              >
+                Files
+              </Button>
+              <Button
+                variant="quiet"
+                size="sm"
+                aria-pressed={railOpen}
+                icon={<PanelRight {...ICON} />}
+                onClick={() => setRailOpen((v) => !v)}
+              >
+                {railCount > 0 ? `Review (${railCount})` : 'Review'}
+              </Button>
+            </>
+          }
+        />
+      </div>
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        {/* `overflow-hidden`, not `-auto`: the list scrolls itself internally
-            (its header and viewed summary stay pinned above it), so this only
-            needs to bound the track. */}
+      <div
+        className={styles.body}
+        data-files={filesOpen ? 'open' : 'closed'}
+        data-rail={railOpen ? 'open' : 'closed'}
+      >
+        {/* Bounded, not scrolled: the list scrolls itself internally (its
+            header and viewed summary stay pinned above it). */}
         {filesOpen && (
-          <div className="shadow-hairline-right flex min-h-0 w-56 shrink-0 flex-col overflow-hidden">
-            <div className="min-h-0 flex-1 overflow-hidden">
-              <ReviewFileTree
-                files={diff?.files ?? []}
-                onSelect={(path) =>
-                  setJumpTo({ file: path, nonce: Date.now() })
-                }
-                viewed={viewed}
-                commentsByFile={commentsByFile}
-                findingsByFile={NO_FINDINGS_BY_FILE}
-                unviewedOnly={unviewedOnly}
-                onToggleUnviewedOnly={() => setUnviewedOnly((v) => !v)}
-              />
-            </div>
+          <div className={styles.files}>
+            <ReviewFileTree
+              files={diff?.files ?? []}
+              onSelect={(path) => setJumpTo({ file: path, nonce: Date.now() })}
+              viewed={viewed}
+              commentsByFile={commentsByFile}
+              findingsByFile={NO_FINDINGS_BY_FILE}
+              unviewedOnly={unviewedOnly}
+              onToggleUnviewedOnly={() => setUnviewedOnly((v) => !v)}
+            />
           </div>
         )}
 
-        {/* A flex column, not a plain `min-h-0` box: `CodeView` needs a real,
-            unambiguous height rather than a percentage resolved through an
-            ancestor's stretch. */}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {/* A flex column with no overflow of its own: `CodeView` scrolls
+            itself and needs a real, unambiguous height rather than a
+            percentage resolved through an ancestor's stretch, and an
+            ancestor that scrolled would take its scroll away. */}
+        <div className={styles.diff}>
           {/* A failed fetch must not read as "this PR changes nothing" — an
               empty file tree beside cheerful copy is the worse failure. */}
           {diff === undefined && repoPr.prDiffError !== null && (
-            <p className="text-state-failed font-book px-4 py-3 text-[13px]">
-              Couldn&rsquo;t load this pull request&rsquo;s diff from GitHub:{' '}
-              {repoPr.prDiffError}
+            <p className={styles.line}>
+              <span className="toneText" data-tone="danger">
+                Couldn&rsquo;t load this pull request&rsquo;s diff from GitHub:{' '}
+                {repoPr.prDiffError}
+              </span>
             </p>
           )}
           {diff === undefined && repoPr.prDiffError === null && (
-            <p className="text-muted-foreground font-book px-4 py-3 text-[13px]">
+            <p className={styles.line}>
               {repoPr.prDiffLoading
                 ? 'Fetching the diff from GitHub…'
                 : 'No diff to show.'}
@@ -296,7 +320,7 @@ export function PrReviewView({
         </div>
 
         {railOpen && (
-          <div className="shadow-hairline-left flex min-h-0 w-80 shrink-0 flex-col gap-3 overflow-y-auto px-3 py-3">
+          <aside className={styles.rail} aria-label="Review">
             {/* Owns the PR's status header too — one source, refreshed by every
                 action here, rather than a second copy off the 60s repo poll. */}
             <PrReviewPanel
@@ -318,9 +342,11 @@ export function PrReviewView({
             {/* An empty thread list must not read as "nobody commented" when
                 the GitHub pull is what failed. */}
             {repoPr.reviewCommentsError !== null && (
-              <p className="text-state-failed font-book text-[13px]">
-                Couldn&rsquo;t load this pull request&rsquo;s threads:{' '}
-                {repoPr.reviewCommentsError}
+              <p className={styles.railLine}>
+                <span className="toneText" data-tone="danger">
+                  Couldn&rsquo;t load this pull request&rsquo;s threads:{' '}
+                  {repoPr.reviewCommentsError}
+                </span>
               </p>
             )}
             <ReviewThreadIndex
@@ -336,12 +362,12 @@ export function PrReviewView({
                 staged until a verdict publishes them, and a reply written on
                 github.com never comes back into a thread (the mirror drops
                 in-reply payloads) — it lands in the conversation above. */}
-            <p className="text-muted-foreground font-book text-[12px]">
+            <p className={styles.note}>
               Notes stay staged until you comment, approve or request changes
               above, then publish to GitHub as one review. Replies written on
               github.com show in the conversation, not in these threads.
             </p>
-          </div>
+          </aside>
         )}
       </div>
     </div>

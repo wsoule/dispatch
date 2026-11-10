@@ -262,12 +262,12 @@ describe('ClaudeOverseer session wiring', () => {
     const { captured } = await runTurn(successStream(), toolset);
 
     const prompt = captured?.systemPrompt as { append?: string } | undefined;
-    expect(prompt?.append).toContain(
-      'queues the action as an approval card the human answers'
-    );
+    // A done result is reported as done; a queued one as waiting.
+    expect(prompt?.append).toContain('has ALREADY happened');
+    expect(prompt?.append).toContain('waits on an approval card');
     // Dispatch's own side doors always wait on a human.
     expect(prompt?.append).toContain('always waits on a human');
-    expect(prompt?.append).toContain('never report one as done');
+    expect(prompt?.append).toContain('never that it is done');
     // And that a built-in denial is the human's answer, not an obstacle.
     expect(prompt?.append).toContain('respect rather than work around');
   });
@@ -599,6 +599,16 @@ describe('shared overseer pieces', () => {
     );
   });
 
+  it('names the desktop places the person actually has', () => {
+    // The app's sidebar lists destinations; the old "two views" layout (Overseer
+    // and Tasks) is gone, so the overseer must not send anyone to a Tasks view.
+    const intro = overseerInstructions('Claude Code').split('\n\n')[0] ?? '';
+    expect(intro).toContain('They see you in the Overseer');
+    expect(intro).toContain('every task lives under Issues');
+    expect(intro).toContain('every ask that waits on them under Needs you');
+    expect(intro).not.toContain('two views');
+  });
+
   it('promises gated reads only to an agent that asks before reading', () => {
     const gated = overseerInstructions('Claude Code');
     expect(gated).toContain('reading its token file');
@@ -632,6 +642,17 @@ describe('shared overseer pieces', () => {
     expect(toolDescriptionForModel(cancelRun)).toBe(
       'Stop a live run. QUEUES this action for human confirmation — calling it does not perform it.'
     );
+  });
+
+  it('tells the model a tool that runs at once, or asks once, says so', () => {
+    const { toolset } = stubToolset();
+    const cancelRun = toolset.tools[1];
+    expect(toolDescriptionForModel({ ...cancelRun, route: 'auto' })).toBe(
+      'Stop a live run. RUNS at once: calling it performs the action, with no approval card.'
+    );
+    expect(
+      toolDescriptionForModel({ ...cancelRun, route: 'ask-once' })
+    ).toContain('unless they already allowed it for this conversation');
   });
 
   it('appends the Claude-worded instructions to the claude_code preset', async () => {

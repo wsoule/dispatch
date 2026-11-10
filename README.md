@@ -139,6 +139,34 @@ committed.
 Beyond the board and review, the app carries the surfaces you would otherwise
 leave it for.
 
+**What the Overseer does without asking.** The Overseer's project controls come
+in three risk tiers. Low: creating, editing and planning tasks, and messaging a
+live run. Medium: dispatching a task, answering a run's approval, and queueing
+or pulling a merge. High: cancelling or discarding a run, and sending a message
+as you. `overseer.autonomy` in `.dispatch/config.yml`, also under Settings →
+Agents, picks how many of them need your approval:
+
+    overseer:
+      autonomy: balanced # cautious | balanced | trusting
+
+- `cautious`: every action waits on an approval card.
+- `balanced` (the default): low-tier actions run at once. A medium-tier tool
+  asks the first time it is used in a conversation. Choosing **Allow for this
+  conversation** on that card lets later calls of the same tool run without
+  asking, for up to four hours or until the conversation starts over.
+- `trusting`: low-tier and medium-tier actions both run at once.
+
+High-tier actions ask every time in every mode, and no grant covers them.
+Neither does approving a call on the irreversibility floor (such as a
+force-push) or allowing a tool for the rest of a run. A plan that starts its
+milestone's agents asks like a dispatch.
+
+An action that runs without asking leaves a receipt in the chat with a link to
+its task. For a task edit, the receipt shows each changed field, before and
+after. It is also written to the ledger as auto-decided, naming the setting that
+allowed it. Several actions one turn queues arrive as one card, with **Approve
+all**, in the chat and in Needs you.
+
 **Terminals.** Shells on the repo or on a run's worktree, split any number of
 ways. The child runs under a real pty, so prompts, colour and full-screen
 programs behave normally, and scrollback is kept on disk — closing the window,
@@ -193,6 +221,75 @@ pass sends no task that predates the link, so push those yourself:
 
 Long exports and archives run in the daemon; the command follows them and prints
 progress. Every subcommand takes `--json`.
+
+**Signing in with Linear.** A project's Linear connection is an API key, so
+Linear shows every change Dispatch sends as the key's owner. To have your own
+changes show as you, open **Settings → Linear → Your Linear account** and choose
+**Sign in with Linear**: Linear's sign-in page opens in your browser, you
+approve Dispatch there, and the row then reads "Signed in as …".
+
+What then reaches Linear with your own token:
+
+- Task edits and new tasks you make in the app, field by field. When you and
+  someone else (an agent, a run, the orchestrator, a teammate) both changed an
+  issue before Dispatch sent it, your fields go as you and theirs through the
+  project's connection; a new issue is created by whoever wrote its title. A
+  value someone else set, even one that restores what you once wrote, is theirs.
+- Comments you write, edit or delete in the app, and "Share to Linear".
+
+Sync, imports, agents, the `dispatch` CLI, teammates, and anything that reaches
+this computer through git or board sync (even a comment file that names you)
+keep using the connection, and so does anything of yours while you are signed
+out. If Linear refuses a change as you (a guest outside their teams, say), it
+shows as a failed write and is retried as you; it is never sent through the
+connection instead. Linear lets only a comment's author change it, so once you
+sign out, Dispatch cannot edit or delete the comments it posted as you until you
+sign in again.
+
+The token stays on your own computer, in
+`$DISPATCH_HOME/.dispatch/credentials.json` (mode 0600), and is never written to
+the repo. Like the project's API key in the same file, it is readable by
+anything running as your user, including the agents and terminals Dispatch
+starts. Signing in is offered only to the person running Dispatch, not to
+teammates on someone else's Dispatch. **Sign out** deletes the token and then
+ends the sign-in at Linear; it works even when Linear cannot be reached or the
+project's key stopped working, and if Linear could not confirm, the row says how
+to end it in Linear's own settings.
+
+Sign-in works in every project with no setup: Dispatch signs in through its own
+public Linear OAuth app, on the callback URL
+`http://127.0.0.1:47823/linear/callback`. To use your workspace's own OAuth
+application instead (or a different callback port), a Linear workspace admin
+sets it up once:
+
+1. In Linear, open Settings → Administration → API and create an OAuth
+   application. On an Enterprise plan an owner may have to approve it.
+2. Name it (for example `Dispatch`; Linear does not allow "Linear" in the name),
+   fill in the developer name and URL, and set the callback URL to exactly
+   `http://127.0.0.1:47823/linear/callback`, with no trailing slash. Leave
+   webhooks and client-credentials tokens off.
+3. Turn on **Public** if people in other Linear workspaces will sign in through
+   this app; leave it off to keep it to your workspace.
+4. Save, and copy the client ID. Dispatch does not use the client secret: do not
+   paste it anywhere.
+5. In Dispatch, open **Settings → Linear → Set up sign-in**, paste the client ID
+   and save. This writes it to `.dispatch/config.yml`; commit that, so
+   teammates' own Dispatch has sign-in set up too.
+6. If another app on your machines uses port 47823, pick another port under
+   **Set up sign-in → Callback port** and change the callback URL in Linear to
+   match: Linear requires the exact URL, port included.
+
+What Save writes (47823 is the default port):
+
+    linear:
+      oauthClientId: <client ID>
+      oauthCallbackPort: 47823
+
+`DISPATCH_LINEAR_CLIENT_ID` in the daemon's environment overrides
+`linear.oauthClientId`, which overrides Dispatch's built-in app; clear the
+client ID in **Edit setup** to go back to the built-in app. Only if Linear
+refuses the first sign-in for a missing secret, set
+`DISPATCH_LINEAR_CLIENT_SECRET` in that environment too; never commit it.
 
 ## Running more than one agent
 
@@ -635,9 +732,21 @@ cards. From a terminal:
 A run can park several tool calls at once, each its own gate: name the one to
 answer by the request id `dispatch run show <runId>` lists. These act as a
 human, so each needs the daemon's app token: pass `--token` or set
-`DISPATCH_APP_TOKEN` to the value `dispatch serve` prints at startup. The agent
-token in the daemon file is refused. A daemon that another command started in
-the background printed its app token to `/dev/null`; stop it and run
+`DISPATCH_APP_TOKEN` to it. The agent token in the daemon file is refused.
+
+`dispatch serve` prints the app token only masked (`ab12…ef90`), because
+terminal scrollback and agent tool logs keep whatever it prints. To use it, ask
+for it at startup:
+
+    dispatch serve --app-token-file ~/secrets/dispatch-app-token  # mode 0600
+    export DISPATCH_APP_TOKEN="$(cat ~/secrets/dispatch-app-token)"
+
+Pick a path your agents do not read: they run as you, so the file mode keeps out
+other users, not them, and the CLI never reads the token from disk on its own.
+`dispatch serve --print-token` prints the full `DISPATCH_APP_TOKEN=` line
+instead. A minted token changes every time the daemon starts, so restarting
+`dispatch serve` rotates one that leaked. A daemon that another command started
+in the background printed its app token to `/dev/null`; stop it and run
 `dispatch serve` instead.
 
 ## Dependency graph with Carto (optional)

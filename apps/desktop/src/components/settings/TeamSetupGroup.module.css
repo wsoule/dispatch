@@ -1,0 +1,35 @@
+/* Settings → Members, "Your team" (TeamSetupGroup.tsx): the inline forms, the
+   recovery code's line and the notes set straight into the card. Status
+   words (a problem, a refusal) take the global toneText class. */
+
+.line {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+/* Two classes, so the widths win over the field's own 100%. */
+.line .inviteInput {
+  width: 192px;
+}
+
+.line .joinInput {
+  width: 224px;
+}
+
+/* A value to copy (CopyValue) taking the room beside its Done button. */
+.copyLine {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.copyLine > :first-child {
+  flex: 1 1 auto;
+}
+
+/* A hint set straight into the card, padded like a row. */
+.note {
+  padding: var(--s-2) var(--s-3);
+}

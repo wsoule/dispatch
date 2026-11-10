@@ -1,28 +1,23 @@
-import type { StatusModel, TaskListItem } from '@dispatch-foo/core/browser';
+import type {
+  DependentStart,
+  StatusModel,
+  TaskListItem,
+} from '@dispatch-foo/core/browser';
 import { fanoutCoverers } from '@dispatch-foo/core/browser';
 import type { MergeQueueEntryState, MilestoneProgress } from '@dispatch/client';
 
 import { dagTaskFromDoc, dagWaves } from '../../lib/dagLayout';
-import { type FlightNavIndex, flightNavIndex } from '../flightplan/flightKeys';
-import {
-  type FlightLayout,
-  flightLayout,
-  type FlightLayoutInput,
-  flightStructureKey,
-} from '../flightplan/flightLayout';
 import {
   buildFlightPlan,
   type FlightPlan,
   viewerHolderOf,
 } from '../flightplan/flightPlan';
+import { flightStructureKey } from '../flightplan/flightStructure';
 import type { LiveBandActivity, LiveBandSpec } from './liveGraph';
 
 // One Live band's model: its container's Flight Plan (the same `buildFlightPlan` the full
-// view reads, so the two never disagree on a node), laid out with the finished leading
-// waves folded to a count, plus the tallies the band header and the page header add up.
-
-/** Loose work has no waves worth naming; its cards fill a grid this many rows tall. */
-const LOOSE_ROWS = 3;
+// view reads, so the two never disagree on a node), plus the tallies the band header and
+// the page header add up. The band's chart lays the work out itself.
 
 /** What every band reads, built once per render of the view. */
 export interface LiveShared {
@@ -42,6 +37,8 @@ export interface LiveShared {
   withRunBranch: ReadonlySet<string>;
   /** Tasks whose latest run has ended (`tasksWithFinishedRun`). */
   withFinishedRun: ReadonlySet<string>;
+  /** The project's `orchestrator.startDependents`; undefined before config loads. */
+  startDependents?: DependentStart;
   /** Tasks whose run sits in the merge queue. */
   landing: ReadonlyMap<string, MergeQueueEntryState>;
 }
@@ -65,31 +62,19 @@ interface LiveBandStats {
 export interface LiveBandModel {
   spec: LiveBandSpec;
   plan: FlightPlan;
-  /** The drawn part of the plan, its columns renumbered from the first unfolded wave. */
-  layout: FlightLayout;
-  nav: FlightNavIndex;
-  /** Drawn node ids in reading order: wave by wave, each top to bottom. */
-  order: string[];
-  /** A layout column's wave plus this is the plan's wave. */
-  waveOffset: number;
-  /** The finished leading waves, and the tasks in them: folded away unless expanded. */
-  finishedWaves: { waves: number; tasks: number };
-  /** Whether the columns are waves (Loose work's are only a grid). */
+  /** Whether the plan has waves worth showing (Loose work's are only a pile). */
   showWaves: boolean;
   activity: LiveBandActivity;
   stats: LiveBandStats;
 }
 
-interface CachedGeometry {
+interface CachedWaves {
   structure: string;
   waves: ReadonlyMap<string, number>;
-  layoutKey: string;
-  layout: FlightLayout;
-  nav: FlightNavIndex;
 }
 
-/** Per-band geometry kept across rebuilds, so a status change never re-lays out a band. */
-export type LiveGeometryCache = Map<string, CachedGeometry>;
+/** Per-band waves kept across rebuilds, so a status change never recomputes them. */
+export type LiveGeometryCache = Map<string, CachedWaves>;
 
 /**
  * The fan-out that would start `task`: the nearest covering container with a live session
@@ -111,70 +96,14 @@ function fanoutOwner(
   return task.meta.parent;
 }
 
-// Leading waves whose every node finished; the last wave always stays drawn.
-function finishedLead(plan: FlightPlan): number {
-  let count = 0;
-  const last = plan.waves.length - 1;
-  while (count < last) {
-    const wave = plan.waves[count];
-    if (wave === undefined || wave.done < wave.total) break;
-    count++;
-  }
-  return count;
-}
-
-// The layout's input: every node on a grid for Loose work, else the nodes from the first
-// unfolded wave on, renumbered, in the bands that still hold any.
-function layoutInput(
-  spec: LiveBandSpec,
-  waves: ReadonlyMap<string, number>,
-  offset: number
-): { nodes: FlightLayoutInput[]; bands: string[] | null } {
-  const { scope } = spec;
-  if (spec.kind === 'loose') {
-    return {
-      nodes: scope.nodes.map((t, i) => ({
-        id: t.meta.id,
-        created: t.meta.created,
-        blockedBy: t.meta.blockedBy,
-        wave: Math.floor(i / LOOSE_ROWS),
-        band: null,
-      })),
-      bands: null,
-    };
-  }
-  const nodes: FlightLayoutInput[] = [];
-  const bandsShown = new Set<string>();
-  for (const t of scope.nodes) {
-    const wave = waves.get(t.meta.id) ?? 0;
-    if (wave < offset) continue;
-    const band = scope.bandOf.get(t.meta.id) ?? null;
-    if (band !== null) bandsShown.add(band);
-    nodes.push({
-      id: t.meta.id,
-      created: t.meta.created,
-      blockedBy: t.meta.blockedBy,
-      wave: wave - offset,
-      band,
-    });
-  }
-  return {
-    nodes,
-    bands:
-      scope.bands === null
-        ? null
-        : scope.bands.map((b) => b.key).filter((k) => bandsShown.has(k)),
-  };
-}
-
 /**
- * Builds one band. `expanded` draws the finished leading waves too; `cache` (held by the
- * view) keeps waves and layout while the band's structure and fold stay the same.
+ * Builds one band. `cache` (held by the view) keeps its waves while the band's structure
+ * stays the same.
  */
 export function buildLiveBand(
   spec: LiveBandSpec,
   shared: LiveShared,
-  options: { expanded: boolean; cache?: LiveGeometryCache }
+  options: { cache?: LiveGeometryCache } = {}
 ): LiveBandModel {
   const { nodes } = spec.scope;
   const structure = flightStructureKey(
@@ -219,24 +148,11 @@ export function buildLiveBand(
       shared.sessions.get(owner)?.session?.startedBy ?? null,
     withRunBranch: shared.withRunBranch,
     withFinishedRun: shared.withFinishedRun,
+    startDependents: shared.startDependents,
     lookup: (id) => shared.taskById.get(id),
   });
 
-  const loose = spec.kind === 'loose';
-  const finished = loose ? 0 : finishedLead(plan);
-  const offset = options.expanded ? 0 : finished;
-  const layoutKey = `${structure}#${loose ? 'loose' : offset}`;
-  let layout: FlightLayout;
-  let nav: FlightNavIndex;
-  if (cached?.layoutKey === layoutKey) {
-    layout = cached.layout;
-    nav = cached.nav;
-  } else {
-    const input = layoutInput(spec, waves, offset);
-    layout = flightLayout(input.nodes, input.bands);
-    nav = flightNavIndex(layout.boxes);
-  }
-  options.cache?.set(spec.key, { structure, waves, layoutKey, layout, nav });
+  options.cache?.set(spec.key, { structure, waves });
 
   // A blocker in a teammate's hands: not this window's, and (in the band) not one its
   // own fan-out starts — in a teammate's fan-out, the plan reads holders from its starter.
@@ -272,17 +188,10 @@ export function buildLiveBand(
   }
 
   const own = spec.progress?.session?.state;
-  let finishedTasks = 0;
-  for (let i = 0; i < finished; i++) finishedTasks += plan.waves[i]?.total ?? 0;
   return {
     spec,
     plan,
-    layout,
-    nav,
-    order: nav.columns.flat(),
-    waveOffset: offset,
-    finishedWaves: { waves: finished, tasks: finishedTasks },
-    showWaves: !loose,
+    showWaves: spec.kind !== 'loose',
     activity: {
       running: plan.running,
       queued: stats.queued,

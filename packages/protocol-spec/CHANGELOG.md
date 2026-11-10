@@ -17,6 +17,11 @@ vector ids (see §14.2).
   sealed `state` ops, the content envelope under the new domain tag
   `dispatch-content-v1`, and its clear presence hints (App. F.2, F.8). No vector
   changes.
+- [editorial] The Dispatch profile no longer expires an undecided `scope` gate:
+  the session stays paused on it, waiting up to 24 hours, and the system sends
+  no `x-expired` deny. `x-expired` now marks only an expired `memory` gate (App.
+  B.2, C.3, C.4). Appendices B and C are informative for Core, so no vector
+  changes.
 - [editorial] Appendix F lists a draft op type, `a2a`, for teammate links: a
   sealed, prunable A2A payload on a link's own log, which a replica drops when
   it finds one on a team's log (§F.1). The appendix is informative, so no vector

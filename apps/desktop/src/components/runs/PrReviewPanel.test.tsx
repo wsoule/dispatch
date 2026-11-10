@@ -332,3 +332,26 @@ describe('PrReviewPanel on a PR that is no longer open', () => {
     expect(screen.queryByText(/staged note/i)).toBeNull();
   });
 });
+
+// One rule for every diff: insertions in the success ink and deletions in the
+// danger ink, as the Pierre diff body and ChangedFilesCard draw them. The
+// signs still say which is which.
+test('the diffstat tones its + and − like the diff body', () => {
+  const { container } = render(
+    <PrReviewPanel
+      detail={DETAIL}
+      loading={false}
+      error={null}
+      stagedNotes={0}
+      onReview={() => Promise.resolve()}
+      onComment={() => Promise.resolve()}
+    />
+  );
+  const added = screen.getByText('+10');
+  const removed = screen.getByText('−2');
+  expect(added.className).toContain('toneText');
+  expect(added.getAttribute('data-tone')).toBe('success');
+  expect(removed.className).toContain('toneText');
+  expect(removed.getAttribute('data-tone')).toBe('danger');
+  expect(container.textContent).toContain('· 1 file');
+});

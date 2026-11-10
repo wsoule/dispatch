@@ -1,0 +1,70 @@
+/* The terminal split layout (TerminalSplitView.tsx): one flex box per split,
+   two children and a 4px divider between them. The first child's basis is
+   set inline from the split's ratio. */
+.split {
+  display: flex;
+  flex: 1 1 0%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.row {
+  flex-direction: row;
+}
+
+.column {
+  flex-direction: column;
+}
+
+.child {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The second child takes whatever the first leaves. */
+.rest {
+  flex: 1 1 0%;
+}
+
+/* The divider: a 4px hit area that shows a bar on hover and on keyboard
+   focus. The focus ring sits on top of the bar. */
+.divider {
+  flex: none;
+  background: transparent;
+}
+
+.dividerRow {
+  width: 4px;
+  cursor: col-resize;
+}
+
+.dividerColumn {
+  height: 4px;
+  cursor: row-resize;
+}
+
+.divider:hover {
+  background: var(--border-strong);
+}
+
+.divider:focus-visible {
+  background: var(--accent);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 0;
+}
+
+/* Forced colours: the bar is always drawn in the text colour, and in the
+   highlight colour while hovered or focused, so the handle never vanishes. */
+@media (forced-colors: active) {
+  .divider {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+
+  .divider:hover,
+  .divider:focus-visible {
+    background: Highlight;
+  }
+}

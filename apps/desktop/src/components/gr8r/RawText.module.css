@@ -1,0 +1,33 @@
+/* Raw output (RawText.tsx): a sunken mono well that scrolls past 12 lines. The one raw-output
+   look in the app: error boundaries, the daemon's Details, failure notices and the settings
+   pages all print through it. */
+.raw {
+  box-sizing: border-box;
+  max-width: 100%;
+  max-height: 192px;
+  margin: 0;
+  padding: var(--s-2) var(--s-3);
+  overflow: auto;
+  scrollbar-width: thin;
+  border-radius: var(--r-sm);
+  background: var(--sunken);
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  line-height: var(--lh);
+  color: var(--text-2);
+  text-align: start;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Under a Details button: a little air between the button and the well. */
+.details {
+  margin-top: var(--s-1);
+}
+
+/* Forced colours drop the sunken fill: an edge keeps the well apart from the text around it. */
+@media (forced-colors: active) {
+  .raw {
+    border: 1px solid CanvasText;
+  }
+}

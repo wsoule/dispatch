@@ -1,0 +1,52 @@
+/* The Overseer's browser pane (BrowserPane.tsx): an address bar with Reload,
+   Open in browser and Close over the framed page, boxed like a focus. */
+.pane {
+  display: flex;
+  flex: 1.4 1 0;
+  flex-direction: column;
+  box-sizing: border-box;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  min-width: 0;
+  padding: 6px var(--s-2);
+  border-bottom: 1px solid var(--divider);
+}
+
+.address {
+  flex: 1;
+  min-width: 0;
+}
+
+.error {
+  padding: var(--s-2) var(--s-2) 0;
+}
+
+.center {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
+  padding: var(--s-4);
+}
+
+/* A framed page may assume a light canvas and paint none of its own: the
+   frame gives it the browser's Canvas in either theme, as a new tab would. */
+.frame {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: Canvas;
+  color-scheme: light;
+}

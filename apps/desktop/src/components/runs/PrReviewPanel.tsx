@@ -6,6 +6,7 @@ import type {
   PrStatus,
   RunMeta,
 } from '@dispatch/client';
+import { Button, cx, SkeletonText } from '@dispatch/ui';
 import {
   Bot,
   Check,
@@ -21,62 +22,57 @@ import { useState } from 'react';
 
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import { Markdown } from './Markdown';
+import styles from './PrReviewPanel.module.css';
 import {
   PrChecksPill,
   REVIEW_VERDICT,
   STATE_TONE,
   StatusPill,
 } from './PrStatusPills';
-import { cn } from '@/lib/utils';
-import { Button } from '@/ui/button';
-import { Skeleton } from '@/ui/skeleton';
-import { Textarea } from '@/ui/textarea';
 
-// The sentence-case 12px/500 heading each section of the panel opens with.
-const HEADING_CLASS = 'text-[12px] font-medium text-muted-foreground';
-const META_CLASS = 'text-[12px] font-book text-muted-foreground tabular-nums';
+// The 14px glyph a heading row or a button leads with; the 12px one inside a chip.
+const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
+const CHIP_ICON = { size: 12, strokeWidth: 1.8, 'aria-hidden': true } as const;
 
 // The header row: PR number + title, its open/merged state, review decision,
 // CI check counts, mergeability, the diffstat, and a link out to GitHub.
 function PrStatusHeader({ status }: { status: PrStatus }) {
   const { checks } = status;
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex min-w-0 items-center gap-2">
-        <GitPullRequest className="text-muted-foreground size-4 shrink-0" />
-        <span className="text-foreground min-w-0 truncate text-[13px] font-medium">
-          {status.title}
-        </span>
+    <div className={styles.header}>
+      <div className={styles.titleRow}>
+        <GitPullRequest className={styles.titleIcon} {...ICON} />
+        <span className={styles.title}>{status.title}</span>
         <a
           href={status.url}
           target="_blank"
           rel="noreferrer"
-          className="text-muted-foreground font-book ml-auto inline-flex shrink-0 items-center gap-1 text-[12px] hover:text-(--text-secondary)"
+          className={styles.prLink}
         >
           #{status.number}
-          <ExternalLink className="size-3" />
+          <ExternalLink {...CHIP_ICON} />
         </a>
       </div>
-      <div className="flex flex-wrap items-center gap-1.5">
+      <div className={styles.facts}>
         <StatusPill
           tone={status.isDraft ? 'muted' : STATE_TONE[status.state]}
-          icon={<GitPullRequest className="size-3" />}
+          icon={<GitPullRequest {...CHIP_ICON} />}
         >
           {status.isDraft ? 'Draft' : status.state.toLowerCase()}
         </StatusPill>
 
         {status.reviewDecision === 'APPROVED' && (
-          <StatusPill tone="green" icon={<Check className="size-3" />}>
+          <StatusPill tone="success" icon={<Check {...CHIP_ICON} />}>
             Approved
           </StatusPill>
         )}
         {status.reviewDecision === 'CHANGES_REQUESTED' && (
-          <StatusPill tone="amber" icon={<X className="size-3" />}>
+          <StatusPill tone="warning" icon={<X {...CHIP_ICON} />}>
             Changes requested
           </StatusPill>
         )}
         {status.reviewDecision === 'REVIEW_REQUIRED' && (
-          <StatusPill icon={<CircleDot className="size-3" />}>
+          <StatusPill icon={<CircleDot {...CHIP_ICON} />}>
             Review required
           </StatusPill>
         )}
@@ -84,15 +80,24 @@ function PrStatusHeader({ status }: { status: PrStatus }) {
         <PrChecksPill checks={checks} />
 
         {status.mergeable === 'CONFLICTING' && (
-          <StatusPill tone="red" icon={<GitMerge className="size-3" />}>
+          <StatusPill tone="danger" icon={<GitMerge {...CHIP_ICON} />}>
             Conflicts
           </StatusPill>
         )}
 
-        <span className={cn(META_CLASS, 'ml-1')}>
-          <span className="text-state-review">+{status.additions}</span>{' '}
-          <span className="text-state-failed">−{status.deletions}</span> ·{' '}
-          {status.changedFiles} file{status.changedFiles === 1 ? '' : 's'}
+        {/* The diffstat follows the diff's own colours (the Pierre theme's
+            green insertions and red deletions, ChangedFilesCard, ToolCard's
+            edit diff): + in the success ink, − in the danger ink. The signs
+            carry the meaning; the tones only reinforce them. */}
+        <span className={cx(styles.meta, styles.diffstat)}>
+          <span className="toneText" data-tone="success">
+            +{status.additions}
+          </span>{' '}
+          <span className="toneText" data-tone="danger">
+            −{status.deletions}
+          </span>{' '}
+          · {status.changedFiles} file
+          {status.changedFiles === 1 ? '' : 's'}
         </span>
       </div>
     </div>
@@ -107,29 +112,29 @@ function ConversationRow({ item }: { item: PrConversationItem }) {
       ? REVIEW_VERDICT[item.state]
       : undefined;
   return (
-    <div className="bg-surface-quaternary rounded-card border-border-strong flex flex-col gap-1.5 border-[0.5px] px-3 py-2">
-      <div className="flex flex-wrap items-center gap-1.5 text-[12px] font-medium">
-        <span className="text-muted-foreground">{item.author}</span>
+    <div className={styles.entry}>
+      <div className={styles.entryHead}>
+        <span className={styles.author}>{item.author}</span>
         {verdict !== undefined && (
           <StatusPill tone={verdict.tone}>{verdict.label}</StatusPill>
         )}
         {item.kind === 'comment' && (
-          <span className="text-muted-foreground font-book">commented</span>
+          <span className={styles.meta}>commented</span>
         )}
         {item.kind === 'line-comment' && item.path !== undefined && (
-          <span className="text-muted-foreground font-mono font-normal">
+          <span className={styles.path}>
             {item.path}
             {item.line !== undefined ? `:${item.line}` : ''}
           </span>
         )}
         {item.createdAt !== '' && (
-          <span className={cn(META_CLASS, 'ml-auto')}>
+          <span className={cx(styles.meta, styles.end)}>
             {formatRelativeTimeFromIso(item.createdAt)}
           </span>
         )}
       </div>
       {item.body.trim() !== '' && (
-        <Markdown content={item.body} className="font-book text-[13px]" />
+        <Markdown content={item.body} className={styles.entryBody} />
       )}
     </div>
   );
@@ -155,7 +160,7 @@ function AgentFindings({
   // panel would read as "no review has run" when the truth is "unknown".
   if (error !== null) {
     return (
-      <p className="text-state-failed font-book text-[12px]">
+      <p className={cx(styles.error, 'toneText')} data-tone="danger">
         Couldn&rsquo;t load the agent&rsquo;s findings: {error}
       </p>
     );
@@ -165,27 +170,32 @@ function AgentFindings({
   // saying otherwise would read as a clean bill of health.
   if (open.length === 0) return null;
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className={HEADING_CLASS}>What the agent found</div>
+    <section className={styles.section}>
+      <h3 className={styles.heading}>What the agent found</h3>
       {open.map((f) => (
-        <div key={f.id} className="text-[13px]">
-          <div className="flex items-baseline gap-1.5">
-            <TriangleAlert className="text-state-waiting size-3 shrink-0 self-center" />
-            <span className={cn(META_CLASS, 'shrink-0')}>{f.severity}</span>
-            <span className="min-w-0 flex-1 font-medium">{f.title}</span>
+        <div key={f.id} className={styles.finding}>
+          <div className={styles.findingHead}>
+            {/* Amber: an open finding is at risk until someone rules on it.
+                The severity word beside it says how much. */}
+            <span
+              className={cx(styles.findingMark, 'toneText')}
+              data-tone="warning"
+            >
+              <TriangleAlert {...CHIP_ICON} />
+            </span>
+            <span className={styles.meta}>{f.severity}</span>
+            <span className={styles.findingTitle}>{f.title}</span>
             {f.file !== null && (
-              <span className="text-muted-foreground shrink-0 font-mono text-[12px]">
+              <span className={styles.path}>
                 {f.file}
                 {f.line !== null && `:${f.line}`}
               </span>
             )}
           </div>
-          <p className="text-muted-foreground font-book pl-4.5 text-[12px] leading-snug">
-            {f.detail}
-          </p>
+          <p className={styles.detail}>{f.detail}</p>
         </div>
       ))}
-    </div>
+    </section>
   );
 }
 
@@ -238,18 +248,23 @@ function ForkConfirm({
   onConfirm: () => void;
 }) {
   return (
-    <div className="bg-state-waiting-surface rounded-card flex flex-col gap-2 p-2">
-      <p className="text-foreground font-book text-[13px]">
+    <div className={styles.fork} data-tone="warning">
+      <p className={styles.forkText}>
         This PR comes from a fork owned by{' '}
-        <span className="font-medium">{owner}</span>. Reviewing it checks that
+        <span className={styles.owner}>{owner}</span>. Reviewing it checks that
         code out and runs it on this machine.
       </p>
-      <div className="flex justify-end gap-2">
-        <Button variant="ghost" size="sm" onClick={onCancel}>
+      <div className={styles.actions}>
+        <Button variant="quiet" size="sm" onClick={onCancel}>
           Cancel
         </Button>
-        <Button size="sm" disabled={busy} onClick={onConfirm}>
-          <Bot className="size-3.5" />
+        <Button
+          variant="primary"
+          size="sm"
+          disabled={busy}
+          icon={<Bot {...ICON} />}
+          onClick={onConfirm}
+        >
           Run the review
         </Button>
       </div>
@@ -258,11 +273,11 @@ function ForkConfirm({
 }
 
 /**
- * The GitHub PR review surface shown alongside the Pierre diff once a run has an open PR: the
+ * The GitHub PR review surface shown beside the Pierre diff on the full-page PR review: the
  * PR's live status (state, checks, review decision, mergeability, diffstat), its conversation
  * (reviews + PR comments + code-line comments), and a composer to approve / request changes /
  * comment — each action shelling out to `gh` server-side and syncing straight to GitHub. The
- * diff itself stays rendered by RunReviewView's own diff surface (RunDiffView); this
+ * diff itself stays rendered by PrReviewView's own diff surface (PierreReviewDiff); this
  * panel is the review layer on top of it.
  */
 export function PrReviewPanel({
@@ -338,14 +353,11 @@ export function PrReviewPanel({
   const needsBody = draft.trim() === '';
 
   return (
-    <div className="rounded-card border-border bg-surface-secondary flex flex-col gap-3 border-[0.5px] p-3">
+    <div className={styles.panel}>
       {loading && detail === undefined ? (
-        <div className="flex flex-col gap-2">
-          <Skeleton className="h-5 w-64" />
-          <Skeleton className="h-5 w-40" />
-        </div>
+        <SkeletonText lines={2} label="Loading the pull request" />
       ) : error !== null ? (
-        <p className="text-state-failed font-book text-[12px]">
+        <p className={cx(styles.error, 'toneText')} data-tone="danger">
           Couldn&rsquo;t load the PR: {error}
         </p>
       ) : detail === undefined ? null : (
@@ -355,28 +367,28 @@ export function PrReviewPanel({
           <AgentFindings findings={findings} error={findingsError} />
 
           {detail.conversation.length > 0 && (
-            <div className="flex flex-col gap-1.5">
-              <div className={HEADING_CLASS}>Conversation</div>
+            <section className={styles.section}>
+              <h3 className={styles.heading}>Conversation</h3>
               {detail.conversation.map((item, i) => (
                 <ConversationRow key={i} item={item} />
               ))}
-            </div>
+            </section>
           )}
 
           {actionError !== null && (
-            <p className="text-state-failed font-book text-[12px]">
+            <p className={cx(styles.error, 'toneText')} data-tone="danger">
               {actionError}
             </p>
           )}
 
           {!isOpen ? (
-            <div className="flex flex-col gap-2">
-              <div className="text-muted-foreground font-book flex flex-col gap-1 text-[13px]">
-                <p className="flex items-center gap-1.5">
+            <div className={styles.composer}>
+              <div className={styles.closed}>
+                <p className={styles.closedLine}>
                   {state === 'MERGED' ? (
-                    <GitMerge className="size-3.5" />
+                    <GitMerge {...ICON} />
                   ) : (
-                    <X className="size-3.5" />
+                    <X {...ICON} />
                   )}
                   This PR is {state === 'MERGED' ? 'merged' : 'closed'}.
                 </p>
@@ -395,30 +407,29 @@ export function PrReviewPanel({
               {/* Only the verdict is refused. A plain comment still lands, so
                   the composer narrows to onComment — never onReview, which
                   is the call the server 409s on a PR that is not open. */}
-              <Textarea
+              <textarea
                 rows={2}
                 aria-label="Comment"
                 placeholder="Leave a comment…"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                className="bg-surface-quaternary rounded-card border-border-strong border-[0.5px] text-[13px] shadow-none"
+                className={cx('textarea', styles.textarea)}
               />
-              <div className="flex flex-wrap justify-end gap-2">
+              <div className={styles.actions}>
                 <Button
-                  variant="ghost"
                   size="sm"
                   disabled={busy || needsBody}
+                  icon={<MessageSquare {...ICON} />}
                   onClick={() => void act(() => onComment(draft.trim()))}
                 >
-                  <MessageSquare className="size-3.5" />
                   Comment
                 </Button>
               </div>
             </div>
           ) : (
-            <div className="flex flex-col gap-2">
+            <div className={styles.composer}>
               {dispatchedRunId !== null && (
-                <p className="text-muted-foreground font-book text-[12px]">
+                <p className={styles.meta}>
                   Review dispatched &mdash; run {dispatchedRunId}.
                 </p>
               )}
@@ -431,33 +442,34 @@ export function PrReviewPanel({
                     onConfirm={() => void dispatchAgentReview(true)}
                   />
                 ) : (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={busy}
-                    className="self-start"
-                    onClick={() => {
-                      if (forkOwner !== undefined) setAskedForPr(prNumber);
-                      else void dispatchAgentReview(false);
-                    }}
-                  >
-                    <Bot className="size-3.5" />
-                    Review with agent
-                  </Button>
+                  <span className={styles.start}>
+                    <Button
+                      variant="quiet"
+                      size="sm"
+                      disabled={busy}
+                      icon={<Bot {...ICON} />}
+                      onClick={() => {
+                        if (forkOwner !== undefined) setAskedForPr(prNumber);
+                        else void dispatchAgentReview(false);
+                      }}
+                    >
+                      Review with agent
+                    </Button>
+                  </span>
                 ))}
-              <Textarea
+              <textarea
                 rows={2}
                 aria-label="Review comment"
                 placeholder="Leave a review comment…"
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
-                className="bg-surface-quaternary rounded-card border-border-strong border-[0.5px] text-[13px] shadow-none"
+                className={cx('textarea', styles.textarea)}
               />
-              <div className="flex flex-wrap justify-end gap-2">
+              <div className={styles.actions}>
                 <Button
-                  variant="ghost"
                   size="sm"
                   disabled={busy || needsBody}
+                  icon={<MessageSquare {...ICON} />}
                   onClick={() =>
                     void act(() =>
                       stagedNotes > 0
@@ -466,24 +478,23 @@ export function PrReviewPanel({
                     )
                   }
                 >
-                  <MessageSquare className="size-3.5" />
                   Comment
                 </Button>
                 <Button
-                  variant="ghost"
                   size="sm"
                   disabled={busy || needsBody}
-                  className="hover:text-state-waiting"
+                  icon={<X {...ICON} />}
                   onClick={() =>
                     void act(() => onReview('request-changes', draft.trim()))
                   }
                 >
-                  <X className="size-3.5" />
                   Request changes
                 </Button>
                 <Button
+                  variant="primary"
                   size="sm"
                   disabled={busy}
+                  icon={<Check {...ICON} />}
                   onClick={() =>
                     void act(() =>
                       onReview(
@@ -493,7 +504,6 @@ export function PrReviewPanel({
                     )
                   }
                 >
-                  <Check className="size-3.5" />
                   Approve
                 </Button>
               </div>

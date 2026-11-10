@@ -1,18 +1,18 @@
 :root {
-  /* Surfaces — a frame-and-panel model on T3 Code's zinc ramp. `--surface-frame` is the app frame the sidebar
+  /* Surfaces — Linear's frame-and-panel model. `--surface-frame` is the app frame the sidebar
      sits on; `--surface-panel` is the rounded main panel inset into it. The four layered
      surfaces (secondary → quaternary) stack inside the panel; popover/control/selected/active
      back floating chrome, buttons, the active nav row and the active tab. In light the frame
      is the greyer one, mirroring dark where the frame is darker than the panel. */
-  --surface-frame: #f4f4f5;
-  --surface-panel: #fdfdfd;
-  --surface-secondary: #fafafa;
-  --surface-tertiary: #f7f7f8;
+  --surface-frame: #efeff0;
+  --surface-panel: #f9f9fa;
+  --surface-secondary: #f4f4f5;
+  --surface-tertiary: #f6f6f7;
   --surface-quaternary: #ffffff;
   --surface-popover: #ffffff;
-  --surface-control: #f4f4f5;
-  --surface-selected: #ececee;
-  --surface-active: #e4e4e7;
+  --surface-control: #f1f1f2;
+  --surface-selected: #e8e8ea;
+  --surface-active: #e3e3e6;
 
   /* Legacy surface names, aliased onto the layered set above so existing call sites land on
      the Linear surfaces without a rename. `--surface-hover` is an alpha so it also reads on
@@ -26,20 +26,20 @@
   --surface-inset: var(--surface-tertiary);
   --field: var(--surface-secondary);
 
-  /* Text — zinc greys. `--text-ghost` is the quaternary step. */
-  --text-primary: #18181b;
-  --text-secondary: #3f3f46;
-  --text-muted: #71717a;
-  --text-ghost: #a1a1aa;
+  /* Text — neutral greys. `--text-ghost` is Linear's quaternary. */
+  --text-primary: #282a30;
+  --text-secondary: #3d3f47;
+  --text-muted: #6f6e77;
+  --text-ghost: #a4a3ab;
 
   /* Borders — hairline, low-contrast. Panel edge, chip ring and popover ring each have their
      own step so the half-pixel rings read at the right weight per layer. */
-  --border-subtle: #ececee;
-  --border-default: #e4e4e7;
-  --border-strong: #d4d4d8;
-  --border-panel: #e4e4e7;
-  --border-chip: #e4e4e7;
-  --border-popover: #dcdcdf;
+  --border-subtle: #ececed;
+  --border-default: #e2e2e2;
+  --border-strong: #d4d4d7;
+  --border-panel: #e2e2e2;
+  --border-chip: #dcdcdf;
+  --border-popover: #d9d9dc;
   --border-selected: #5e6ad2;
 
   /* Linear indigo. Reserved for primary buttons, focus rings, toggles-on, links, the unread
@@ -78,21 +78,21 @@
 
   /* Semantic — every `-border` is derived via color-mix so the dark block only needs to
      restate the `-bg`/base hue and the border recomputes for free. */
-  --green: #059669;
-  --green-bg: color-mix(in srgb, var(--green) 8%, transparent);
+  --green: #2c9a5f;
+  --green-bg: #e6f4ec;
   --green-border: color-mix(in srgb, var(--green) 34%, var(--green-bg));
 
   /* Blue is diff additions only — it is no longer the accent. */
-  --blue: #2563eb;
-  --blue-bg: color-mix(in srgb, var(--blue) 8%, transparent);
+  --blue: #0285ff;
+  --blue-bg: #e9f3ff;
   --blue-border: color-mix(in srgb, var(--blue) 34%, var(--blue-bg));
 
-  --red: #dc2626;
-  --red-bg: color-mix(in srgb, var(--red) 8%, transparent);
+  --red: #e0453f;
+  --red-bg: #fcecec;
   --red-border: color-mix(in srgb, var(--red) 34%, var(--red-bg));
 
-  --amber: #d97706;
-  --amber-bg: color-mix(in srgb, var(--amber) 8%, transparent);
+  --amber: #e0861f;
+  --amber-bg: #fdf0e3;
   --amber-border: color-mix(in srgb, var(--amber) 34%, var(--amber-bg));
 
   /* Teal is the landing run state — violet would read as the indigo accent. */
@@ -100,18 +100,15 @@
   --teal-bg: #e3f4f7;
   --teal-border: color-mix(in srgb, var(--teal) 34%, var(--teal-bg));
 
-  /* Violet survives for syntax highlighting only (ui/ai/code-block.tsx). */
-  /* Sky is the working run state and its pulsing dot (T3 Code's in-flight hue). */
-  --sky: #0ea5e9;
-  --sky-bg: color-mix(in srgb, var(--sky) 8%, transparent);
-
+  /* Violet is decorative only (project colours, labels, avatars): the syntax
+     highlighting it once coloured left with ui-legacy's ai/code-block (B8). */
   --violet: #6e5ce6;
   --violet-bg: #efecfd;
   --violet-border: color-mix(in srgb, var(--violet) 34%, var(--violet-bg));
 
-  --gray: #71717a;
-  --gray-bg: #f4f4f5;
-  --gray-border: #d4d4d8;
+  --gray: #6f6e77;
+  --gray-bg: #f1f2f3;
+  --gray-border: #d4d4d7;
 
   /* Tooltip chrome — always dark, in both themes, so it reads as a distinct floating layer. */
   --tooltip-bg: #25272b;
@@ -126,45 +123,14 @@
   --shadow-hairline-ring: 0 0 0 0.5px var(--border-default);
   --shadow-panel: 0 0.5px 1px 1px rgba(0, 0, 0, 0.06);
   --shadow-btn: 0 0 0 0.5px var(--border-chip), 0 0.5px 1px rgba(0, 0, 0, 0.05);
-  --shadow-card: 0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-card:
+    0 0 0 0.5px rgba(0, 0, 0, 0.08), 0 0.5px 1px rgba(0, 0, 0, 0.06);
   --shadow-raised:
     0 0 0 0.5px var(--border-default), 0 2px 10px rgba(0, 0, 0, 0.05);
-  /* T3 Code's popup drop: a long, negatively spread shadow that pools under the menu. */
   --shadow-overlay:
-    0 0 0 0.5px var(--border-popover), 0 16px 40px -18px rgba(0, 0, 0, 0.55);
+    0 0 0 0.5px var(--border-popover), 0 4px 40px rgba(0, 0, 0, 0.08),
+    0 3px 20px rgba(0, 0, 0, 0.08);
   --shadow-inset-field: inset 0 0 0 0.5px var(--border-default);
-  --shadow-composer: 0 1px 2px rgba(0, 0, 0, 0.05);
-  /* A 1px inner highlight on raised controls (primary and send buttons): light catches the
-     top edge, and pressing swaps it for a dark one. */
-  --control-highlight: inset 0 1px rgba(255, 255, 255, 0.16);
-  --control-pressed: inset 0 1px rgba(0, 0, 0, 0.08);
-
-  /* Frosted glass for popovers, dialogs and the composer: surface opacity plus a backdrop
-     blur and a touch of saturation. */
-  --glass-blur: 12px;
-  --glass-opacity: 80%;
-  --glass-saturation: 1.14;
-
-  /* The user's chat bubble and the composer outline. */
-  --surface-message: color-mix(in srgb, #e4e4e7 55%, #f4f4f5);
-  --composer-outline: rgba(0, 0, 0, 0.08);
-
-  /* Sidebar rows (T3 Code): a faint hover, and the active row lifts to a white pill with a
-     hairline ring in light; dark uses white alpha fills and no ring. */
-  --sidebar-row-hover: rgb(0 0 0 / 0.04);
-  --sidebar-row-active: #ffffff;
-  --sidebar-row-ring: color-mix(
-    in srgb,
-    var(--border-default) 70%,
-    transparent
-  );
-
-  /* Thin overlay-style scrollbar thumb. */
-  --scrollbar-thumb: #d9d9d9;
-  --scrollbar-thumb-hover: #bfbfbf;
-
-  /* Film grain baked into the frame and panel, at a barely-there opacity. */
-  --grain-opacity: 0.035;
 
   /* Radii — theme-invariant, shared by both blocks. Chip is keycaps only; control covers
      buttons, rows, cards and menu items; popover covers dialogs, menus, the command menu and
@@ -174,8 +140,6 @@
   --radius-card: 8px;
   --radius-popover: 12px;
   --radius-pill: 9999px;
-  /* Chat bubbles, the composer and dialogs: T3 Code's rounded-2xl. */
-  --radius-bubble: 16px;
 
   /* Fixed control geometry — every control is 28px, list rows and group headers 36px, panel
      header rows 44px, inbox rows 48px. */
@@ -184,8 +148,6 @@
   --header-h: 44px;
   --inbox-row-h: 48px;
   --sidebar-w: 244px;
-  /* The chat column's max width, so transcripts read as one centered lane. */
-  --chat-lane-w: 736px;
   --icon-size: 14px;
   --avatar-size: 18px;
 
@@ -196,20 +158,20 @@
   --dur-regular: 0.25s;
   --dur-slow: 0.35s;
 
-  /* How much of a status colour a group header picks up at its left edge (`.status-tint` in
-     global.css). */
-  --tint-strength: 4%;
-
   /* Run state — "what does this run want from a human", named after lib/runState.ts's
      `RunDisposition`. `-fg` is text and the state dot, `-surface` a row/tile tint, `-edge` its
      hairline. References to the palette above, never literals, so the dark block flows through
-     for free and must not restate them. Working is T3 Code's sky blue — indigo is
+     for free and must not restate them. Working is Linear's in-progress yellow — indigo is
      reserved for the accent. */
-  --state-working-fg: var(--sky);
-  --state-working-surface: var(--sky-bg);
+  --state-working-fg: var(--status-progress);
+  --state-working-surface: color-mix(
+    in srgb,
+    var(--status-progress) 14%,
+    transparent
+  );
   --state-working-edge: color-mix(
     in srgb,
-    var(--sky) 40%,
+    var(--status-progress) 40%,
     var(--surface-quaternary)
   );
 
@@ -246,13 +208,13 @@
      close" while keeping the board legible behind it. */
   --overlay-light: rgba(20, 21, 24, 0.08);
 
-  /* Typography. The platform face first (SF on macOS), Inter Variable as the fallback; mono
-     is code, file paths and diffs only. */
-  --font-mono: ui-monospace, 'SF Mono', Menlo, 'JetBrains Mono', monospace;
+  /* Typography. Inter Variable carries the 450 body weight; mono is code, file paths and
+     diffs only. */
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
   --font-sans:
-    -apple-system, BlinkMacSystemFont, 'Inter Variable', 'Segoe UI', system-ui,
-    sans-serif;
-  --weight-body: 400;
+    'Inter Variable', 'SF Pro Display', -apple-system, BlinkMacSystemFont,
+    system-ui, sans-serif;
+  --weight-body: 450;
   --weight-medium: 500;
   --weight-semibold: 600;
 
@@ -306,32 +268,31 @@
    sizing/radius/easing tokens above are shared. */
 @media (prefers-color-scheme: dark) {
   :root {
-    /* True black canvas; layers lift by a few points and lean on alpha hairlines. */
-    --surface-frame: #000000;
-    --surface-panel: #050505;
-    --surface-secondary: #0a0a0a;
-    --surface-tertiary: #0c0c0c;
-    --surface-quaternary: #111111;
-    --surface-popover: #141414;
-    --surface-control: #161616;
-    --surface-selected: #1a1a1a;
-    --surface-active: #1f1f1f;
+    --surface-frame: #08080a;
+    --surface-panel: #131313;
+    --surface-secondary: #161617;
+    --surface-tertiary: #17181a;
+    --surface-quaternary: #1b1a1a;
+    --surface-popover: #202022;
+    --surface-control: #1a1d1d;
+    --surface-selected: #232224;
+    --surface-active: #28292a;
     /* Restated (same alias) because apps/site splits this file into its two blocks and
        requires `--surface-page` in each. */
     --surface-page: var(--surface-panel);
-    --surface-hover: rgb(255 255 255 / 0.04);
+    --surface-hover: rgb(255 255 255 / 0.035);
 
-    --text-primary: #f5f5f5;
-    --text-secondary: #d4d4d4;
-    --text-muted: #a3a3a3;
-    --text-ghost: #525252;
+    --text-primary: #fefeff;
+    --text-secondary: #e2e5e6;
+    --text-muted: #949497;
+    --text-ghost: #575659;
 
-    --border-subtle: rgb(255 255 255 / 0.05);
-    --border-default: rgb(255 255 255 / 0.08);
-    --border-strong: rgb(255 255 255 / 0.11);
-    --border-panel: rgb(255 255 255 / 0.08);
-    --border-chip: rgb(255 255 255 / 0.1);
-    --border-popover: rgb(255 255 255 / 0.1);
+    --border-subtle: #1a1b1d;
+    --border-default: #232426;
+    --border-strong: #29292b;
+    --border-panel: #202324;
+    --border-chip: #2e3133;
+    --border-popover: #3c3d40;
     --border-selected: #5e6ad2;
 
     --accent: #5e6ad2;
@@ -361,23 +322,21 @@
     --status-green: #4cb782;
     --priority-urgent: #f2994a;
 
-    --green: #34d399;
-    --green-bg: color-mix(in srgb, var(--green) 16%, transparent);
-    --blue: #60a5fa;
-    --blue-bg: color-mix(in srgb, var(--blue) 16%, transparent);
-    --red: #f87171;
-    --red-bg: color-mix(in srgb, var(--red) 16%, transparent);
-    --amber: #fbbf24;
-    --amber-bg: color-mix(in srgb, var(--amber) 16%, transparent);
-    --sky: #7dd3fc;
-    --sky-bg: color-mix(in srgb, var(--sky) 16%, transparent);
+    --green: #4cb782;
+    --green-bg: #4cb78224;
+    --blue: #3d9aff;
+    --blue-bg: #3d9aff29;
+    --red: #eb5757;
+    --red-bg: #eb575724;
+    --amber: #f2994a;
+    --amber-bg: #f2994a24;
     --teal: #3fb8c9;
     --teal-bg: #3fb8c929;
     --violet: #8f7ff2;
     --violet-bg: #8f7ff229;
-    --gray: #a3a3a3;
+    --gray: #949497;
     --gray-bg: #ffffff0e;
-    --gray-border: rgb(255 255 255 / 0.11);
+    --gray-border: #29292b;
 
     --tooltip-bg: #111214;
     --tooltip-fg: #f2f3f4;
@@ -392,19 +351,8 @@
     --shadow-raised:
       0 0 0 0.5px var(--border-strong), 0 2px 10px rgba(0, 0, 0, 0.22);
     --shadow-overlay:
-      0 0 0 0.5px var(--border-popover), inset 0 1px rgba(255, 255, 255, 0.04),
-      0 18px 44px -18px rgba(0, 0, 0, 0.8);
-    --shadow-composer: 0 14px 32px -18px rgba(0, 0, 0, 0.75);
-
-    --glass-blur: 16px;
-    --glass-saturation: 1.08;
-    --surface-message: color-mix(in srgb, #0a0a0a 92%, white);
-    --composer-outline: rgba(255, 255, 255, 0.05);
-    --sidebar-row-hover: rgb(255 255 255 / 0.08);
-    --sidebar-row-active: rgb(255 255 255 / 0.11);
-    --sidebar-row-ring: transparent;
-    --scrollbar-thumb: rgb(255 255 255 / 0.08);
-    --scrollbar-thumb-hover: rgb(255 255 255 / 0.12);
+      0 0 0 0.5px var(--border-popover), 0 4px 40px rgba(0, 0, 0, 0.1),
+      0 3px 20px rgba(0, 0, 0, 0.125);
 
     --overlay: rgba(0, 0, 0, 0.6);
     --overlay-light: rgba(0, 0, 0, 0.3);

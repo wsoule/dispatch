@@ -1,0 +1,154 @@
+/* Gr8r's embedded panel (panel.tsx): a soft-bordered --surface box at
+   --r-lg, a 40px heading row ruled off from the body. No shadow unless it
+   floats. A tone (data-tone) draws a 2px edge in its hue at the left and
+   nothing else: the heading's words carry the meaning. */
+.panel {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.panel[data-tone] {
+  border-left: 2px solid var(--tone);
+}
+
+/* floating: only a panel that floats over the page (the first-task
+   guide card) takes a shadow. */
+.panel[data-floating='true'] {
+  box-shadow: var(--shadow-pop);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: var(--row-h);
+  padding: 0 var(--s-3);
+  border-bottom: 1px solid var(--divider);
+}
+
+/* band: the heading row on --surface-2, so a list card's head reads as
+   a band above its rows. */
+.header[data-band='true'] {
+  background: var(--surface-2);
+}
+
+.heading {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: var(--fs);
+  font-weight: var(--fw-medium);
+  line-height: 1.35;
+}
+
+.count {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+/* note: a quiet phrase after the heading at the heading's size ("2
+   started"), outside the heading element so its name stays its words. */
+.note {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--fs);
+  font-variant-numeric: tabular-nums;
+}
+
+.actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-1);
+  margin-left: auto;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  padding: var(--s-3);
+}
+
+.body:empty {
+  display: none;
+}
+
+/* flush: the rows pad themselves (PanelRow, ListItem). */
+.flush {
+  gap: 0;
+  padding: 0;
+}
+
+/* PanelRow: 40px, ruled off from the next by --divider. */
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  box-sizing: border-box;
+  min-height: var(--row-h);
+  padding: 6px var(--s-3);
+  color: var(--text);
+  font-size: var(--fs);
+  text-align: left;
+}
+
+.row:not(:last-child) {
+  border-bottom: 1px solid var(--divider);
+}
+
+/* urgent: a 2px warning edge (the row's data-tone="warning"), beside the
+   word that says why. */
+.row[data-urgent='true'] {
+  padding-left: calc(var(--s-3) - 2px);
+  border-left: 2px solid var(--tone);
+}
+
+.urgentLabel {
+  flex: none;
+  color: var(--tone-ink);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+}
+
+/* A row with onActivate: a pointer, the hover fill and the focus ring
+   inside the row (the panel clips anything outside it). */
+.activatable {
+  cursor: pointer;
+}
+
+.activatable:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+@media (hover: hover) {
+  .activatable:hover {
+    background: var(--surface-2);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .activatable {
+    transition: background-color var(--dur) ease;
+  }
+}
+
+/* Forced colours keep every edge (the panel's, the tone's and the urgent
+   row's are borders) and draw the focus ring in CanvasText. */
+@media (forced-colors: active) {
+  .activatable:focus-visible {
+    outline-color: CanvasText;
+  }
+}

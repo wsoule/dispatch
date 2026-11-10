@@ -1,0 +1,149 @@
+/* The branch lane under the Flight Plan (FlightBranchLane.tsx): a full-width
+   fold row ("Branches" and a count) on the library Disclosure, and under it
+   one git-log BranchGraph per integration branch. The lane takes at most
+   min(30%, 240px) of the plan's height; its panel is what scrolls. */
+
+.lane {
+  display: flex;
+  max-height: min(30%, 240px);
+  min-height: 36px;
+  flex: none;
+  flex-direction: column;
+  border-top: 1px solid var(--divider);
+}
+
+/* The Disclosure's root and panel take no class of their own: the root
+   fills the lane under its cap, and the panel scrolls. */
+.lane > [data-slot='flight-branch-fold'] {
+  min-height: 0;
+  flex: 1 1 auto;
+  align-items: stretch;
+}
+
+.lane > [data-slot='flight-branch-fold'] > [id] {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0 4px 8px;
+  scrollbar-width: thin;
+}
+
+/* The fold's trigger: the whole row. Inside a scrolling column, so its ring
+   is inset. */
+.trigger {
+  display: flex;
+  width: 100%;
+  height: 36px;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.trigger:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+@media (hover: hover) {
+  .trigger:hover {
+    background: var(--surface-2);
+  }
+}
+
+.chevron,
+.icon {
+  flex: none;
+  color: var(--text-3);
+}
+
+.trigger[aria-expanded='true'] > .chevron {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .chevron {
+    transition: transform var(--dur) var(--ease);
+  }
+
+  .trigger {
+    transition: background-color var(--dur) var(--ease);
+  }
+}
+
+.label {
+  font-weight: var(--fw-medium);
+}
+
+.count {
+  color: var(--text-3);
+}
+
+/* One integration branch: its band, the branch name and where it stands. */
+.groupHead {
+  display: flex;
+  height: 28px;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  font-size: var(--fs-xs);
+}
+
+.groupTitle {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.integration {
+  flex: none;
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+.note {
+  flex: none;
+  color: var(--text-3);
+}
+
+.graph {
+  padding-bottom: 4px;
+}
+
+/* A line's trailing accessory: merged (done, neutral), or the run's branch. */
+.merged {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+
+.branch {
+  max-width: 224px;
+  overflow: hidden;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Forced colours: the trigger keeps an edge so the fold still reads as a
+   control. */
+@media (forced-colors: active) {
+  .trigger {
+    border-bottom: 1px solid ButtonText;
+  }
+}

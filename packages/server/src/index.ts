@@ -13,6 +13,7 @@ import {
   loadConfig,
   MAX_HANDLE_BYTES,
   openProjectStores,
+  resolvePeople,
   SqliteTaskStore,
   syncPlace,
   syncSettings,
@@ -34,7 +35,7 @@ import { printable } from '@dispatch-foo/federation';
 import { timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { hostname, networkInterfaces } from 'node:os';
-import { dirname, extname, join } from 'node:path';
+import { basename, dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import packageJson from '../package.json';
@@ -53,6 +54,9 @@ import {
   validateTaskInput,
 } from './api.js';
 import type { ApiContext, DaemonTokenPair, DaemonTokens } from './api.js';
+import { goneFileBodyResponse } from './api/files.js';
+import type { DevicePairing } from './api/pairing.js';
+import { rosterMembers } from './api/people.js';
 import { closeAsksOfRevoked, speaksForRevoked } from './api/revoke.js';
 import { storageErrorResponse } from './api/storageErrors.js';
 import { installBlockingSpawner, spawnGitSync } from './blockingGit.js';
@@ -66,13 +70,17 @@ import {
   waitForRootReleased,
   writeDaemonFile,
 } from './daemonfile.js';
+import { DecisionAckStore } from './decisionAcks.js';
 import { DecisionFeed } from './decisionFeed.js';
+import { DecisionReminders } from './decisionReminders.js';
 import {
   createSourceChangeHandler,
   DepMapCache,
   depMapSourceDirs,
   isSkippedPath,
 } from './depmap.js';
+import { fileDeviceStore, PairedDevices, PairingCodes } from './devices.js';
+import { DifficultyAutopilot } from './difficultyAutopilot.js';
 import { docGateHandler, docGatePort } from './docs/gate.js';
 import { DaemonDocsHost, docsMemoryPort } from './docs/host.js';
 import { LinearDocsAdapter } from './docs/linear.js';
@@ -91,6 +99,7 @@ import { IdleShutdown } from './idleShutdown.js';
 import { InboxStore } from './inbox.js';
 import { createJudgmentClient } from './judgments/client.js';
 import type { JudgmentClient } from './judgments/client.js';
+import { DifficultyEvaluator } from './judgments/difficulty.js';
 import {
   InboxTriageScheduler,
   InboxTriageSnapshotStore,
@@ -100,7 +109,11 @@ import {
 import { computeChecklist } from './judgments/landingChecklist.js';
 import { DEP_MAP_DEGRADED_TITLE, LedgerStore } from './ledger.js';
 import type { LedgerStorePort } from './ledger.js';
-import type { LinearClient } from './linear/client.js';
+import { LinearAccounts } from './linear/accounts.js';
+import type { LinearAuth, LinearClient } from './linear/client.js';
+import type { OAuthEndpoints } from './linear/oauth.js';
+import { LinearPersonEdits } from './linear/personEdits.js';
+import { LinearSignIn } from './linear/signIn.js';
 import { LinearSync } from './linear/sync.js';
 import { webhookUrlFor } from './linear/webhook.js';
 import type { PreflightResult } from './memory/claudeModes.js';
@@ -129,6 +142,8 @@ import {
 import type { Messaging } from './messaging/service.js';
 import { openMessaging } from './messaging/service.js';
 import { migrateEpicNames } from './migrateEpicNames.js';
+import type { MobileSettings } from './mobile/host.js';
+import { decisionTitle, MobileHost } from './mobile/host.js';
 import { NoteStore } from './notes.js';
 import {
   codexInstalled,
@@ -153,7 +168,16 @@ import {
   type OverseerStore,
 } from './orchestrator/overseerStore.js';
 import { OverseerToolRegistry } from './orchestrator/overseerTools.js';
-import { boardSyncDir, taskAuthorshipPath } from './orchestrator/paths.js';
+import {
+  allocationRunsPath,
+  boardSyncDir,
+  mobileDir,
+  pairedDevicesPath,
+  planningAuditPath,
+  planningWarningsPath,
+  remoteAccessPath,
+  taskAuthorshipPath,
+} from './orchestrator/paths.js';
 import { PlanManager } from './orchestrator/plan.js';
 import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import type { CommandRunner } from './orchestrator/pr.js';
@@ -176,6 +200,20 @@ import {
   TERMINAL_RUN_STATES,
 } from './orchestrator/types.js';
 import { VerificationRunner } from './orchestrator/verify.js';
+import { AllocationRunStore } from './planning/allocationRuns.js';
+import { PlanningAuditStore } from './planning/audit.js';
+import {
+  type AllocationDeps,
+  applyAllocation,
+  dailyRunDue,
+  startDailyJobs,
+} from './planning/dailyAllocation.js';
+import {
+  dailyWarningsDue,
+  runWarnings,
+  type WarningDeps,
+  WarningStore,
+} from './planning/warningRuns.js';
 import {
   policyActivityAppender,
   policyDecisionClassifier,
@@ -189,13 +227,17 @@ import {
   previewRequestHeaders,
   previewResponseHeaders,
   previewUpstreamUrl,
+  sandboxPreview,
 } from './previewHeaders.js';
 import type { ReceiptsStep } from './receipts/exporter.js';
 import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
+import { relayFromEnv, RemoteAccess } from './remoteAccess/service.js';
+import { fileRemoteStore } from './remoteAccess/store.js';
 import { ReviewCommentStore } from './reviewComments.js';
 import { sessionOrigins, sessionToken } from './session.js';
 import type { SharedPageConfig } from './shared.js';
 import { bindModeFor, isLoopbackAddress, ownOrigins } from './shared.js';
+import { statusModelFor } from './statuses.js';
 import { readProjectBackend, writeProjectBackend } from './storage.js';
 import { BoardSyncScheduler } from './sync/scheduler.js';
 import {
@@ -250,6 +292,8 @@ export interface ServerHandle {
   messaging: Messaging;
   /** The link to the machine hub, when this daemon makes one. */
   hubLink: DaemonHubLink | null;
+  /** Phones paired through the remote relay. */
+  remoteAccess: RemoteAccess;
   // The A2A bridge: its listener status, store and port.
   a2a: A2ABridge;
   // Exposed for introspection/tests — e.g. calling pollOnce() directly to
@@ -261,15 +305,39 @@ export interface ServerHandle {
   prWorktrees: PrWorktreeManager;
   // Exposed for tests, as mergeQueue is: they reach the memory store directly.
   memory: MemoryService;
+  // Push and the mobile listener; exposed so a test can read the listener's
+  // port and drive the notifier.
+  mobile: MobileHost;
   // Closes WS clients, stops the watcher, and removes the daemon file (if one
   // was written) — the reverse of everything startServer sets up.
   stop(): Promise<void>;
 }
 
+/** The TypeSafe judgment client a daemon boots with: the one a test passes,
+ * none on a hosted planner (it calls a model, and a hosted planner runs no
+ * model for anyone), else the project's own. */
+export function judgmentsFor(
+  opts: Pick<StartServerOptions, 'judgments' | 'hostedPlanner'>,
+  rootDir: string
+): JudgmentClient | null {
+  if (opts.hostedPlanner === true) return null;
+  return opts.judgments === undefined
+    ? createJudgmentClient(rootDir)
+    : opts.judgments;
+}
+
 export interface StartServerOptions {
   rootDir: string;
+  /** Hosted for other people (app.dispatch.foo's planner): only the planning
+   * routes answer (hostedPlanner.ts), and no agent executor, planner or
+   * overseer is registered, so nothing here can run a model or a command. */
+  hostedPlanner?: boolean;
   /** Link to the machine hub (default: unless DISPATCH_HUB=0). */
   hubLink?: boolean;
+  // Phones paired through the remote relay (remoteAccess/). On unless
+  // DISPATCH_REMOTE=off; the relay is DISPATCH_REMOTE_RELAY or
+  // the hosted one. Nothing dials out until a phone is paired.
+  remoteAccess?: { enabled?: boolean; relay?: string };
   // 0 = ephemeral port, assigned by the OS; tests always pass this so
   // multiple server instances can run concurrently without colliding.
   port?: number;
@@ -349,6 +417,21 @@ export interface StartServerOptions {
   // Replaces credential lookup with a ready-made Linear client, so no sync test
   // ever reaches the network.
   linearClient?: LinearClient;
+  // Builds every other Linear client (a person's sign-in, an API key being
+  // checked), so a test can stand in for Linear per credential.
+  linearCreateClient?: (credential: string | LinearAuth) => LinearClient;
+  // Where Linear's OAuth and GraphQL calls go, and the fetch they use: a
+  // fake Linear in tests, or under DISPATCH_ENABLE_FAKES with
+  // DISPATCH_LINEAR_FAKE_ORIGIN (daemonMain.ts). Production omits both.
+  // `clientSecret` is DISPATCH_LINEAR_CLIENT_SECRET, which daemonMain reads
+  // once and removes from the environment so no child process inherits it.
+  linearOAuth?: {
+    endpoints?: OAuthEndpoints;
+    fetchImpl?: typeof fetch;
+    clientSecret?: string;
+    // Replaces Dispatch's built-in client ID; tests pass null to turn it off.
+    builtInClientId?: string | null;
+  };
   // Replaces TypeSafe key lookup with a ready-made judgment client (or null
   // to disable judgments outright), so no test ever reaches the API.
   judgments?: JudgmentClient | null;
@@ -409,6 +492,13 @@ export interface StartServerOptions {
   onSharingRestart?: (rollback: () => void) => Promise<void>;
   // One-boot A2A listener overrides from dispatchd's `--a2a-*` flags.
   a2a?: ListenerOverrides;
+  // One-boot mobile listener overrides from dispatchd's `--mobile-*` flags.
+  mobile?: Partial<MobileSettings>;
+  // The built desktop bundle whose `m/` the mobile listener serves. Left
+  // undefined, the desktop app's own dist; null serves no app (tests).
+  mobileDistDir?: string | null;
+  // Replaces real Web Push sends (tests).
+  mobilePush?: ConstructorParameters<typeof MobileHost>[0]['notifier'];
   // Standalone hosts' watch-stream limits; tests shorten the keepalive.
   a2aWatchLimits?: Partial<WatchLimits>;
   // How long a signature peer must answer unverifiably before it is
@@ -627,9 +717,12 @@ function withCors(
   const allowed = resolveCorsOrigin(origin, own);
   if (allowed !== null) {
     res.headers.set('access-control-allow-origin', allowed);
+    // Every method the client sends must be listed: the webview is
+    // cross-origin, so a method missing here (PUT for label colours, the
+    // license, doc bodies and the A2A listener) dies at the preflight.
     res.headers.set(
       'access-control-allow-methods',
-      'GET, POST, PATCH, DELETE, OPTIONS'
+      'GET, POST, PUT, PATCH, DELETE, OPTIONS'
     );
     // `authorization` must stay listed: every guarded route needs the bearer
     // header, and the desktop webview and dev harness are both cross-origin to
@@ -700,6 +793,9 @@ async function serveIndexHtml(
         'content-type': CONTENT_TYPES['.html'],
         // A page carrying a credential must not sit in a shared cache.
         'cache-control': 'no-store',
+        // Nor in a frame: the app's browser pane frames with
+        // `allow-same-origin`, and a page there can navigate itself here.
+        'content-security-policy': "frame-ancestors 'none'",
       },
     }
   );
@@ -1002,14 +1098,18 @@ async function bootServer(
   // expects an injected token that shared mode will never inject. With no
   // desktop build on disk, shared mode serves no UI at all rather than one
   // that cannot sign in — the API still answers the CLI and the MCP server.
+  // A hosted planner serves no UI: its host serves the bundle, and the page
+  // here would carry the agent token to anyone who loaded it.
   const webDistDir =
-    opts.webDistDir !== undefined
-      ? opts.webDistDir
-      : shared
-        ? existsSync(join(DESKTOP_DIST_DIR, 'index.html'))
-          ? DESKTOP_DIST_DIR
-          : null
-        : DEFAULT_WEB_DIST_DIR;
+    opts.hostedPlanner === true
+      ? null
+      : opts.webDistDir !== undefined
+        ? opts.webDistDir
+        : shared
+          ? existsSync(join(DESKTOP_DIST_DIR, 'index.html'))
+            ? DESKTOP_DIST_DIR
+            : null
+          : DEFAULT_WEB_DIST_DIR;
   if (shared && webDistDir === null) {
     console.error(
       'dispatchd: team-local mode found no desktop build to serve — run `moonx desktop:build` or pass --web-dist <dir>'
@@ -1041,13 +1141,56 @@ async function bootServer(
   // Elastic License 2.0); the registry asks it about any token that is not
   // one of the daemon's own two.
   const tokenPair = opts.tokens ?? mintDaemonTokens();
-  const team = createTeam(rootDir, actorContext.member.handle);
+  const team = createTeam(rootDir, actorContext.member.handle, {
+    hostedPlanner: opts.hostedPlanner === true,
+  });
+  const remoteAccess = new RemoteAccess({
+    store: fileRemoteStore(remoteAccessPath(rootDir)),
+    relay:
+      opts.remoteAccess?.relay ??
+      relayFromEnv(process.env.DISPATCH_REMOTE_RELAY),
+    name: `${hostname().split('.')[0] ?? 'machine'} · ${basename(rootDir)}`,
+    // A hosted planner opens no relay connection: no egress but Linear.
+    enabled:
+      opts.hostedPlanner !== true &&
+      (opts.remoteAccess?.enabled ?? process.env.DISPATCH_REMOTE !== 'off'),
+    log: (line) => console.log(line),
+  });
+  // The hub link is made further down; its web credential (requests a person
+  // forwards from app.dispatch.foo through this machine's hub) speaks for the
+  // operator at the decide tier, marked as from the web.
+  let webForwarding: DaemonHubLink | null = null;
+  // The operator's own other devices (devices.ts): the desktop app on another
+  // machine, a phone. Each pairs with a one-time code and speaks as the
+  // operator at the tier it was paired with.
+  const pairing: DevicePairing = {
+    devices: new PairedDevices(actorContext.member.handle, {
+      store: fileDeviceStore(pairedDevicesPath(rootDir)),
+    }),
+    codes: new PairingCodes(),
+  };
+  // Push and the phone's listener (mobile/host.ts). The snapshot reads the
+  // orchestrator and messaging built further down, and is first called from
+  // mobile.start() once they exist.
+  const mobile = new MobileHost({
+    dir: mobileDir(rootDir),
+    distDir:
+      opts.mobileDistDir !== undefined ? opts.mobileDistDir : DESKTOP_DIST_DIR,
+    snapshot: () => mobileSnapshot(),
+    deviceOf: (token) => tokens.registry.resolve(token)?.device ?? null,
+    deviceExists: (id) => pairing.devices.list().some((d) => d.id === id),
+    ...(opts.mobile === undefined ? {} : { overrides: opts.mobile }),
+    ...(opts.mobilePush === undefined ? {} : { notifier: opts.mobilePush }),
+  });
   const tokens: DaemonTokens = {
     ...tokenPair,
     registry: new TokenRegistry(
       tokenPair,
       actorContext.member.handle,
-      team.teammates
+      team.teammates,
+      remoteAccess,
+      pairing.devices,
+      { matches: (digest) => webForwarding?.webMatches(digest) ?? false }
     ),
   };
 
@@ -1212,8 +1355,9 @@ async function bootServer(
   // copies task *files* into a git worktree and commits them. A
   // database-backed project has no such files; exporting its state to git is
   // the receipts exporter's job, not this one's.
+  // A hosted planner pushes nowhere: no board sync and no receipts export.
   const syncWorktree =
-    store instanceof TaskStore
+    store instanceof TaskStore && opts.hostedPlanner !== true
       ? SyncWorktree.open(rootDir, defaultGitRunner)
       : null;
   // The one serialized writer to origin's default branch, shared by the board
@@ -1268,7 +1412,7 @@ async function bootServer(
   // Memory opens further down; until it does, its step writes nothing.
   let memoryReceipts: ReceiptsStep | null = null;
   const receiptsScheduler =
-    store instanceof TaskStore
+    store instanceof TaskStore || opts.hostedPlanner === true
       ? null
       : new ReceiptsScheduler({
           rootDir,
@@ -1456,6 +1600,53 @@ async function bootServer(
   const commentStore: CommentStorePort =
     stores.records?.comments ?? new FileCommentStore(rootDir);
 
+  // The allocation run log, the warning memory and digest log, and the
+  // daemon's daily planning jobs: the allocation (planning.allocation: daily)
+  // applied as the daemon's owner, and the digest of milestones at risk
+  // (planning.warnings: notify) sent to leads and watchers.
+  const allocationRuns = new AllocationRunStore(allocationRunsPath(rootDir));
+  const warningStore = new WarningStore(planningWarningsPath(rootDir));
+  const planningAudit = new PlanningAuditStore(planningAuditPath(rootDir));
+  const allocationDeps: AllocationDeps = {
+    rootDir,
+    store,
+    runs: allocationRuns,
+    actor: actorContext.humanRef,
+    comments: {
+      add: (input) => {
+        const comment = commentStore.add(input);
+        events.broadcast({
+          type: 'comment.changed',
+          taskId: input.taskId,
+          commentIds: [comment.id],
+        });
+        return comment;
+      },
+    },
+    people: () =>
+      resolvePeople(loadConfig(rootDir).people ?? [], rosterMembers(rootDir)),
+    changed: (ids) => {
+      cache.refresh(store, ids);
+      events.broadcast({ type: 'task.changed', ids });
+    },
+  };
+  const warningDeps: WarningDeps = {
+    ...allocationDeps,
+    warnings: warningStore,
+  };
+  const dailyPlanning = startDailyJobs([
+    {
+      name: 'daily allocation',
+      due: (now) => dailyRunDue(allocationDeps, now),
+      run: () => applyAllocation(allocationDeps),
+    },
+    {
+      name: 'daily digest',
+      due: (now) => dailyWarningsDue(warningDeps, now),
+      run: () => runWarnings(warningDeps),
+    },
+  ]);
+
   // The reverse-dependency map ReviewRunner scopes reviews with. Carto backs
   // it when available; the built-in scanner is the fallback. Source changes
   // re-sync carto's container before invalidating, so the next review reads a
@@ -1470,6 +1661,8 @@ async function bootServer(
       `dispatchd: could not read carto config, defaulting to 'on': ${(err as Error).message}`
     );
   }
+  // A hosted planner has no code to map.
+  if (opts.hostedPlanner === true) cartoMode = 'off';
   const depMapCache = new DepMapCache(rootDir, {
     mode: cartoMode,
     onDegrade: ({ detail }) => {
@@ -1509,7 +1702,7 @@ async function bootServer(
   // Read per call so a config edit applies without restarting the daemon.
   const readDigestConfig = () => loadConfig(rootDir).repoDigest;
   const digestCache =
-    opts.registerExecutors === undefined
+    opts.registerExecutors === undefined && opts.hostedPlanner !== true
       ? new RepoDigestCache(
           rootDir,
           (dir) => generateRepoDigest(dir),
@@ -1519,10 +1712,7 @@ async function bootServer(
   // The TypeSafe judgment client, resolved once at boot: a key added later
   // needs a restart, same as the executors. Tests pass `judgments`
   // explicitly (null disables).
-  const judgments =
-    opts.judgments === undefined
-      ? createJudgmentClient(rootDir)
-      : opts.judgments;
+  const judgments = judgmentsFor(opts, rootDir);
   const orchestrator = new Orchestrator({
     rootDir,
     store,
@@ -1556,7 +1746,9 @@ async function bootServer(
     riskChanged: (taskId) => docs.service.riskChangedDuringPublish(taskId),
   });
   if (syncConfig !== null) orchestrator.setRunIdMinter(generateSyncedRunId);
-  if (opts.registerExecutors !== undefined) {
+  if (opts.hostedPlanner === true) {
+    // No executor: a hosted planner never runs an agent.
+  } else if (opts.registerExecutors !== undefined) {
     opts.registerExecutors(orchestrator);
   } else {
     orchestrator.registerExecutor('claude', new ClaudeExecutor());
@@ -1603,6 +1795,7 @@ async function bootServer(
   // The machine hub homes MCP sessions; this project links to it so runs and
   // sessions reach each other (messaging/hubLink.ts).
   const hubLink =
+    opts.hostedPlanner !== true &&
     (opts.hubLink ?? process.env.DISPATCH_HUB !== '0')
       ? new DaemonHubLink({
           rootDir,
@@ -1612,6 +1805,7 @@ async function bootServer(
           owner: actorContext.humanRef,
         })
       : null;
+  webForwarding = hubLink;
   const messagingFederation = hubLink?.hooks() ?? mailFederation?.hooks;
   const messaging = openMessaging({
     rootDir,
@@ -1781,7 +1975,7 @@ async function bootServer(
   }
   // Open publishes a crash left with no run start now.
   try {
-    await redispatchPublishes(docs.service, orchestrator);
+    await redispatchPublishes(docs.service, { orchestrator, rootDir });
   } catch (err) {
     console.error('dispatchd: publish redispatch failed', err);
   }
@@ -1874,6 +2068,9 @@ async function bootServer(
         }),
     mark: (label) => watchdog.mark(label),
     track: (fn) => (idle === null ? fn() : idle.track(fn)),
+    // Intake requests' request.changed events go to the same webhook as
+    // decision.opened; read per event so an edit applies live.
+    notificationsWebhook: () => loadConfig(rootDir).notifications.webhook,
   });
   docsHost.bindA2AOrigin((taskId) => a2a.taskOrigin(taskId) === 'a2a');
 
@@ -1889,7 +2086,9 @@ async function bootServer(
     events,
     actorContext,
   });
-  if (opts.registerPlanners !== undefined) {
+  if (opts.hostedPlanner === true) {
+    // No planner either: plans are drafted by agents.
+  } else if (opts.registerPlanners !== undefined) {
     opts.registerPlanners(planManager);
   } else {
     planManager.registerPlanner('claude', new ClaudePlanner(rootDir));
@@ -1926,7 +2125,16 @@ async function bootServer(
   // request — a project's gh/remote setup essentially never changes while
   // dispatchd is running, and re-shelling-out to `gh --version` on every
   // health check or review action would be wasted work.
-  const prCapability = await detectPrCapability(rootDir, opts.prCommandRunner);
+  // Not awaited: `gh --version` alone costs a few hundred ms, and nothing at
+  // boot needs the answer. PrManager awaits it; health refetches on the event.
+  // A hosted planner runs no gh or git for PRs.
+  const prCapability =
+    opts.hostedPlanner === true
+      ? Promise.resolve(false)
+      : detectPrCapability(rootDir, opts.prCommandRunner).catch(() => false);
+  void prCapability.then(
+    (capable) => capable && events.broadcast({ type: 'health.changed' })
+  );
   // Built ahead of both PrManager (syncPrComments/pushPrReview read and
   // write a PR target's comments) and ReviewRunner below, which shares this
   // same instance — a review run's comments and a human's land in the same
@@ -1993,10 +2201,16 @@ async function bootServer(
   // either of the two paths above, so they'd sit in the review queue as
   // "needs review" forever. Reconcile once at boot — catching anything merged
   // while dispatchd was down — and then on the PR poller's cadence.
-  orchestrator.reconcileExternallyMergedRuns();
+  // A hosted planner has no runs to reconcile, and runs no git for them.
+  if (opts.hostedPlanner !== true) orchestrator.reconcileExternallyMergedRuns();
   const externalMergeTimer = setInterval(() => {
+    if (opts.hostedPlanner === true) return;
     watchdog.mark('reconcileExternallyMergedRuns tick');
     orchestrator.reconcileExternallyMergedRuns();
+    // A `git pull --rebase` in the main checkout rewrites a local squash
+    // onto origin under a new sha; point the run at the one origin has.
+    watchdog.mark('repairRewrittenMerges tick');
+    orchestrator.repairRewrittenMerges();
   }, opts.prPollIntervalMs ?? 60000);
 
   // Shares the exact same command-runner seam as PrManager (opts.prCommandRunner,
@@ -2107,7 +2321,9 @@ async function bootServer(
       overseer: overseerAddress,
     }),
   });
-  if (opts.registerOverseers !== undefined) {
+  if (opts.hostedPlanner === true) {
+    // No overseer conversation on a hosted planner.
+  } else if (opts.registerOverseers !== undefined) {
     opts.registerOverseers(overseerManager);
   } else {
     overseerManager.registerBackend('claude', new ClaudeOverseer(rootDir));
@@ -2160,6 +2376,37 @@ async function bootServer(
     );
   }
 
+  // "Sign in with Linear": the owner's own token, kept machine-wide in the
+  // credentials file, carries the Linear writes of their own edits. A change
+  // to a sign-in reaches the app as `config.changed`, as connecting does.
+  const linearOAuth = opts.linearOAuth ?? {};
+  const linearPersonEdits = new LinearPersonEdits();
+  // Every task change the daemon hears about (an agent's, the
+  // orchestrator's, a teammate's, board sync's, a file edited on disk) drops
+  // the owner's credit for any part it moved, so a value someone else sets
+  // back later never goes out as the owner. The owner's own routes record
+  // before they broadcast, so their edit survives its own event.
+  events.subscribe((event) => {
+    if (event.type !== 'task.changed') return;
+    // No ids: anything may have changed.
+    for (const id of event.ids ?? linearPersonEdits.tracked()) {
+      if (linearPersonEdits.tracks(id))
+        linearPersonEdits.observe(id, store.get(id));
+    }
+  });
+  const linearAccounts = new LinearAccounts({
+    ...(linearOAuth.endpoints === undefined
+      ? {}
+      : { endpoints: linearOAuth.endpoints }),
+    ...(linearOAuth.fetchImpl === undefined
+      ? {}
+      : { fetchImpl: linearOAuth.fetchImpl }),
+    ...(linearOAuth.clientSecret === undefined
+      ? {}
+      : { clientSecret: linearOAuth.clientSecret }),
+    onChange: () => events.broadcast({ type: 'config.changed' }),
+  });
+
   // Bidirectional Linear sync. The poll timer only starts when the config enables it; the
   // debounced push rides the same `task.changed` signal the UI listens to.
   const linearSync = new LinearSync({
@@ -2168,7 +2415,20 @@ async function bootServer(
     cache,
     events,
     client: opts.linearClient,
+    ...(opts.linearCreateClient === undefined
+      ? {}
+      : { createClient: opts.linearCreateClient }),
+    ...(linearOAuth.endpoints === undefined
+      ? {}
+      : { graphqlUrl: linearOAuth.endpoints.graphql }),
+    ...(linearOAuth.fetchImpl === undefined
+      ? {}
+      : { fetchImpl: linearOAuth.fetchImpl }),
+    accounts: linearAccounts,
+    personEdits: linearPersonEdits,
     localHumanRef: actorContext.humanRef,
+    connectionFromSignIn: opts.hostedPlanner === true,
+    teammateActive: (handle) => team.teammates.issuedTier(handle) !== null,
     comments: commentStore,
     webhookUrl: webhookUrlFor(opts.publicOrigins ?? []),
     documents: {
@@ -2185,6 +2445,32 @@ async function bootServer(
     }
   });
   linearSync.start();
+  const linearSignIn = new LinearSignIn({
+    linearConfig: () => {
+      try {
+        return loadConfig(rootDir).linear;
+      } catch {
+        return null;
+      }
+    },
+    accounts: linearAccounts,
+    connection: () => linearSync.connection(),
+    lastConnection: () => linearSync.lastConnection(),
+    personClient: (auth) => linearSync.clientFor(auth),
+    ...(linearOAuth.clientSecret === undefined
+      ? {}
+      : { clientSecret: linearOAuth.clientSecret }),
+    ...(linearOAuth.endpoints === undefined
+      ? {}
+      : { endpoints: linearOAuth.endpoints }),
+    ...(linearOAuth.fetchImpl === undefined
+      ? {}
+      : { fetchImpl: linearOAuth.fetchImpl }),
+    ...(linearOAuth.builtInClientId === undefined
+      ? {}
+      : { builtInClientId: linearOAuth.builtInClientId }),
+    onChange: () => events.broadcast({ type: 'config.changed' }),
+  });
 
   // Review dispatched as its own run kind. Built at boot because it subscribes
   // to the terminal hook that ingests a review's findings. `findingStore` is
@@ -2286,17 +2572,25 @@ async function bootServer(
     fixLoopStore,
     cache,
     events,
+    statusModel: () => statusModelFor(rootDir),
     conversationApprovalInput: (conversation, requestId) =>
       overseerManager
         .list()
         .find((record) => record.id === conversation)
         ?.pendingApprovals.find((a) => a.requestId === requestId)?.input,
+    overseerActionBatch: (conversation, actionId) =>
+      overseerManager
+        .find(conversation)
+        ?.pendingActions.find((a) => a.id === actionId)?.batch,
     // The policy engine's classifier: a gate the project's rung auto-decides
     // shows up as `recorded` rather than `blocking`.
     policy: policyDecisionClassifier(rootDir, {
       riskOf: (taskId) => store.get(taskId)?.meta.risk,
       approvalFloor,
     }),
+    // A human's dismissals of derived items, kept per machine so one stays
+    // hidden across recomputes and restarts until its condition changes.
+    acks: new DecisionAckStore(rootDir),
   });
   const stopDecisionFeed = decisionFeed.start();
 
@@ -2310,10 +2604,20 @@ async function bootServer(
     readConfig: () => loadConfig(rootDir).notifications,
   });
   const stopWebhookDelivery = webhookDelivery.start();
+  // Scope requests never expire, so one still undecided after 30 minutes
+  // pings the app and the webhook again rather than sitting unseen.
+  const stopDecisionReminders = new DecisionReminders({
+    feed: decisionFeed,
+    events,
+  }).start();
 
   // The gate hooks themselves — verify-retry and merge consult the project's
   // policy off the daemon's own signals; the scope gate consults it in
   // messaging/scopePolicy.ts. See policyEngine.ts.
+  // The difficulty evaluator (judgments/difficulty.ts), shared by the policy
+  // engine's difficulty lift and the autopilot below so one task is judged
+  // once, not once per consumer.
+  const difficultyEvaluator = new DifficultyEvaluator(judgments);
   const policyEngine = new PolicyEngine({
     rootDir,
     store,
@@ -2325,13 +2629,32 @@ async function bootServer(
     ledgerStore,
     actorContext,
     approvalFloor,
+    judgeDifficulty: (taskId) => {
+      const task = store.get(taskId);
+      return task === null
+        ? Promise.resolve(null)
+        : difficultyEvaluator.judge(task);
+    },
     // The Activity half of each receipt; the ledger half is the engine's own.
-    appendActivity: policyActivityAppender({ store, cache, events }),
+    appendActivity: appendPolicyActivity,
     answerGate: async (messageId, answer) => {
       await messaging.engine.reply(messageId, answer, SYSTEM_SENDER);
     },
   });
   const stopPolicyEngine = policyEngine.start();
+  // `policy.difficulty.autoDispatch`: ready low-difficulty tasks dispatch
+  // themselves, and the lift above carries them to the merge queue.
+  const stopDifficultyAutopilot = new DifficultyAutopilot({
+    rootDir,
+    tasks: () => cache.query({ includeArchived: true }),
+    orchestrator,
+    events,
+    judge: (task) => difficultyEvaluator.judge(task),
+    humanRef: actorContext.humanRef,
+    ledgerStore,
+    appendActivity: appendPolicyActivity,
+    milestoneScope: () => milestoneEngine.liveScopeIds(),
+  }).start();
 
   // Who is connected right now — read off open event sockets, see presence.ts.
   const presenceTracker = new PresenceTracker();
@@ -2375,21 +2698,25 @@ async function bootServer(
     events,
     orchestrator,
     version: packageJson.version,
+    hostedPlanner: opts.hostedPlanner === true,
     planManager,
     overseerManager,
     milestoneEngine,
     taskAuthorship,
     messaging,
     hubLink,
+    remoteAccess,
     docs: docs.service,
     memory,
     a2a,
     prManager,
     prWorktrees,
     mergeQueue,
-    prCapability,
     startedAt,
     noteStore: new NoteStore(rootDir),
+    allocationRuns,
+    warningStore,
+    planningAudit,
     inboxStore,
     inboxTriage,
     findingStore,
@@ -2406,6 +2733,8 @@ async function bootServer(
     terminals,
     decisionFeed,
     linearSync,
+    linearSignIn,
+    linearPersonEdits,
     actorContext,
     tokens,
     boardSyncScheduler,
@@ -2424,6 +2753,7 @@ async function bootServer(
     ownOrigins: ownOriginSet,
     sessionOrigins: sessionOriginSet,
     shared,
+    pairing,
   };
 
   // What a restart would interrupt or lose, in words: a live agent, a queued
@@ -2509,6 +2839,40 @@ async function bootServer(
     return { busy: workIn(parked), parked: parked.size };
   };
   apiCtx.liveWork = workReport;
+  apiCtx.mobile = mobile;
+  // What the phone hears about: decisions addressed to the operator (not a
+  // teammate's, in a shared daemon) and every run's state.
+  const mobileSnapshot = () => {
+    const runs = orchestrator.list();
+    const titles = new Map(runs.map((r) => [r.id, r.taskTitle]));
+    return {
+      decisions: openHumanDecisions(messaging.engine)
+        .filter((m) =>
+          messaging.engine
+            .deliveriesOf(m.id)
+            .some((d) => d.recipient === actorContext.humanRef)
+        )
+        .map((m) => ({
+          id: m.id,
+          title: decisionTitle(m, (id) => titles.get(id)),
+        })),
+      runs: runs.map((r) => ({
+        id: r.id,
+        title: r.taskTitle,
+        state: r.state,
+        reviewed: r.reviewedAt !== undefined,
+      })),
+    };
+  };
+  const unsubscribeMobile = events.subscribe((event) => {
+    if (
+      event.type === 'message.new' ||
+      event.type === 'delivery.changed' ||
+      event.type === 'run.changed' ||
+      event.type === 'decisions.changed'
+    )
+      mobile.changed();
+  });
   // This server's own restart mark (never shared with another server).
   const sharing = new SharingState();
   apiCtx.sharing = sharing;
@@ -2663,6 +3027,8 @@ async function bootServer(
 
         // Before /api/ and the static fallback: this is the one path whose
         // content belongs to someone else's server.
+        if (url.pathname.startsWith('/preview/') && opts.hostedPlanner === true)
+          return new Response('Not found', { status: 404 });
         if (url.pathname.startsWith('/preview/')) {
           // A preview has no credential of its own — an iframe cannot send one
           // on every sub-resource — so on loopback it is exactly as private as
@@ -2677,7 +3043,7 @@ async function bootServer(
               { status: 403 }
             );
           }
-          return await proxyPreview(url, req, previews);
+          return sandboxPreview(await proxyPreview(url, req, previews));
         }
 
         if (url.pathname.startsWith('/api/')) {
@@ -2722,6 +3088,10 @@ async function bootServer(
       // snippets in the response body. Loopback-only or not, responses must
       // never carry stack traces — log server-side, return opaque JSON.
       error(err) {
+        // A raw-route file deleted between the route's stat and Bun opening
+        // it: the route's own 404, not an unexpected error.
+        const gone = goneFileBodyResponse(err);
+        if (gone !== null) return gone;
         console.error(`dispatchd: unexpected error: ${(err as Error).message}`);
         const storage = storageErrorResponse(err);
         if (storage !== null) return storage;
@@ -2779,8 +3149,15 @@ async function bootServer(
   // assertion.
   const port = server.port ?? 0;
   hubLink?.start(messaging.engine, port);
+  remoteAccess.start(port);
   const tlsPort = tlsServer === null ? undefined : (tlsServer.port ?? 0);
-  await a2a.start();
+  // A hosted planner opens no A2A listener: no outbound agent calls.
+  if (opts.hostedPlanner !== true) await a2a.start();
+  mobile.start((req) =>
+    idle === null
+      ? handleApi(req, apiCtx)
+      : idle.track(() => handleApi(req, apiCtx))
+  );
   if (shared) {
     for (const origin of tlsPort === undefined
       ? ownOrigins(port, networkInterfaces(), opts.publicOrigins)
@@ -2816,12 +3193,15 @@ async function bootServer(
     orchestrator,
     messaging,
     hubLink,
+    remoteAccess,
     a2a,
     prManager,
     prWorktrees,
     memory,
+    mobile,
     async stop() {
       hubLink?.stop();
+      remoteAccess.stop();
       sharing.clear();
       watchdog.stop();
       idle?.stop();
@@ -2845,12 +3225,19 @@ async function bootServer(
       mergeQueue.stop();
       unsubscribeLinear();
       unsubscribeRevokedAsks();
+      linearSignIn.stop();
+      dailyPlanning.stop();
+      allocationRuns.close();
+      warningStore.close();
+      planningAudit.close();
       await linearSync.stop();
       unsubscribeBoardSync();
       unsubscribeDocPublishes();
       stopWebhookDelivery();
+      stopDecisionReminders();
       stopDecisionFeed();
       stopPolicyEngine();
+      stopDifficultyAutopilot();
       // Kills every child and flushes scrollback; the sessions stay in the
       // index so the next daemon hydrates them as `orphaned`.
       terminals.shutdown();
@@ -2867,6 +3254,11 @@ async function bootServer(
       await server.stop(true);
       await tlsServer?.stop(true);
       await a2a.close();
+      unsubscribeMobile();
+      await mobile.close();
+      // The boot's PR probe is not awaited at boot; its `gh` and `git` must
+      // not outlive the daemon, or a restart loop accumulates their pipes.
+      await prCapability;
       if (shouldWriteDaemonFile) removeDaemonFile(rootDir);
       // Last: the database handle outlives every reader above, and closing it
       // while a request is still in flight would fail that request rather

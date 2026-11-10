@@ -289,7 +289,39 @@ export interface PassDeps {
    *  retired label), by team and lowercased name: the reason, and until when
    *  it is not looked up again. Kept across passes by the engine. */
   blockedLabels?: Map<string, { reason: string; until: number }>;
+  /** Everyone signed in with Linear here (the owner, and on a shared host
+   *  each teammate with a grant). Empty or absent: every write uses the
+   *  project connection. Labels, containers and reads never ask. */
+  persons?: readonly PassPerson[];
+  /** Hears the issue fields a push landed, so their credit is cleared, and
+   *  those it did not, whose credit stays. */
+  onSettled?: (
+    taskId: string,
+    landed: readonly string[],
+    pending: readonly string[]
+  ) => void;
+  /** Hears every task the pass writes locally (a pull, a link), so the
+   *  owner's credit for a part someone else's value replaced is dropped. */
+  onLocalWrite?: (doc: TaskDoc) => void;
 }
+
+/**
+ * The person signed in with Linear on this daemon: their client, and which
+ * of a push's issue fields hold values they wrote here
+ * (linear/personEdits.ts). Their fields go out with their client and the
+ * rest with the project connection, so neither side is ever credited for the
+ * other's values; a field Linear refuses as them stays theirs, so it is
+ * retried as them and never through the project connection.
+ */
+interface PassPerson {
+  client: LinearClient;
+  owned: (doc: TaskDoc, fields: readonly string[]) => readonly string[];
+}
+
+// Every issue field a create sends: all but the pull-only ones.
+const SENT_ISSUE_FIELDS: readonly string[] = ISSUE_FIELDS.filter(
+  (f) => !PULL_ONLY_ISSUE_FIELDS.has(f)
+);
 
 // How long a label found blocked is not looked up again.
 const BLOCKED_LABEL_MS = 30 * 60_000;
@@ -457,6 +489,7 @@ export class LinearPass {
     this.d.docs.set(id, doc);
     track(this.d.ctx, doc);
     this.d.batch.add(id);
+    this.d.onLocalWrite?.(doc);
     return doc;
   }
 
@@ -782,18 +815,70 @@ export class LinearPass {
     return pending;
   }
 
+  // The fields of one issue push by the client each goes out with: each
+  // signed-in person's for the fields they own (a part has one owner in the
+  // ledger, so no field is claimed twice), the project connection's for the
+  // rest. People go first; any list may be empty.
+  private issueWriters(
+    doc: TaskDoc,
+    fields: readonly string[]
+  ): { client: LinearClient; fields: string[] }[] {
+    const claimed = new Set<string>();
+    const groups: { client: LinearClient; fields: string[] }[] = [];
+    for (const person of this.d.persons ?? []) {
+      const mine = person.owned(doc, fields).filter((f) => !claimed.has(f));
+      if (mine.length === 0) continue;
+      for (const field of mine) claimed.add(field);
+      groups.push({ client: person.client, fields: mine });
+    }
+    const rest = fields.filter((f) => !claimed.has(f));
+    if (rest.length > 0) groups.push({ client: this.d.client, fields: rest });
+    return groups;
+  }
+
   private async pushIssue(
     doc: TaskDoc,
     fields: string[],
     remote: LinearIssue
   ): Promise<PushResult<LinearIssue>> {
-    const { client, ctx } = this.d;
     const failed = new Set<string>();
     let latest = remote;
+    let assumed: FieldValues = {};
     const team = remote.team?.id ?? this.d.teamId;
     if (fields.includes('labels') && !(await this.ensureLabels(doc, team))) {
       failed.add('labels');
     }
+    for (const group of this.issueWriters(doc, fields)) {
+      const sent = await this.pushIssueAs(
+        group.client,
+        doc,
+        group.fields,
+        remote,
+        failed
+      );
+      latest = sent.latest ?? latest;
+      assumed = { ...assumed, ...sent.assumed };
+    }
+    this.d.onSettled?.(
+      doc.meta.id,
+      fields.filter((f) => !failed.has(f)),
+      [...failed]
+    );
+    return { remote: latest, failed, assumed };
+  }
+
+  // One client's part of an issue push: the scalar update, the relation and
+  // link follow-ups, and an archive or unarchive. Fields that do not land go
+  // into `failed`; answers the issue as Linear last returned it, if it did.
+  private async pushIssueAs(
+    client: LinearClient,
+    doc: TaskDoc,
+    fields: string[],
+    remote: LinearIssue,
+    failed: Set<string>
+  ): Promise<{ latest: LinearIssue | null; assumed: FieldValues }> {
+    const { ctx } = this.d;
+    let latest: LinearIssue | null = null;
     const plan = issuePush(doc, fields, remote, ctx);
     const scalar = Object.keys(plan.input);
     if (scalar.length > 0) {
@@ -808,7 +893,7 @@ export class LinearPass {
         latest = updated;
       }
     }
-    const assumed = await this.followUps(doc, remote, plan, failed);
+    const assumed = await this.followUps(client, doc, remote, plan, failed);
     // An unarchive takes a slot under the plan's cap, so it waits out a usage
     // limit with its base kept.
     if (plan.archive === false && this.capped) failed.add('archived');
@@ -821,19 +906,20 @@ export class LinearPass {
       if (archived === null) failed.add('archived');
       else latest = archived;
     }
-    return { remote: latest, failed, assumed };
+    return { latest, assumed };
   }
 
   // Relation and link writes, which Linear keeps as records of their own. A
   // successful one is assumed to have landed, so the base records the value
   // without a refetch.
   private async followUps(
+    client: LinearClient,
     doc: TaskDoc,
     remote: LinearIssue,
     plan: ReturnType<typeof issuePush>,
     failed: Set<string>
   ): Promise<FieldValues> {
-    const { client, ctx } = this.d;
+    const { ctx } = this.d;
     const touched = new Set<string>();
     for (const r of plan.relations.create) {
       const field = RELATION_FIELD[r.type] ?? 'relatedTo';
@@ -1091,13 +1177,27 @@ export class LinearPass {
       ops = ISSUE_OPS as unknown as EntityOps<RemoteRecord>;
       const team = this.teamForNewIssue(doc);
       if (!(await this.ensureLabels(doc, team))) failed.add('labels');
-      const plan = issuePush(doc, ISSUE_FIELDS, null, ctx, team);
+      // Whoever wrote the title creates the issue: the signed-in person when
+      // it is theirs, else the project connection. The other side's fields
+      // are left out and count as not sent, so the next push sends each of
+      // them with its own writer's client.
+      const { client: writer, fields: sending } = this.issueWriters(
+        doc,
+        SENT_ISSUE_FIELDS
+      ).find((g) => g.fields.includes('title')) ?? {
+        client,
+        fields: [...SENT_ISSUE_FIELDS],
+      };
+      for (const field of SENT_ISSUE_FIELDS) {
+        if (!sending.includes(field)) failed.add(field);
+      }
+      const plan = issuePush(doc, sending, null, ctx, team);
       // A create leaves unset fields out rather than sending explicit nulls.
       const input = Object.fromEntries(
         Object.entries(plan.input).filter(([, v]) => v !== null)
       );
       const created = this.check(
-        await client.createIssue({
+        await writer.createIssue({
           ...input,
           teamId: team,
           title: doc.meta.title,
@@ -1105,14 +1205,24 @@ export class LinearPass {
       );
       remote = created;
       if (created !== null) {
-        const follow = issuePush(doc, ISSUE_FOLLOW_UP_FIELDS, created, ctx);
+        const follow = issuePush(
+          doc,
+          ISSUE_FOLLOW_UP_FIELDS.filter((f) => sending.includes(f)),
+          created,
+          ctx
+        );
         // An archive the task's own fields do not ask for (a finished task's,
-        // see taskIssueValues) is never resent from the base.
+        // see taskIssueValues) is never resent from the base. It is the
+        // export's choice, not a value anyone wrote, so it goes through the
+        // project connection like archive-closed.
         const arrival = opts?.archive === true && follow.archive !== true;
         try {
-          assumed = await this.followUps(doc, created, follow, failed);
+          assumed = await this.followUps(writer, doc, created, follow, failed);
           if (follow.archive === true || arrival) {
-            const archived = this.check(await client.archiveIssue(created.id));
+            const archiver = follow.archive === true ? writer : client;
+            const archived = this.check(
+              await archiver.archiveIssue(created.id)
+            );
             if (archived === null) failed.add('archived');
             else remote = archived;
           }
@@ -1124,6 +1234,11 @@ export class LinearPass {
         if (arrival && failed.has('archived')) {
           (this.d.state.pendingArchives ??= {})[doc.meta.id] = created.id;
         }
+        this.d.onSettled?.(
+          doc.meta.id,
+          SENT_ISSUE_FIELDS.filter((f) => !failed.has(f)),
+          [...failed]
+        );
       }
     }
     if (remote === null) {

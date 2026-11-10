@@ -1,0 +1,18 @@
+/* The Terminals page (TerminalsView.tsx): the head, an error notice when a
+   call fails, and the split layout filling the rest of the height. */
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  height: 100%;
+  min-height: 0;
+  padding: var(--s-3);
+}
+
+/* The split tree's box: takes every row the head and notice leave. */
+.layout {
+  display: flex;
+  flex: 1 1 0%;
+  flex-direction: column;
+  min-height: 0;
+}

@@ -1,0 +1,26 @@
+{
+  "name": "@dispatch/web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The hosted Dispatch service at app.dispatch.foo: sign-in, teams, device login, the team hub and the hosted MCP endpoint.",
+  "license": "Elastic-2.0",
+  "type": "module",
+  "scripts": {
+    "start": "bun src/main.ts",
+    "dev": "DEV_LOGIN=1 PORT=8787 DATA_DIR=./data bun --watch src/main.ts",
+    "test": "bun test",
+    "tsc": "tsgo --noEmit --pretty"
+  },
+  "dependencies": {
+    "@dispatch-foo/core": "workspace:*",
+    "@dispatch-foo/protocol": "workspace:*",
+    "@dispatch/planning": "workspace:*",
+    "@dispatch/server": "workspace:*",
+    "@modelcontextprotocol/sdk": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@dispatch-foo/mcp": "workspace:*",
+    "@types/bun": "catalog:"
+  }
+}

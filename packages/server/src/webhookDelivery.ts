@@ -6,7 +6,9 @@ import type { EventBus } from './events.js';
 /** The JSON body one webhook POST carries. `item` is the feed's own record,
  *  unchanged, so a receiver sees exactly what the app would show. */
 export interface WebhookPayload {
-  event: 'decision.opened';
+  /** `decision.reminder` re-sends an item still open after REMIND_AFTER_MS
+   *  (decisionReminders.ts), once per item. */
+  event: 'decision.opened' | 'decision.reminder';
   sentAt: string;
   /** Which project this came from — one Slack channel may take several. */
   project: { rootDir: string };
@@ -73,12 +75,34 @@ export class WebhookDelivery {
   }
 
   /** Seeds the seen set with what is open now and starts delivering on
-   *  `decisions.changed`. Returns its own unsubscribe. */
+   *  `decisions.changed` and `decision.reminder`. Returns its own
+   *  unsubscribe. */
   start(): () => void {
     for (const item of this.ctx.feed.list()) this.seen.add(item.id);
     return this.ctx.events.subscribe((event) => {
-      if (event.type !== 'decisions.changed') return;
-      void this.deliverNew();
+      if (event.type === 'decisions.changed') void this.deliverNew();
+      else if (event.type === 'decision.reminder')
+        void this.deliverReminder(event.itemId);
+    });
+  }
+
+  /**
+   * Posts a `decision.reminder` for one item, if it is still open and
+   * blocking and its kind's toggle is on. Public so a test can await it;
+   * production reaches it through `start`. Not tracked in `seen`: the
+   * reminder source already sends each item once.
+   */
+  async deliverReminder(itemId: string): Promise<void> {
+    const item = this.ctx.feed.list().find((open) => open.id === itemId);
+    if (item === undefined || item.disposition !== 'blocking') return;
+    const config = this.readConfig();
+    if (config?.webhook === undefined || config.kinds[item.kind] === false)
+      return;
+    await this.post(config.webhook, {
+      event: 'decision.reminder',
+      sentAt: new Date().toISOString(),
+      project: { rootDir: this.ctx.rootDir },
+      item,
     });
   }
 

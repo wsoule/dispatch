@@ -1,39 +1,27 @@
 import type { ReactNode } from 'react';
 
-import { PageHeader } from '@/ui/ai/page-header';
-import { TextButton } from '@/ui/ai/text-button';
-import { Button } from '@/ui/button';
+import { PageHead } from '../shell/PageHead';
+import styles from './TasksPageHeader.module.css';
 
-/** The chip every Two views page under Tasks leads with; it returns to the list. */
-export function TasksBackButton({ onBack }: { onBack: () => void }) {
-  return (
-    <Button
-      variant="outline"
-      size="xs"
-      data-testid="tasks-back"
-      onClick={onBack}
-    >
-      ‹ tasks
-    </Button>
-  );
-}
+// Re-exported for the pages that lead their own head with the back chip
+// (Projects, Files, Live…); it lives beside PageHead, which renders it too.
+export { TasksBackButton } from '../shell/PageHead';
 
-/** A side page's header in Two views: "‹ tasks", then a compact crumb and its actions. */
+/** A side page's head under Tasks: the back chip, then a compact crumb and
+ * its actions, in a bar ruled off from the page below. */
 export function TasksPageHeader({
   onBack,
   crumb,
   actions,
 }: {
-  onBack: () => void;
+  onBack?: () => void;
   crumb: ReactNode[];
   actions?: ReactNode;
 }) {
   return (
-    <PageHeader
-      leading={<TasksBackButton onBack={onBack} />}
-      crumb={crumb}
-      actions={actions}
-    />
+    <div className={styles.bar}>
+      <PageHead onBack={onBack} crumbs={crumb} actions={actions} />
+    </div>
   );
 }
 
@@ -46,8 +34,8 @@ export function CrumbLink({
   children: ReactNode;
 }) {
   return (
-    <TextButton onClick={onClick} className="hover:text-foreground">
+    <button type="button" className={styles.crumbLink} onClick={onClick}>
       {children}
-    </TextButton>
+    </button>
   );
 }

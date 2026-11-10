@@ -1,5 +1,7 @@
 import { useEffect, useReducer } from 'react';
 
+import styles from './MarkdownMath.module.css';
+
 type Katex = typeof import('katex').default;
 
 const CACHE_LIMIT = 1000;
@@ -84,18 +86,12 @@ export function MarkdownMath({
       data-display={display || undefined}
       role="math"
       aria-label={source}
-      className={
-        display
-          ? 'my-[0.65em] block overflow-x-auto overflow-y-hidden py-1'
-          : 'inline-block max-w-full overflow-x-auto align-middle'
-      }
+      className={display ? styles.display : styles.inline}
     >
       {html ? (
         <span dangerouslySetInnerHTML={{ __html: html }} />
       ) : (
-        <span className="font-mono text-[0.9em] whitespace-pre-wrap">
-          {fallback}
-        </span>
+        <span className={styles.source}>{fallback}</span>
       )}
     </Tag>
   );

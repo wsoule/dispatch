@@ -1,10 +1,18 @@
+import {
+  Button,
+  EmptyState,
+  ProgressPie,
+  Register,
+  RegisterCell,
+  RegisterRow,
+} from '@dispatch/ui';
 import { Waypoints, Workflow, Zap } from 'lucide-react';
 
 import { ContainerIcon } from '../tasks/page/ContainerIcon';
 import type { ReadyContainer } from './liveGraph';
-import { IconButton } from '@/ui/ai/icon-button';
-import { PillButton } from '@/ui/ai/pill';
-import { EmptyState, ProgressGlyph } from '@/ui/chrome';
+import styles from './LiveReady.module.css';
+
+const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
 
 interface LiveReadyProps {
   containers: readonly ReadyContainer[];
@@ -15,7 +23,9 @@ interface LiveReadyProps {
 
 /**
  * The Live view with nothing in flight: what could be, as the milestones and parent
- * issues with the most work a fan-out would start now, each with Send agents….
+ * issues with the most work a fan-out would start now. A library EmptyState says why the
+ * view is empty, then a Register lists each container (its glyph, title and reference,
+ * how much of it is ready) with Send agents… and a way into its Flight Plan.
  */
 export function LiveReady({
   containers,
@@ -24,64 +34,79 @@ export function LiveReady({
   onOpenPlan,
 }: LiveReadyProps) {
   return (
-    <div
-      data-slot="live-empty"
-      className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-4 pt-12 pb-8"
-    >
+    <div data-slot="live-empty" className={styles.empty}>
       <EmptyState
-        icon={Workflow}
-        heading="Nothing in flight"
-        description={
-          containers.length === 0
-            ? 'No agent is running and nothing is ready to start. Plan work, and its waves show here as agents pick it up.'
-            : 'Send agents at a milestone and its waves show here, live — blocked work starts on its own as its blockers land.'
-        }
-        className="py-4"
-      />
+        label="Nothing in flight"
+        icon={<Workflow size={22} strokeWidth={1.8} aria-hidden />}
+      >
+        {containers.length === 0
+          ? 'No agent is running and nothing is ready to start. Plan work, and its waves show here as agents pick it up.'
+          : 'Send agents at a milestone and its waves show here, live — blocked work starts on its own as its blockers land.'}
+      </EmptyState>
       {containers.length > 0 && (
-        <ul
-          aria-label="Ready to start"
-          className="flex w-full max-w-[640px] flex-col gap-1"
-        >
-          {containers.map(({ container, ready, total }) => {
-            const id = container.meta.id;
-            return (
-              <li
-                key={id}
-                data-slot="live-ready-row"
-                data-container={id}
-                className="bg-surface-quaternary rounded-card flex h-11 items-center gap-2 px-3"
-              >
-                <ContainerIcon
-                  kind={container.meta.kind}
-                  icon={container.meta.icon}
-                  color={container.meta.color}
-                  className="size-3.5 shrink-0"
-                />
-                <span className="text-foreground min-w-0 truncate text-[13px] font-medium">
-                  {container.meta.title}
-                </span>
-                <span className="font-book shrink-0 text-[12px] tracking-(--id-tracking) text-(--text-muted)">
-                  {refFor(id)}
-                </span>
-                <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[12px] text-(--text-secondary) tabular-nums">
-                  <ProgressGlyph fraction={total === 0 ? 0 : ready / total} />
-                  {ready} ready of {total}
-                </span>
-                <PillButton onClick={() => onSendAgents(id)}>
-                  <Zap className="size-3" />
-                  Send agents…
-                </PillButton>
-                <IconButton
-                  label={`Open the Flight Plan for ${container.meta.title}`}
-                  onClick={() => onOpenPlan(id)}
+        <div className={styles.list}>
+          <Register
+            label="Ready to start"
+            columns="minmax(0, 1fr) auto auto auto"
+            stackWithin={600}
+          >
+            {containers.map(({ container, ready, total }) => {
+              const id = container.meta.id;
+              const title = container.meta.title;
+              return (
+                <RegisterRow
+                  key={id}
+                  data-slot="live-ready-row"
+                  data-container={id}
                 >
-                  <Waypoints aria-hidden />
-                </IconButton>
-              </li>
-            );
-          })}
-        </ul>
+                  <RegisterCell variant="name">
+                    <span className={styles.name}>
+                      <ContainerIcon
+                        kind={container.meta.kind}
+                        icon={container.meta.icon}
+                        color={container.meta.color}
+                      />
+                      <span className={styles.title}>{title}</span>
+                    </span>
+                  </RegisterCell>
+                  <RegisterCell variant="mono">
+                    <span className={styles.ref}>{refFor(id)}</span>
+                  </RegisterCell>
+                  <RegisterCell variant="mono">
+                    <span className={styles.ready}>
+                      <ProgressPie
+                        done={ready}
+                        total={total}
+                        size={14}
+                        label={`${ready} of ${total} ready`}
+                      />
+                      {ready} ready of {total}
+                    </span>
+                  </RegisterCell>
+                  <RegisterCell align="end">
+                    <span className={styles.actions}>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        icon={<Zap {...ICON} />}
+                        onClick={() => onSendAgents(id)}
+                      >
+                        Send agents…
+                      </Button>
+                      <Button
+                        variant="quiet"
+                        size="sm"
+                        aria-label={`Open the Flight Plan for ${title}`}
+                        icon={<Waypoints {...ICON} />}
+                        onClick={() => onOpenPlan(id)}
+                      />
+                    </span>
+                  </RegisterCell>
+                </RegisterRow>
+              );
+            })}
+          </Register>
+        </div>
       )}
     </div>
   );

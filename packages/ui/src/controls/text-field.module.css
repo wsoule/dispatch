@@ -1,0 +1,99 @@
+/* field takes the global .input; a group draws that box round adornments
+   with the ring on :focus-within; inline has no box. */
+
+.field,
+.group {
+  width: 100%;
+  min-width: 0;
+}
+
+.field.sm,
+.group.sm {
+  min-height: var(--h-sm);
+  font-size: var(--fs-sm);
+}
+
+.field.sm {
+  padding: 0 8px;
+}
+
+.group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: text;
+}
+
+.group:focus-within {
+  border-color: var(--accent);
+  outline: 2px solid transparent;
+  outline-offset: 1px;
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 0 0 4px var(--accent-soft);
+}
+
+.group[data-invalid='true'] {
+  border-color: var(--red);
+  box-shadow: 0 0 0 1px var(--red);
+}
+
+.group[data-disabled='true'] {
+  background: var(--surface-2);
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+.adornment {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  color: var(--text-3);
+}
+
+.bare {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  min-height: inherit;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.bare:focus-visible {
+  outline: 2px solid transparent;
+}
+
+.bare::placeholder,
+.inline::placeholder {
+  color: var(--text-3);
+}
+
+.inline {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.inline:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.inline[aria-invalid='true'] {
+  text-decoration: underline wavy var(--red);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .group {
+    transition: none;
+  }
+}

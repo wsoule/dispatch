@@ -1,0 +1,59 @@
+/* The Docs page (DocsView.tsx): the Tasks back chip and crumb head over one
+   pane, the All docs list (or Memory), or one doc in its place with its
+   discussion under it. Colours and type come from @dispatch/ui's components
+   and tokens; this sheet only places them. */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Everything under the head: it fills the rest and each pane owns its own
+   scroller. */
+.body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Why the docs cannot load (no token): a quiet sentence. */
+.note {
+  margin: 0;
+  padding: var(--s-4);
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+  color: var(--text-2);
+}
+
+/* Memory: the browser scrolls inside the pane. */
+.scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* An open doc over its discussion. */
+.doc {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.docMain {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The discussion keeps a fixed share of the pane's height, ruled off from
+   the doc above it. */
+.discussion {
+  flex-shrink: 0;
+  height: 38%;
+  min-height: 0;
+  border-top: 1px solid var(--divider);
+}

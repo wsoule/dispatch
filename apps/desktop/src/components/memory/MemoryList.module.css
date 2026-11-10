@@ -1,0 +1,75 @@
+/* One memory tab's entries (MemoryList.tsx): a button per entry, its title
+   over the handle and provenance, the open one in the accent's selection
+   tint. The handle is a machine-read string, so it is set in Geist Mono. */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: var(--s-2) 10px;
+  border-radius: var(--r-sm);
+  text-align: left;
+}
+
+.row[aria-current='true'] {
+  background: var(--accent-soft);
+}
+
+.row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+@media (hover: hover) {
+  .row:not([aria-current='true']):hover {
+    background: var(--surface-2);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .row {
+    transition: background-color var(--dur) ease;
+  }
+}
+
+/* Forced colours drop the tint: the open entry keeps an edge. */
+@media (forced-colors: active) {
+  .row[aria-current='true'] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
+.title {
+  font-size: var(--fs);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.handle {
+  font-family: var(--font-mono);
+}
+
+.empty {
+  margin: 0;
+  padding: var(--s-3) 10px;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}

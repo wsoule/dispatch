@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-import { formatTaskLink } from '../lib/deepLink';
+import { formatIssueLink, formatTaskLink } from '../lib/deepLink';
 import { isTauri } from '../lib/tauri';
 
 /**
@@ -11,10 +11,12 @@ import { isTauri } from '../lib/tauri';
  * subscribed) then `onOpenUrl` for links opened while the app runs. In the
  * browser-dev harness there is no plugin, so a `?task=<id>` on the harness URL
  * (beside its `root`) is read once on mount instead — the form
- * `formatTaskLink(…, 'browser')` writes. The hosted web demo takes its root
- * from the injected config rather than `?root=`, so a link copied there is
- * not opened until `lib/tauri.ts` exposes that root. `onLink` lives in a ref
- * so the subscription happens exactly once per mount.
+ * `formatTaskLink(…, 'browser')` writes. A `?issue=<IDENTIFIER>` needs no
+ * root: it becomes `dispatch://issue/<IDENTIFIER>`, resolved in the open
+ * project, which is how the hosted planner (app.dispatch.foo, whose root is
+ * injected rather than on the URL) opens a link the desktop app wrote with
+ * `formatWebIssueLink`. `onLink` lives in a ref so the subscription happens
+ * exactly once per mount.
  *
  * The cold-start sources replay: the plugin never clears `current` after
  * `getCurrent`, and StrictMode runs the mount effect twice, so a URL those
@@ -42,6 +44,8 @@ export function useDeepLinks(onLink: (url: string) => void): void {
       if (task !== null && root !== null) {
         deliverOnce(formatTaskLink({ taskId: task, project: root }, 'app'));
       }
+      const issue = params.get('issue');
+      if (issue !== null) deliverOnce(formatIssueLink(issue));
       return;
     }
 

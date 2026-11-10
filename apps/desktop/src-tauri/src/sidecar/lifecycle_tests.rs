@@ -169,7 +169,7 @@ async fn closed_local_endpoint_is_never_ready() {
     // Windows can spend the existing budget retrying a refused connect;
     // either observed refusal or timeout is valid, never readiness.
     assert!(matches!(
-        probe_identity(&reqwest::Client::new(), "/fixture", &i).await,
+        probe_identity(&crate::loopback::client().unwrap(), "/fixture", &i).await,
         IdentityProbe::Down | IdentityProbe::Stalled
     ));
 }
@@ -446,7 +446,7 @@ mod integration {
             } else {
                 assert!(matches!(
                     wait_for_generation(
-                        &reqwest::Client::new(),
+                        &crate::loopback::client().unwrap(),
                         &r,
                         &mut prior,
                         &mut obsolete,

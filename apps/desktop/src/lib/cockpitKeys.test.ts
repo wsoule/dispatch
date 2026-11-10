@@ -5,6 +5,7 @@ import {
   CHORD_WINDOW_MS,
   moveCockpitCursor,
   resolveCockpitKey,
+  stepKey,
 } from './cockpitKeys';
 
 const key = (k: string, at = 1000) => ({
@@ -86,5 +87,21 @@ describe('moveCockpitCursor', () => {
   test('no lane further along leaves the cursor where it is', () => {
     const at = { lane: 'needs' as const, key: 'n1' };
     expect(moveCockpitCursor(lanes, at, 'right')).toBe(at);
+  });
+});
+
+describe('stepKey (keyboard → row)', () => {
+  const keys = ['a', 'b', 'c'];
+  test('moves by delta and clamps at both ends', () => {
+    expect(stepKey(keys, 'a', 1)).toBe('b');
+    expect(stepKey(keys, 'c', 1)).toBe('c');
+    expect(stepKey(keys, 'a', -1)).toBe('a');
+  });
+  test('lands on the first row from nothing, or from a key that left', () => {
+    expect(stepKey(keys, null, 1)).toBe('a');
+    expect(stepKey(keys, 'gone', -1)).toBe('a');
+  });
+  test('is null for an empty list', () => {
+    expect(stepKey([], null, 1)).toBeNull();
   });
 });

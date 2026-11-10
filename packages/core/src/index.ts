@@ -203,10 +203,11 @@ export {
   PRIORITY_ORDER,
   findDependencyCycles,
   computeStack,
+  DEPENDENT_START_MODES,
   fanoutWaitingOn,
   releasesFanoutDependents,
 } from './graph.js';
-export type { FanoutBlocker, TaskStack } from './graph.js';
+export type { DependentStart, FanoutBlocker, TaskStack } from './graph.js';
 export {
   AGE_HORIZON_DAYS,
   DEFAULT_QUEUE_WEIGHTS,
@@ -244,6 +245,8 @@ export {
   DEFAULT_SYNC,
   DEFAULT_REPO_DIGEST,
   DEFAULT_RUNS,
+  PLANNING_PROJECT_STATUSES,
+  PLANNING_TUNING_NUMBERS,
   EFFORT_LEVELS,
   EFFORT_ROLES,
   EXECUTOR_MODEL_ROLES,
@@ -267,16 +270,31 @@ export {
   runSettings,
   syncPlace,
   syncSettings,
+  difficultyPolicy,
   projectPolicy,
   queueWeights,
   SECRET_URL_MASK_SUFFIX,
 } from './config.js';
 export {
+  OVERSEER_AUTONOMY_LEVELS,
+  OVERSEER_GRANT_ANSWER,
+  overseerAutonomy,
+} from './configTypes.js';
+export type { OverseerAutonomy } from './configTypes.js';
+export {
   consultFloor,
   consultPolicy,
+  DEFAULT_DIFFICULTY_POLICY,
   DEFAULT_POLICY,
   describeFloorHold,
+  describeJudgment,
   describePolicyAuthorization,
+  DIFFICULTY_CONFIDENCE_FLOOR,
+  DIFFICULTY_LEVELS,
+  DIFFICULTY_LIFT_GATES,
+  DIFFICULTY_THRESHOLDS,
+  difficultyEligibility,
+  difficultyWithin,
   effectiveRung,
   FLOOR_CHECKS,
   GATE_RUNGS,
@@ -284,13 +302,21 @@ export {
   isFloorCheck,
   MAX_POLICY_RUNG,
   MIN_POLICY_RUNG,
+  NO_AUTO_LAND_LABEL,
   POLICY_GATE_MODES,
   POLICY_GATES,
   POLICY_RUNGS,
   RISK_RUNG_CAPS,
 } from './policy.js';
 export type {
+  DifficultyEligibility,
+  DifficultyJudgment,
+  DifficultyLevel,
+  DifficultyPolicy,
+  DifficultyRuling,
+  DifficultyThreshold,
   FloorCheck,
+  GateRuling,
   FloorCheckDef,
   FloorRuling,
   PolicyConfig,
@@ -331,6 +357,11 @@ export type {
   QueueWeightsResult,
   RemoteConfig,
   RepoDigestConfig,
+  PlanningAllocationMode,
+  PlanningWarningsMode,
+  PlanningConfig,
+  PlanningProjectStatus,
+  PlanningTuningNumber,
   RunsConfig,
   RunStreamMode,
   VerifyConfig,
@@ -370,7 +401,29 @@ export type {
   PeerCredential,
   ProjectCredentials,
   SigningKeyRead,
+  StoredAgentAccount,
+  StoredAgentAccounts,
 } from './credentials.js';
+export {
+  hasLinearAccounts,
+  hasTeammateLinearAccounts,
+  listLinearAccounts,
+  listTeammateLinearAccounts,
+  linearRefreshLockPath,
+  parseLinearAccountRecord,
+  publicLinearAccount,
+  readLinearAccount,
+  removeLinearAccount,
+  removeTeammateLinearAccounts,
+  replaceLinearAccountTokens,
+  teammateGrantKey,
+  withLinearRefreshLock,
+  writeLinearAccount,
+} from './linearAccounts.js';
+export type {
+  LinearAccountRecord,
+  PublicLinearAccount,
+} from './linearAccounts.js';
 export * from './linearContainers.js';
 export * from './linearFields.js';
 export * from './linearLabels.js';
@@ -442,6 +495,7 @@ export {
   writeGitAttributes,
 } from './mergeDriverSetup.js';
 export { childEnv } from './childEnv.js';
+export { exemptLoopbackFromProxy } from './loopbackProxy.js';
 export type {
   SyncSpawner,
   SyncSpawnOptions,
@@ -471,6 +525,16 @@ export type { FailureExplanation } from './setup/failures.js';
 export { whichOnPath, widenPath, widenedPath } from './setup/path.js';
 export type { PathIo } from './setup/path.js';
 export { agentEnv, readAgentKeys, writeAgentKey } from './setup/agentEnv.js';
+export {
+  ACCOUNT_EXECUTORS,
+  accountToken,
+  addAgentAccount,
+  DEFAULT_ACCOUNT,
+  readAgentAccounts,
+  removeAgentAccount,
+  setAccountFailover,
+} from './setup/agentAccounts.js';
+export type { AgentAccountsView } from './setup/agentAccounts.js';
 export { defaultSetupCheckDeps, runSetupCheck } from './setup/check.js';
 export type { SetupCheckDeps, SetupCheckInput } from './setup/check.js';
 export {

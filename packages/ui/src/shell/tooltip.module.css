@@ -1,0 +1,67 @@
+/* Gr8r's tooltip: an inverted chip (the --text fill with --text-inv
+   words, 12px medium, a 5px radius and the pop shadow), at most 256px
+   wide, beside its trigger in the browser's top layer. Placed by script
+   through --tooltip-top and --tooltip-left, hidden until it has been. It
+   takes the pointer, so the pointer can rest on it (WCAG 1.4.13). */
+
+.tip {
+  position: fixed;
+  inset: auto;
+  top: var(--tooltip-top, 0);
+  left: var(--tooltip-left, 0);
+  z-index: 95;
+  width: max-content;
+  max-width: min(256px, calc(100vw - 16px));
+  margin: 0;
+  padding: 4px 8px;
+  overflow: visible;
+  border: 0;
+  border-radius: var(--r-chip);
+  background: var(--text);
+  color: var(--text-inv);
+  box-shadow: var(--shadow-pop);
+  font-family: var(--font-body);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  letter-spacing: normal;
+  line-height: 1.4;
+  text-align: start;
+  text-transform: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  visibility: hidden;
+}
+
+.tip[data-placed='true'] {
+  visibility: visible;
+}
+
+/* The focusable wrapper of a trigger that cannot take focus itself (a
+   term, a disabled button): it keeps the content's own flow. */
+.anchor {
+  display: inline-block;
+  max-width: 100%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tip[data-placed='true'] {
+    animation: tooltip-in 0.12s var(--ease) both;
+  }
+}
+
+@keyframes tooltip-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* Forced colours paint the fill as Canvas: the chip keeps an edge. */
+@media (forced-colors: active) {
+  .tip {
+    border: 1px solid CanvasText;
+  }
+}

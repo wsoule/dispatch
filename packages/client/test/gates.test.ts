@@ -9,6 +9,7 @@ import {
   foldsIntoOpenApproval,
   gateNotification,
   gateOf,
+  gateReminderNotification,
   isSystemMarker,
   openGatesAfter,
   questionsByRun,
@@ -477,5 +478,23 @@ describe('runsAskingMe (XH-R9)', () => {
 
   it('names nothing without a viewer', () => {
     expect(runsAskingMe([approval, ask], null)).toEqual(new Set());
+  });
+});
+
+describe('gateReminderNotification', () => {
+  it("retitles the gate's own notification as a reminder", () => {
+    expect(
+      gateReminderNotification([scope], scope.id, () => 'Checkout')
+    ).toEqual({
+      title: 'Still waiting: An agent needs scope approval',
+      body: 'Checkout',
+      kind: 'scope-request',
+    });
+  });
+  it('stays quiet for a gate this window no longer holds', () => {
+    expect(gateReminderNotification([], scope.id, () => 'Checkout')).toBeNull();
+    expect(
+      gateReminderNotification([scope], undefined, () => 'Checkout')
+    ).toBeNull();
   });
 });

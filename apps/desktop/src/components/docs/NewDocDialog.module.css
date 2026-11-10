@@ -1,0 +1,27 @@
+/* The new-doc dialog's body (NewDocDialog.tsx): the title field, the scope
+   radios, an error. The error is coloured by the global toneText class
+   with data-tone="danger". */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+/* The scope group's visible name, in the Field label's voice. */
+.scope {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.scopeLabel {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--fs-xs);
+}

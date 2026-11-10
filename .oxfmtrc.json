@@ -32,7 +32,6 @@
     "partitionByNewline": false,
     "sortSideEffects": false
   },
-  "experimentalTailwindcss": {},
   "ignorePatterns": [
     "node_modules",
     "dist",

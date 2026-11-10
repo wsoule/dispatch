@@ -1,12 +1,16 @@
+import { pieDashOffset } from '@dispatch/ui';
 import { render } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
-import { pieDashOffset, statusColor, StatusIcon } from './StatusIcon';
+import { StatusIcon } from './StatusIcon';
 
 // The inner pie is the circle with the 4-wide stroke; the outer ring is the 1.5 one.
 function circles(status: string) {
   const { container } = render(<StatusIcon status={status} />);
   const svg = container.querySelector('svg');
+  if (svg === null) throw new Error('no svg');
   const all = Array.from(svg.querySelectorAll('circle'));
   return {
     svg,
@@ -17,21 +21,35 @@ function circles(status: string) {
   };
 }
 
+const css = readFileSync(
+  join(import.meta.dir, 'StatusIcon.module.css'),
+  'utf8'
+);
+
 describe('StatusIcon', () => {
   test('renders at 14px in Linear’s 14-unit viewBox', () => {
     const { svg } = circles('ready');
     expect(svg.getAttribute('viewBox')).toBe('0 0 14 14');
-    expect(svg.classList.contains('size-3.5')).toBe(true);
+    expect(svg.getAttribute('width')).toBe('14');
+    expect(svg.getAttribute('height')).toBe('14');
     expect(svg.getAttribute('fill')).toBe('none');
+    expect(svg.getAttribute('role')).toBe('img');
+    expect(svg.getAttribute('aria-label')).toBe('Status: ready');
   });
 
-  test('a caller can override the size class', () => {
+  test('a caller sizes it with `size` or its own class', () => {
     const { container } = render(
-      <StatusIcon status="ready" className="size-4" />
+      <>
+        <StatusIcon status="ready" size={16} />
+        <StatusIcon status="ready" className="caller-size" />
+      </>
     );
-    const svg = container.querySelector('svg');
-    expect(svg.classList.contains('size-4')).toBe(true);
-    expect(svg.classList.contains('size-3.5')).toBe(false);
+    const [sized, classed] = Array.from(container.querySelectorAll('svg'));
+    expect(sized?.getAttribute('width')).toBe('16');
+    expect(sized?.getAttribute('height')).toBe('16');
+    expect(classed?.classList.contains('caller-size')).toBe(true);
+    // The module never sets a size, so a caller's class always wins.
+    expect(css).not.toMatch(/\b(width|height)\s*:/);
   });
 
   test('draft is the dashed backlog ring with an empty pie', () => {
@@ -41,7 +59,8 @@ describe('StatusIcon', () => {
     expect(pie?.getAttribute('stroke-dashoffset')).toBe(
       String(pieDashOffset(0))
     );
-    expect(svg.classList.contains('text-status-backlog')).toBe(true);
+    expect(svg.getAttribute('data-status-shape')).toBe('backlog');
+    expect(svg.getAttribute('data-tone')).toBe('muted');
   });
 
   test('ready is the solid todo ring with an empty pie', () => {
@@ -55,20 +74,21 @@ describe('StatusIcon', () => {
     );
     expect(pie?.getAttribute('stroke-dashoffset')).toBe('12.189379495928398');
     expect(pie?.getAttribute('transform')).toBe('rotate(-90 7 7)');
-    expect(svg.classList.contains('text-status-todo')).toBe(true);
+    expect(svg.getAttribute('data-status-shape')).toBe('pie');
+    expect(svg.getAttribute('data-tone')).toBe('muted');
   });
 
   test.each([
-    ['working', 0.5, 'text-status-progress'],
-    ['review', 0.75, 'text-status-green'],
-    ['landing', 0.9, 'text-teal'],
-  ])('%s exposes %d of the pie', (status, fraction, colorClass) => {
+    ['working', 0.5, 'info'],
+    ['review', 0.75, 'success'],
+    ['landing', 0.9, 'info'],
+  ])('%s exposes %d of the pie', (status, fraction, tone) => {
     const { svg, pie } = circles(status);
     expect(Number(pie?.getAttribute('stroke-dashoffset'))).toBeCloseTo(
       pieDashOffset(fraction),
       6
     );
-    expect(svg.classList.contains(colorClass)).toBe(true);
+    expect(svg.getAttribute('data-tone')).toBe(tone);
   });
 
   test('the 50% offset is Linear’s 6.0947', () => {
@@ -77,7 +97,7 @@ describe('StatusIcon', () => {
     expect(pieDashOffset(1)).toBe(0);
   });
 
-  test('landed is the indigo disk with a check cut out in the panel colour', () => {
+  test('landed is the neutral filled disk with a check cut out in the surface colour', () => {
     const { svg, pie, disk, cutout } = circles('landed');
     expect(pie).toBeUndefined();
     expect(disk?.getAttribute('r')).toBe('3');
@@ -85,9 +105,13 @@ describe('StatusIcon', () => {
       '18.84955592153876 37.69911184307752'
     );
     expect(disk?.getAttribute('stroke-dashoffset')).toBe('0');
-    expect(cutout?.getAttribute('fill')).toBe('var(--surface-page)');
+    expect(cutout?.getAttribute('fill')).toBe('var(--surface)');
     expect(cutout?.getAttribute('d')?.startsWith('M10.951 4.24896')).toBe(true);
-    expect(svg.classList.contains('text-status-done')).toBe(true);
+    expect(svg.getAttribute('data-status-shape')).toBe('done');
+    // Done has no tone: the module's neutral --text-2 fill, never green.
+    expect(svg.hasAttribute('data-tone')).toBe(false);
+    expect(css).toMatch(/\.icon\s*\{[^}]*color:\s*var\(--text-2\)/);
+    expect(css).toMatch(/\.icon\[data-tone\]\s*\{[^}]*color:\s*var\(--tone\)/);
   });
 
   test('dropped is the cancelled disk with an × cut out', () => {
@@ -95,26 +119,34 @@ describe('StatusIcon', () => {
     expect(disk).toBeDefined();
     expect(svg.getAttribute('data-status-shape')).toBe('cancelled');
     expect(cutout?.getAttribute('d')?.startsWith('M10.951')).toBe(false);
-    expect(svg.classList.contains('text-status-cancelled')).toBe(true);
+    expect(svg.getAttribute('data-tone')).toBe('muted');
   });
 
-  test('blocked overrides the colour but keeps the shape', () => {
+  test('blocked is amber but keeps the shape', () => {
     const { container } = render(<StatusIcon status="working" blocked />);
     const svg = container.querySelector('svg');
-    expect(svg.classList.contains('text-status-blocked')).toBe(true);
-    expect(svg.classList.contains('text-status-progress')).toBe(false);
-    expect(svg.getAttribute('data-status-shape')).toBe('pie');
+    expect(svg?.getAttribute('data-tone')).toBe('warning');
+    expect(svg?.getAttribute('data-status-shape')).toBe('pie');
+  });
+
+  test('a tone wins over blocked and the status tone, keeping the shape', () => {
+    // VerificationSection draws a failed check as the cancelled disk in danger red.
+    const { container } = render(
+      <StatusIcon status="dropped" blocked tone="danger" />
+    );
+    const svg = container.querySelector('svg');
+    expect(svg?.getAttribute('data-tone')).toBe('danger');
+    expect(svg?.getAttribute('data-status-shape')).toBe('cancelled');
   });
 
   test('a custom status falls back to the empty todo ring', () => {
     const { svg, pie } = circles('triage');
     expect(pie?.getAttribute('stroke-dashoffset')).toBe('12.189379495928398');
-    expect(svg.classList.contains('text-status-todo')).toBe(true);
+    expect(svg.getAttribute('data-tone')).toBe('muted');
   });
 
-  test('statusColor is the CSS variable a group header tints with', () => {
-    expect(statusColor('working')).toBe('var(--status-progress)');
-    expect(statusColor('landed')).toBe('var(--status-done)');
-    expect(statusColor('triage')).toBe('var(--status-todo)');
+  test('forced colours keep the glyph and its cut-out', () => {
+    expect(css).toContain('@media (forced-colors: active)');
+    expect(css).toMatch(/\.cutout\s*\{[^}]*fill:\s*Canvas/);
   });
 });

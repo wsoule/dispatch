@@ -47,9 +47,9 @@ describe('MemoryActivityList', () => {
     );
     render(<MemoryActivityList items={[item()]} client={{ undoMemory }} />);
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
-    expect(
-      await screen.findByText('only the entry’s own human may undo')
-    ).toBeTruthy();
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('only the entry’s own human may undo');
+    expect(alert.getAttribute('data-tone')).toBe('danger');
     const retry = screen.getByRole('button', {
       name: 'Undo',
       description:
@@ -60,7 +60,7 @@ describe('MemoryActivityList', () => {
 
   // A screen reader hears which change each Undo reverts.
   it('describes each Undo by its row', () => {
-    render(
+    const { container } = render(
       <MemoryActivityList
         items={[item()]}
         client={{ undoMemory: () => Promise.resolve(entry()) }}
@@ -72,6 +72,9 @@ describe('MemoryActivityList', () => {
         description: 'run:r-9f2c01 saved to your memory: pnpm builds',
       })
     ).toBeTruthy();
+    expect(
+      container.querySelectorAll('[data-slot="memory-activity"]')
+    ).toHaveLength(1);
   });
 
   it('offers no Undo on a notice', () => {

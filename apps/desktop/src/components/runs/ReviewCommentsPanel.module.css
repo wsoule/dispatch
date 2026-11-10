@@ -1,0 +1,9 @@
+/* ReviewCommentsPanel (ReviewCommentsPanel.tsx): the thread index over the stacked verdict
+   card, in one column. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+}

@@ -1,0 +1,311 @@
+/* Gr8r's badge: 20px, 5px radius, 12px medium, sentence case. The tone
+   comes from data-tone (tokens.css defines --tone, --tone-ink, --tone-soft,
+   --tone-line and --on-tone on it). */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  min-height: 20px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-chip);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  line-height: 16px;
+  vertical-align: middle;
+}
+
+/* A chip that outgrows its container wraps rather than truncating: the
+   long "New — given to you because…" chip is the reason, not decoration. */
+.text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mark {
+  display: inline-flex;
+  flex: none;
+}
+
+/* The status mark is 12px elsewhere; inside a chip it drops to 10px. */
+.mark :global(span[role='img']) {
+  width: 10px;
+  height: 10px;
+  flex-basis: 10px;
+}
+
+/* Quieter neutral: inactive, nothing to do, not evaluated, skipped. Plain
+   quiet text, no box (Gr8r prints these as meta, not as a badge). */
+.muted {
+  padding-inline: 0;
+  border-color: transparent;
+  background: none;
+  color: var(--text-3);
+}
+
+/* The accent (new, unread) and a filled status tone: Gr8r's tinted badge,
+   no border, the tone's text on its soft tint (4.5:1, checked by the
+   contrast test). */
+.accent,
+.tinted {
+  border-color: transparent;
+  background: var(--tone-soft);
+  color: var(--tone-ink);
+}
+
+/* Gr8r's status pill (.pstatus): neutral and bordered on the surface, the
+   hue only in a 6px dot (or the leading status mark). */
+.pill {
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tone);
+}
+
+/* A default chip's decorative lead (Chip `hue`): a 6px dot in one of the
+   decorative hues, one rule per hue (never a status hue: the label's or
+   project's words say what it is). */
+.hueDot {
+  flex: none;
+  box-sizing: border-box;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.hueDot[data-hue='violet'] {
+  background: var(--violet);
+}
+
+.hueDot[data-hue='teal'] {
+  background: var(--teal);
+}
+
+.hueDot[data-hue='rose'] {
+  background: var(--rose);
+}
+
+.hueDot[data-hue='orange'] {
+  background: var(--orange);
+}
+
+/* A default chip's picker mark (Chip `mark`: a label's colour square, a
+   state glyph, an avatar), at chip size: glyphs 12px, an avatar 16px, a
+   status diamond 10px, so the chip keeps its 20px height. */
+.leadMark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+.leadMark :global(svg) {
+  width: 12px;
+  height: 12px;
+}
+
+.leadMark :global([data-mark='avatar']) {
+  --sz: 16px;
+}
+
+.leadMark :global(span[role='img']) {
+  width: 10px;
+  height: 10px;
+  flex-basis: 10px;
+}
+
+/* Chip onRemove: a trailing 14px quiet × button, the chip's only
+   control, in the chip's own text colour (so a tinted chip's × is its
+   tone's ink, the slab's its inverse text). Hover fills it one surface
+   up (a tinted chip's × on the plain surface, keeping its ink at 4.5:1;
+   the slab keeps its fill); focus is the 2px --focus-ring outline. */
+.removable {
+  padding-right: 3px;
+}
+
+.remove {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.remove:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* The dark slab, kept for old callers (prefer a status tone). */
+.inverse {
+  --chip-fill: var(--text);
+  --focus-ring: var(--focus-ring-inverse);
+
+  border-color: var(--text);
+  background: var(--text);
+  color: var(--text-inv);
+}
+
+/* A status mark on the slab takes the inverted-fill steps: its hues the
+   -ink-inverse ones (4.5:1 on --text), its neutral done diamond the slab's
+   ink with the tick knocked out in the slab colour. */
+.inverse .mark {
+  --text: var(--text-inv);
+  --text-2: var(--text-inv);
+  --text-3: color-mix(in srgb, var(--text-inv) 72%, var(--chip-fill));
+  --surface: var(--chip-fill);
+  --red: var(--red-ink-inverse);
+  --amber: var(--amber-ink-inverse);
+  --green: var(--green-ink-inverse);
+  --gray: color-mix(in srgb, var(--text-inv) 62%, var(--chip-fill));
+}
+
+/* ChipButton: the chip as a button or a link. The browser's button face
+   is reset to the chip's; a muted chip gets its padding back so the hover
+   fill has room. Hover steps the fill one surface darker (a tinted chip
+   shows its tinted edge instead, keeping its text on its tint at 4.5:1;
+   the inverse slab keeps its fill);
+   selected (aria-pressed) is the accent's selection tint in a full accent
+   edge (3:1 on --bg, --bg-side, --surface, --surface-2 and --sunken; the
+   softer --accent-line was about 1.7:1, too faint to tell the state by).
+   Focus is the 2px --focus-ring outline, 2px out. */
+.button {
+  font-family: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.button.muted {
+  padding-inline: 7px;
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.button[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.button:disabled,
+.button[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .button:not(
+      :disabled,
+      [aria-disabled='true'],
+      [aria-pressed='true'],
+      .inverse
+    ):hover {
+    background: var(--surface-3);
+  }
+
+  .button.pill:not(
+      :disabled,
+      [aria-disabled='true'],
+      [aria-pressed='true']
+    ):hover,
+  .button.muted:not(
+      :disabled,
+      [aria-disabled='true'],
+      [aria-pressed='true']
+    ):hover {
+    background: var(--surface-2);
+  }
+
+  .button.accent:not(
+      :disabled,
+      [aria-disabled='true'],
+      [aria-pressed='true']
+    ):hover,
+  .button.tinted:not(
+      :disabled,
+      [aria-disabled='true'],
+      [aria-pressed='true']
+    ):hover {
+    border-color: var(--tone-line);
+    background: var(--tone-soft);
+  }
+}
+
+@media (hover: hover) {
+  .remove:hover {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+
+  .accent .remove:hover,
+  .tinted .remove:hover {
+    background: var(--surface);
+    color: var(--tone-ink);
+  }
+
+  .inverse .remove:hover {
+    background: transparent;
+    color: inherit;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .button {
+    transition:
+      background-color var(--dur) ease,
+      border-color var(--dur) ease;
+  }
+
+  .remove {
+    transition:
+      background-color var(--dur) ease,
+      color var(--dur) ease;
+  }
+}
+
+/* Forced colours drop backgrounds: the dot keeps a fill so the pill still
+   shows its mark (the words say the status), the hue dot a ring. A chip
+   button keeps a ButtonText edge (a chip with no border of its own would
+   lose its shape), and a selected one the Highlight edge, twice as
+   thick. */
+@media (forced-colors: active) {
+  .dot {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+
+  .hueDot {
+    border: 1px solid CanvasText;
+  }
+
+  .button {
+    border-color: ButtonText;
+  }
+
+  .button[aria-pressed='true'] {
+    border-color: Highlight;
+    outline: 1px solid Highlight;
+  }
+}

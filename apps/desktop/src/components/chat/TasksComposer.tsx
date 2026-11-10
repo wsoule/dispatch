@@ -1,4 +1,5 @@
 import type { OverseerAttachment } from '@dispatch/client';
+import { Button, Chip, cx, Notice } from '@dispatch/ui';
 import { X } from 'lucide-react';
 import { useState } from 'react';
 
@@ -6,11 +7,8 @@ import type { OverseerSession } from '../../hooks/useOverseerSession';
 import { describeError } from '../../lib/actionFeedback';
 import { overseerTurnLive } from '../../lib/agentPresence';
 import { useAttachmentPreviews } from './OverseerChat';
-import { IconButton } from '@/ui/ai/icon-button';
-import { Pill } from '@/ui/ai/pill';
-import { PromptBar } from '@/ui/ai/prompt-bar';
-import { Button } from '@/ui/button';
-import { InputGroup, InputGroupAddon, InputGroupInput } from '@/ui/input-group';
+import { PromptBar } from './PromptBar';
+import styles from './TasksComposer.module.css';
 
 export interface TasksComposerProps {
   overseer: OverseerSession;
@@ -99,59 +97,65 @@ function ProjectTasksComposer({
   };
 
   return (
-    <div className="border-border flex shrink-0 flex-col items-center gap-2 border-t-[0.5px] px-4 pt-2 pb-2">
+    <div className={styles.root}>
       {(sentAt !== null || error !== null) && (
-        <div
-          data-testid="tasks-composer-tray"
-          role="status"
-          className="bg-background border-border rounded-card flex w-full max-w-[760px] items-start gap-3 border-[0.5px] px-3 py-2 text-[13px]"
-        >
-          <p className="line-clamp-3 min-w-0 flex-1 text-(--text-secondary)">
-            {error ??
-              (working
-                ? 'Your agent is working…'
-                : (reply?.text ?? 'Sent to your agent.'))}
-          </p>
-          <Button variant="link" size="xs" onClick={onOpenOverseer}>
-            Open in Overseer →
-          </Button>
-          <IconButton
-            label="Dismiss"
-            onClick={() => {
-              setSentAt(null);
-              setError(null);
-            }}
-            className="size-6"
+        <div className={styles.lane}>
+          <Notice
+            tone={error === null ? 'default' : 'danger'}
+            role="status"
+            data-testid="tasks-composer-tray"
+            action={
+              <span className={styles.trayActions}>
+                <Button variant="quiet" size="sm" onClick={onOpenOverseer}>
+                  Open in Overseer →
+                </Button>
+                <Button
+                  variant="quiet"
+                  size="sm"
+                  aria-label="Dismiss"
+                  icon={<X size={14} strokeWidth={1.8} aria-hidden />}
+                  onClick={() => {
+                    setSentAt(null);
+                    setError(null);
+                  }}
+                />
+              </span>
+            }
           >
-            <X />
-          </IconButton>
+            <p className={styles.trayText}>
+              {error ??
+                (working
+                  ? 'Your agent is working…'
+                  : (reply?.text ?? 'Sent to your agent.'))}
+            </p>
+          </Notice>
         </div>
       )}
       {!expanded && draft === '' && !pending ? (
-        <InputGroup
+        // A press anywhere on the line opens the composer; the input inside
+        // is what takes focus and the keyboard (its focus opens it too).
+        // oxlint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
+        <div
           data-testid="tasks-composer-collapsed"
           data-disabled={disabled || undefined}
+          className={cx(styles.lane, styles.collapsed)}
           onClick={() => {
             if (!disabled) setExpanded(true);
           }}
-          className="h-9 max-w-[760px]"
         >
-          {pill !== null && (
-            <InputGroupAddon>
-              <Pill>about {pill.taskId}</Pill>
-            </InputGroupAddon>
-          )}
-          <InputGroupInput
+          {pill !== null && <Chip>{`about ${pill.taskId}`}</Chip>}
+          <input
+            className={cx('input', styles.collapsedInput)}
             readOnly
             disabled={disabled}
             aria-label="Open the composer"
             placeholder="say something"
             onFocus={() => setExpanded(true)}
           />
-        </InputGroup>
+        </div>
       ) : (
         <div
-          className="w-full max-w-[760px]"
+          className={styles.lane}
           // Leaving an empty composer folds it back to one line.
           onBlur={(event) => {
             if (

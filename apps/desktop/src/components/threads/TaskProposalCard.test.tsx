@@ -202,7 +202,7 @@ test('names the description’s scroll area and lists duplicate writes', () => {
       canDecide
     />
   );
-  const region = screen.getByLabelText('Draft description');
+  const region = screen.getByRole('region', { name: 'Draft description' });
   expect(region.tabIndex).toBe(0);
   expect(screen.getAllByText('a.ts')).toHaveLength(2);
 });

@@ -1,6 +1,6 @@
-import type { CreateInput } from '@dispatch-foo/core/browser';
+import type { CreateInput, TaskListItem } from '@dispatch-foo/core/browser';
 import type { DraftRecord } from '@dispatch/client';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 import type { ComponentProps } from 'react';
 
@@ -32,29 +32,44 @@ function draftRecord(over: Partial<DraftRecord> = {}): DraftRecord {
   };
 }
 
+// A container the draft may be filed under (only the fields the rail reads).
+function container(id: string, title: string, kind: string): TaskListItem {
+  return {
+    meta: { id, title, kind, icon: null, color: null },
+  } as unknown as TaskListItem;
+}
+
 function mount({
   draft = draftRecord(),
   projectName,
   onCreate = () => Promise.resolve(),
   onRetry,
   send,
+  milestones = [],
+  dismiss = () => Promise.resolve(),
 }: {
   draft?: DraftRecord;
   projectName?: string;
   onCreate?: (input: CreateInput) => Promise<void>;
   onRetry?: () => Promise<void>;
   send?: ComponentProps<typeof DraftView>['send'];
+  milestones?: TaskListItem[];
+  dismiss?: () => Promise<void>;
 } = {}) {
   const dismissed: string[] = [];
+  const messages: string[] = [];
   let done = 0;
   const data = {
     config: { statuses: ['draft', 'ready', 'working', 'landed'] },
-    milestones: [],
+    milestones,
     handleDismissDraft: (id: string) => {
       dismissed.push(id);
+      return dismiss();
+    },
+    handleSendDraftMessage: (_id: string, text: string) => {
+      messages.push(text);
       return Promise.resolve();
     },
-    handleSendDraftMessage: () => Promise.resolve(),
   } as unknown as DispatchProjectData;
   const created: CreateInput[] = [];
   render(
@@ -73,31 +88,62 @@ function mount({
       }}
     />
   );
-  return { created, dismissed, done: () => done };
+  return { created, dismissed, messages, done: () => done };
 }
 
-test('the task title is the 24px page heading over 15px prose, under a Drafts crumb', () => {
+// The rail's picker for one property, by its trigger's name ("Status: Draft").
+function railTrigger(name: string): HTMLElement {
+  const rail = screen.getByRole('complementary', { name: 'Properties' });
+  return within(rail).getByRole('button', { name });
+}
+
+// Selects characters [start, end) of the prompt's text.
+function selectInPrompt(start: number, end: number) {
+  const prompt = screen.getByText('cache the search index');
+  const text = prompt.firstChild;
+  if (text === null) throw new Error('the prompt has no text');
+  const range = document.createRange();
+  range.setStart(text, start);
+  range.setEnd(text, end);
+  act(() => {
+    const selection = document.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  });
+}
+
+// A pointer drag over characters [start, end) of the prompt: down in the prompt, the
+// selection, then the pointerup that settles it.
+function dragInPrompt(start: number, end: number) {
+  fireEvent.pointerDown(screen.getByText('cache the search index'));
+  selectInPrompt(start, end);
+  act(() => {
+    fireEvent.pointerUp(document);
+  });
+}
+
+test('the task title is the page heading over prose, under a Drafts crumb', () => {
   mount({ projectName: 'dispatch' });
 
   const title = screen.getByLabelText<HTMLInputElement>('Task title');
   expect(title.value).toBe('Cache the search index in redis');
-  expect(title.dataset['variant']).toBe('borderless');
-  expect(title.className).toContain('text-[24px]');
-  expect(title.className).toContain('font-semibold');
   expect(screen.queryByRole('heading', { name: 'Review draft' })).toBeNull();
-
-  const description =
-    screen.getByLabelText<HTMLTextAreaElement>('Task description');
-  expect(description.dataset['variant']).toBe('borderless');
-  expect(description.className).toContain('text-[15px]');
+  expect(
+    screen.getByLabelText<HTMLTextAreaElement>('Task description').value
+  ).toBe('Keep the index warm between requests.');
 
   const crumb = document.querySelector('[data-slot=page-header-crumb]');
   expect(crumb?.textContent).toContain('dispatch');
   expect(crumb?.textContent).toContain('Drafts');
-  expect(crumb?.textContent).toContain('Draft');
+  expect(crumb?.querySelector('[aria-current="page"]')?.textContent).toBe(
+    'Draft'
+  );
+  expect(
+    screen.getByText('Nothing is written until you create the task.')
+  ).toBeTruthy();
 });
 
-test('acceptance criteria render as a checklist and the properties rail holds 32px rows', () => {
+test('acceptance criteria render as a checklist and the properties rail holds pickers', () => {
   mount();
 
   expect(
@@ -109,23 +155,65 @@ test('acceptance criteria render as a checklist and the properties rail holds 32
   expect(document.querySelectorAll('[data-slot=criterion-box]')).toHaveLength(
     2
   );
+  expect(
+    screen.getByRole('region', { name: 'Acceptance criteria' })
+  ).toBeTruthy();
 
-  const rail = screen.getByRole('complementary', { name: 'Properties' });
-  expect(rail.className).toContain('w-[280px]');
-  const rows = Array.from(
-    rail.querySelectorAll('[data-slot=property-control]')
+  expect(railTrigger('Status: Draft')).toBeTruthy();
+  expect(railTrigger('Priority: High')).toBeTruthy();
+  expect(railTrigger('Parent: No parent')).toBeTruthy();
+});
+
+test('criteria can be removed and added', () => {
+  mount();
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Remove acceptance criterion 1' })
   );
-  expect(rows).toHaveLength(3);
-  for (const row of rows) {
-    expect(row.getAttribute('data-variant')).toBe('row');
-    expect(row.className).toContain('h-8');
-  }
   expect(
-    screen.getByRole('button', { name: 'Change status' }).textContent
-  ).toBe('Draft');
+    screen.getByLabelText<HTMLInputElement>('Acceptance criterion 1').value
+  ).toBe('p95 under 50ms');
+  expect(screen.queryByLabelText('Acceptance criterion 2')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Add criterion' }));
   expect(
-    screen.getByRole('button', { name: 'Change priority' }).textContent
-  ).toBe('High');
+    screen.getByLabelText<HTMLInputElement>('Acceptance criterion 2').value
+  ).toBe('');
+});
+
+test('the rail pickers edit the draft that Create task saves', async () => {
+  const { created } = mount({
+    milestones: [
+      container('m-1', 'Search speed', 'milestone'),
+      {
+        ...container('m-2', 'Old milestone', 'milestone'),
+        meta: {
+          ...container('m-2', 'Old milestone', 'milestone').meta,
+          archivedAt: '2026-09-01T00:00:00.000Z',
+        },
+      } as TaskListItem,
+    ],
+  });
+
+  fireEvent.click(railTrigger('Status: Draft'));
+  fireEvent.click(screen.getByRole('option', { name: /Ready/ }));
+  expect(railTrigger('Status: Ready')).toBeTruthy();
+
+  fireEvent.click(railTrigger('Priority: High'));
+  fireEvent.click(screen.getByRole('option', { name: /Urgent/ }));
+  expect(railTrigger('Priority: Urgent')).toBeTruthy();
+
+  fireEvent.click(railTrigger('Parent: No parent'));
+  // An archived container is not offered.
+  expect(screen.queryByRole('option', { name: /Old milestone/ })).toBeNull();
+  fireEvent.click(screen.getByRole('option', { name: /Search speed/ }));
+  expect(railTrigger('Parent: Search speed')).toBeTruthy();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+  await act(async () => {});
+  expect(created[0]).toMatchObject({
+    status: 'ready',
+    priority: 'urgent',
+    parent: 'm-1',
+  });
 });
 
 test('Create task saves the edited draft, dismisses it and leaves', async () => {
@@ -175,6 +263,123 @@ test('Discard dismisses without creating', async () => {
   expect(created).toEqual([]);
   expect(dismissed).toEqual(['d-1']);
   expect(done()).toBe(1);
+});
+
+test('Discard reads Discarding… while the draft is dismissed', async () => {
+  let release = () => {};
+  const { done } = mount({
+    dismiss: () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+  const busy = screen.getByRole<HTMLButtonElement>('button', {
+    name: 'Discarding…',
+  });
+  expect(busy.disabled).toBe(true);
+  expect(busy.getAttribute('aria-busy')).toBe('true');
+  await act(async () => {
+    release();
+    await Promise.resolve();
+  });
+  expect(done()).toBe(1);
+});
+
+// Picks a prompt menu action and lets its (synchronous) save settle.
+async function pickAction(option: HTMLElement) {
+  await act(async () => {
+    fireEvent.click(option);
+    await Promise.resolve();
+  });
+}
+
+test('dragging over prompt text opens the prompt menu; Explain asks the planner about it', async () => {
+  const { messages } = mount();
+  dragInPrompt(10, 22);
+  const menu = screen.getByRole('listbox', { name: 'Prompt actions' });
+  expect(
+    within(menu)
+      .getAllByRole('option')
+      .map((option) => option.textContent)
+  ).toEqual(['Explain', 'Improve', 'Shorten', 'Tone', 'Grammar']);
+  // Focus moving into the menu clears the selection; the menu stays.
+  act(() => document.getSelection()?.removeAllRanges());
+  await pickAction(within(menu).getByRole('option', { name: 'Explain' }));
+  expect(messages).toEqual(['Explain this: "search index"']);
+  expect(screen.queryByRole('listbox', { name: 'Prompt actions' })).toBeNull();
+});
+
+test('a pointer drag opens the menu on pointerup, not mid-drag', () => {
+  mount();
+  fireEvent.pointerDown(screen.getByText('cache the search index'));
+  selectInPrompt(0, 5);
+  expect(screen.queryByRole('listbox', { name: 'Prompt actions' })).toBeNull();
+  act(() => {
+    fireEvent.pointerUp(document);
+  });
+  expect(screen.getByRole('listbox', { name: 'Prompt actions' })).toBeTruthy();
+});
+
+test('Escape closes the menu, and the same selection does not reopen it', () => {
+  mount();
+  dragInPrompt(0, 5);
+  const menu = screen.getByRole('listbox', { name: 'Prompt actions' });
+  fireEvent.keyDown(menu, { key: 'Escape' });
+  expect(screen.queryByRole('listbox', { name: 'Prompt actions' })).toBeNull();
+  expect(document.activeElement).toBe(
+    screen.getByRole('button', { name: 'Prompt actions' })
+  );
+  act(() => {
+    document.dispatchEvent(new Event('selectionchange'));
+  });
+  // A press and release that leaves the same selection does not reopen it either.
+  fireEvent.pointerDown(screen.getByText('cache the search index'));
+  act(() => {
+    fireEvent.pointerUp(document);
+  });
+  expect(screen.queryByRole('listbox', { name: 'Prompt actions' })).toBeNull();
+});
+
+test('a keyboard selection leaves focus where it is; the trigger acts on it', async () => {
+  const { messages } = mount();
+  const trigger = screen.getByRole('button', { name: 'Prompt actions' });
+  act(() => trigger.focus());
+  // Two steps of a Shift+Arrow selection: no menu takes focus between them.
+  selectInPrompt(10, 15);
+  act(() => {
+    document.dispatchEvent(new Event('selectionchange'));
+  });
+  selectInPrompt(10, 22);
+  act(() => {
+    document.dispatchEvent(new Event('selectionchange'));
+  });
+  expect(screen.queryByRole('listbox', { name: 'Prompt actions' })).toBeNull();
+  expect(document.activeElement).toBe(trigger);
+  fireEvent.click(trigger);
+  await pickAction(screen.getByRole('option', { name: 'Explain' }));
+  expect(messages).toEqual(['Explain this: "search index"']);
+});
+
+test('Tone steps into its voices, which are not wired up yet', async () => {
+  const { messages } = mount();
+  dragInPrompt(0, 5);
+  fireEvent.click(screen.getByRole('option', { name: 'Tone' }));
+  const tone = screen.getByRole('listbox', { name: 'Tone' });
+  await pickAction(within(tone).getByRole('option', { name: 'Professional' }));
+  expect(
+    screen
+      .getByText("Professional isn't wired up yet — coming soon.")
+      .getAttribute('role')
+  ).toBe('status');
+  expect(messages).toEqual([]);
+});
+
+test('the prompt menu trigger acts on the whole prompt', async () => {
+  const { messages } = mount();
+  fireEvent.click(screen.getByRole('button', { name: 'Prompt actions' }));
+  await pickAction(screen.getByRole('option', { name: 'Improve' }));
+  expect(messages).toEqual(['Improve this: "cache the search index"']);
 });
 
 test('without a proposal there is no rail and Create task is disabled', () => {

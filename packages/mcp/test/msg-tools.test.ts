@@ -15,12 +15,13 @@ import { daemonFilePath } from '../src/daemon.js';
 import { agentName, agentTokenFilePath } from '../src/identity.js';
 import { createDispatchMcpServer } from '../src/index.js';
 import type { MessageBlockingTiming } from '../src/index.js';
-import { SCOPE_EXPIRED_NOTE, withBearer } from '../src/messaging.js';
+import { SCOPE_UNDECIDED_NOTE, withBearer } from '../src/messaging.js';
 
 // Polls are paced by retryDelayMs; requestTimeoutMs stays generous so a slow
 // host never turns a same-process 4xx into a spurious retry.
 const FAST_TIMING: MessageBlockingTiming = {
   humanTotalWaitMs: 500,
+  scopeTotalWaitMs: 500,
   defaultAgentTotalWaitMs: 200,
   requestTimeoutMs: 3000,
   retryDelayMs: 10,
@@ -716,9 +717,9 @@ describe('msg_send (blocking)', () => {
     expect(daemon.answerPolls).toBeGreaterThan(1);
   });
 
-  // The daemon denies an undecided scope gate before this budget runs out;
-  // reaching it means the daemon never answered, so the agent reads a denial.
-  it('tells a scope request that timed out to treat it as denied', async () => {
+  // Scope gates never expire; a wait that still runs out tells the agent to
+  // stop cleanly, not to carry on as if denied.
+  it('tells a scope request that outlasted its wait to stop and leave it open', async () => {
     daemon = new FakeDaemon();
     daemon.answerAfterPolls = Number.MAX_SAFE_INTEGER;
     writeFakeDaemonFile(daemon.start());
@@ -742,7 +743,40 @@ describe('msg_send (blocking)', () => {
 
     expect(result.isError).toBeUndefined();
     expect(result.structuredContent?.answer).toBeNull();
-    expect(result.structuredContent?.note).toBe(SCOPE_EXPIRED_NOTE);
+    expect(result.structuredContent?.note).toBe(SCOPE_UNDECIDED_NOTE);
+  });
+
+  // A scope request outwaits a plain human question: the run stays paused on
+  // the gate instead of returning after humanTotalWaitMs.
+  it('waits scopeTotalWaitMs, not humanTotalWaitMs, on a scope request', async () => {
+    daemon = new FakeDaemon();
+    daemon.answerAfterPolls = 20;
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root, {
+      ...FAST_TIMING,
+      humanTotalWaitMs: 50,
+      scopeTotalWaitMs: 10_000,
+    });
+
+    const result = (await client.callTool(
+      {
+        name: 'msg_send',
+        arguments: {
+          to: ['human:wyat'],
+          kind: 'question',
+          body: 'need the shared barrel',
+          blocking: true,
+          choices: ['grant', 'deny'],
+          data: { type: 'scope', paths: ['src/index.ts'], reason: 'export' },
+        },
+      },
+      undefined,
+      { timeout: 15_000 }
+    )) as ToolCallResult;
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent?.answer).toBeTruthy();
+    expect(daemon.answerPolls).toBeGreaterThan(5);
   });
 
   it('rides out a daemon restart mid-wait and returns the answer the new daemon holds', async () => {

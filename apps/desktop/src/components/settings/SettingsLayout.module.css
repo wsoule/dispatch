@@ -1,0 +1,193 @@
+/* Settings in the main column (SettingsLayout.tsx), in Better-Tracker's settings shape
+   (.set / .setNav / .setIn): a 220px rail with a --border rule beside the page, the page a
+   column of about 640px that scrolls inside itself. A hosted view (Usage, Runs) takes the
+   full width and scrolls on its own. At 900px and below the rail stacks over the page and
+   NavTabs turns its links into one sideways-scrolling strip. */
+.root {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  background: var(--surface);
+}
+
+/* The rail: the search over the grouped page links. */
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+  min-width: 0;
+  min-height: 0;
+  padding: 20px 10px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+}
+
+/* The page side: scrolls, with the column inside it. */
+.scroller {
+  min-width: 0;
+  min-height: 0;
+  padding: 32px 40px 80px;
+  overflow-y: auto;
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-6);
+  width: 100%;
+  min-width: 0;
+  max-width: 640px;
+}
+
+/* A hosted view: full width, and the view (its own list) scrolls, not the column. */
+.hosted {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.hosted .column {
+  flex: 1 1 auto;
+  gap: 0;
+  max-width: none;
+  min-height: 0;
+}
+
+.hosted .head {
+  padding: 32px 40px 12px;
+}
+
+/* The hosted view's own body under the title. */
+.hostedBody {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* No project: the message alone, centred in the column. */
+.emptyFrame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 0;
+  padding: var(--s-6);
+  background: var(--surface);
+}
+
+/* A page's h1 beside the save line, then the intro. */
+.head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.titleRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px var(--s-3);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  line-height: 1.3;
+  letter-spacing: var(--ls-heading);
+  color: var(--text);
+}
+
+.intro {
+  max-width: 72ch;
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+  color: var(--text-2);
+}
+
+/* Search results: every page with a matching row, each under a link back to it. */
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-8);
+}
+
+.resultPage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4);
+}
+
+/* A page with no matching rows hides itself. */
+.resultPage:not(:has([data-settings-row])) {
+  display: none;
+}
+
+.resultLink {
+  align-self: flex-start;
+}
+
+/* "Saving…" and "Saved" are quiet; a refusal takes the danger tone's ink (.toneText). */
+.saveLine {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+/* The read-only note, then the restart that unlocks it when there is one. */
+.readOnly {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-2);
+}
+
+.readOnly > * {
+  max-width: 100%;
+}
+
+/* The lock mark before the reason, like the one beside each locked row. */
+.lockLine {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.lockIcon {
+  flex: none;
+  align-self: center;
+  color: var(--text-3);
+}
+
+@media (width <= 900px) {
+  .root {
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rail {
+    gap: var(--s-2);
+    padding: 10px 16px;
+    overflow: visible;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .scroller {
+    padding: 24px 16px 56px;
+  }
+
+  .hosted {
+    padding: 0;
+  }
+
+  .hosted .head {
+    padding: 24px 16px 12px;
+  }
+}

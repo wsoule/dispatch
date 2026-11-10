@@ -1,0 +1,132 @@
+/* Gr8r's checkbox: a 15px, 4px-radius box with a 1.5px --control-border
+   edge (3:1 on every surface, WCAG 1.4.11); checked fills the accent with
+   an on-accent tick (a dash when mixed). The native input sits on top of
+   the glyph, transparent, so it keeps focus and clicks. */
+
+.checkbox {
+  position: relative;
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-height: 28px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.input {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  opacity: 0;
+  transform: translateY(-50%);
+  cursor: inherit;
+}
+
+/* The glyph never takes the pointer: its check is drawn at opacity 0
+   while off, which paints it above the transparent input, so without
+   this a click landed on the drawing instead of the input. */
+.glyph {
+  display: inline-flex;
+  flex: none;
+  pointer-events: none;
+  width: 15px;
+  height: 15px;
+  border: 1.5px solid var(--control-border);
+  border-radius: var(--r-xs);
+  background: var(--surface);
+  transition:
+    background-color var(--dur) ease,
+    border-color var(--dur) ease;
+}
+
+.check {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: var(--on-accent);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0;
+}
+
+.input:checked + .glyph {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.input:checked + .glyph .check {
+  opacity: 1;
+}
+
+/* Mixed (some of a group selected): the accent box with a dash. */
+.glyph[data-mixed='true'] {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.glyph[data-mixed='true'] .check {
+  opacity: 1;
+}
+
+.input:focus-visible + .glyph {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.label {
+  font-size: var(--fs);
+  font-weight: var(--fw-regular);
+}
+
+.note {
+  font-size: var(--fs-xs);
+  line-height: 1.3;
+  color: var(--text-3);
+}
+
+@media (hover: hover) and (width >= 901px) {
+  .checkbox:not([data-disabled='true']):hover .input:not(:checked) + .glyph {
+    border-color: var(--text-3);
+  }
+}
+
+.checkbox[data-disabled='true'] {
+  cursor: not-allowed;
+  color: var(--text-3);
+}
+
+.checkbox[data-disabled='true'] .glyph {
+  border-color: var(--border);
+  background: var(--surface-2);
+}
+
+.checkbox[data-disabled='true'] .input:checked + .glyph,
+.checkbox[data-disabled='true'] .glyph[data-mixed='true'] {
+  border-color: var(--border-strong);
+  background: var(--border-strong);
+}
+
+/* Forced colours paint the accent fill as the canvas but leave the SVG
+   check's on-accent stroke alone, so a ticked or mixed box looked empty
+   (white on white). There the check and the dash take the text colour
+   (greyed while disabled) inside the forced frame. */
+@media (forced-colors: active) {
+  .check {
+    stroke: CanvasText;
+  }
+
+  .checkbox[data-disabled='true'] .check {
+    stroke: GrayText;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glyph {
+    transition: none;
+  }
+}

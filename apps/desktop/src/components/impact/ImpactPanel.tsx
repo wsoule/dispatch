@@ -1,21 +1,18 @@
 import type { ApiClient, ImpactSubjectKind } from '@dispatch/client';
 import { ApiError } from '@dispatch/client';
+import {
+  Chip,
+  EmptyState,
+  Panel,
+  Skeleton,
+  StatsStrip,
+  Tooltip,
+} from '@dispatch/ui';
 import { useQuery } from '@tanstack/react-query';
 import { Waypoints } from 'lucide-react';
 
 import { DEFAULT_REVIEW_CAP, summarizeImpact } from '../../lib/impactSummary';
-import type { InsightDelta } from '@/ui/ai/insight-cards';
-import { InsightCard } from '@/ui/ai/insight-cards';
-import { Pill } from '@/ui/ai/pill';
-import {
-  EmptyState,
-  HintText,
-  Panel,
-  PanelHeader,
-  PanelRow,
-} from '@/ui/chrome';
-import { Skeleton } from '@/ui/skeleton';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
+import styles from './ImpactPanel.module.css';
 
 // The scanner only understands .ts/.tsx imports, so a scanner-backed result
 // can look complete on a polyglot repo while missing most of it. Shown as a
@@ -52,7 +49,9 @@ function reasonMessage(reason: string | undefined): string | null {
 
 /**
  * Compact blast-radius surface: count, deepest hop, the direct-vs-downstream
- * split, which backend(s) answered, and review-scope coverage. Embedded in
+ * split (a library StatsStrip of Direct, Downstream and Total, in neutral
+ * ink: a bigger reach is no status), which backend(s) answered, and
+ * review-scope coverage. Embedded in
  * the Review case panel, task detail, and the Git file pane — each passes
  * its own subject and this owns the fetch/loading/error states, mirroring
  * `SessionDetailModal`'s pattern for a self-contained data panel.
@@ -108,43 +107,53 @@ export function ImpactPanel({
   // would fall through to a bare header forever instead of a loading state.
   const pending = !isError && data === undefined;
 
-  return (
-    <Panel className={className}>
-      <PanelHeader
-        count={resolved ? resolved.summary.total : undefined}
-        actions={
-          resolved ? (
-            <ImpactBadges
-              summary={resolved.summary}
-              sources={resolved.reach.sources}
-              degraded={resolved.reach.degraded}
-              truncated={resolved.reach.truncated}
-            />
-          ) : null
-        }
-      >
-        Impact
-      </PanelHeader>
+  // The header count is an exact number, so a capped reach (whose total is
+  // only a lower bound, "5+" in the stat strip) shows none: the Capped chip
+  // and the Total cell say it instead of a count that reads as exact.
+  const headerCount =
+    resolved && !resolved.reach.truncated ? resolved.summary.total : undefined;
 
+  return (
+    <Panel
+      heading="Impact"
+      className={className}
+      count={headerCount}
+      actions={
+        resolved ? (
+          <ImpactBadges
+            summary={resolved.summary}
+            sources={resolved.reach.sources}
+            degraded={resolved.reach.degraded}
+            truncated={resolved.reach.truncated}
+          />
+        ) : null
+      }
+    >
       {pending && (
-        <div className="flex flex-col gap-2 p-3">
-          <Skeleton className="h-3.5 w-2/3" />
-          <Skeleton className="h-1.5 w-full" />
+        <div className={styles.loading} role="status">
+          <span className="srOnly">Loading the blast radius</span>
+          <Skeleton width="66%" height={14} />
+          <Skeleton height={6} />
         </div>
       )}
 
-      {isError && <EmptyState message={impactErrorMessage(error)} />}
+      {isError && (
+        <EmptyState icon={null}>{impactErrorMessage(error)}</EmptyState>
+      )}
 
       {!pending && !isError && message !== null && (
-        <EmptyState message={message} />
+        <EmptyState icon={null}>{message}</EmptyState>
       )}
 
       {!pending && !isError && resolved && resolved.summary.total === 0 && (
-        <EmptyState message={resolved.summary.zeroMessage} />
+        <EmptyState icon={null}>{resolved.summary.zeroMessage}</EmptyState>
       )}
 
       {!pending && !isError && resolved && resolved.summary.total > 0 && (
-        <ImpactBody summary={resolved.summary} />
+        <ImpactBody
+          summary={resolved.summary}
+          truncated={resolved.reach.truncated}
+        />
       )}
     </Panel>
   );
@@ -162,62 +171,65 @@ function ImpactBadges({
   truncated: boolean;
 }) {
   // A caveat is worth a hover explanation whenever the scanner is doing some
-  // or all of the work — carto-only or carto+scanner results have nothing to
+  // or all of the work; carto-only or carto+scanner results have nothing to
   // qualify, since carto is the broader, cross-language graph.
   const hasCaveat =
     degraded || (sources.includes('scanner') && !sources.includes('carto'));
 
   const badge = (
-    <Pill>
-      <Waypoints className="size-3" />
-      {summary.sourceLabel}
-    </Pill>
+    <span className={styles.source}>
+      <Waypoints size={12} strokeWidth={1.8} aria-hidden="true" />
+      <Chip>{summary.sourceLabel}</Chip>
+    </span>
   );
 
   return (
     <>
       {hasCaveat ? (
-        <Tooltip>
-          <TooltipTrigger render={badge} />
-          <TooltipContent>{SCANNER_CAVEAT}</TooltipContent>
+        // Focusable so the caveat reaches a keyboard too, not just a hover.
+        <Tooltip content={SCANNER_CAVEAT}>
+          <span tabIndex={0} className={styles.caveat}>
+            {badge}
+          </span>
         </Tooltip>
       ) : (
         badge
       )}
-      {truncated && <Pill>Capped</Pill>}
+      {truncated && <Chip>Capped</Chip>}
     </>
   );
 }
 
-// Reads the direct-vs-downstream split as a direction: more downstream than direct means
-// the reach keeps fanning out past the immediate dependents ('up'), more direct means it's
-// mostly contained to one hop ('down'), equal is 'flat'. Derived straight from the two
-// counts `summarizeImpact` already computed — not a fabricated trend.
-function blastRadiusDelta(direct: number, downstream: number): InsightDelta {
-  const direction =
-    downstream > direct ? 'up' : downstream < direct ? 'down' : 'flat';
-  return { value: `${downstream} downstream`, direction };
-}
-
+/** The body of a nonzero reach: the summary line ("30 files · 5 hops"), the
+ *  three counts as a stat strip, then the analysis and coverage caveats. A
+ *  capped reach's total is a lower bound, so it carries the same `+` the
+ *  summary line does. */
 function ImpactBody({
   summary,
+  truncated,
 }: {
   summary: ReturnType<typeof summarizeImpact>;
+  truncated: boolean;
 }) {
   return (
-    <PanelRow className="flex-col items-stretch gap-2">
-      <InsightCard
-        title="Blast radius"
-        summary={summary.label}
-        series={[summary.direct, summary.downstream]}
-        unit="files"
-        delta={blastRadiusDelta(summary.direct, summary.downstream)}
-        page={0}
-        pageCount={1}
-        onPageChange={() => {}}
+    <>
+      <p className={styles.summary}>{summary.label}</p>
+      <StatsStrip
+        label="Blast radius"
+        cells={[
+          { id: 'direct', label: 'Direct', value: summary.direct },
+          { id: 'downstream', label: 'Downstream', value: summary.downstream },
+          {
+            id: 'total',
+            label: 'Total',
+            value: truncated ? `${summary.total}+` : summary.total,
+          },
+        ]}
       />
-      {summary.analysisNote && <HintText>{summary.analysisNote}</HintText>}
-      {summary.coverage && <HintText>{summary.coverage}</HintText>}
-    </PanelRow>
+      {summary.analysisNote && (
+        <p className={styles.hint}>{summary.analysisNote}</p>
+      )}
+      {summary.coverage && <p className={styles.hint}>{summary.coverage}</p>}
+    </>
   );
 }

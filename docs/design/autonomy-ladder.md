@@ -251,6 +251,44 @@ The decision feed already reserved the seam for exactly this milestone:
    `x-policy` data naming the gate and rung, so it never reads as a human's
    ruling.
 
+## The difficulty lift (t-239af144)
+
+A per-task lift alongside the rung: a routine task that the difficulty evaluator
+rates easy has its verify-retry and merge gates automated even when the project
+rung would block them. The rubric is the judged model tier's trivial / small /
+substantial choice (`server/src/judgments/modelTier.ts`), which needs confidence
+of at least 0.7. Configured under `policy.difficulty`; everything is off by
+default:
+
+```yaml
+policy:
+  difficulty:
+    autoLand: true # lift review + merge for easy tasks
+    autoDispatch: true # also start ready easy tasks unprompted
+    threshold: small # trivial | small
+    maxFiles: 10 # safety gate: diff ceiling
+    maxLines: 200
+    maxConcurrent: 1 # auto-dispatched runs live at once
+```
+
+- **Safety gate before the merge queue.** The diff must have no more than
+  `maxFiles` files and `maxLines` changed lines, and no binary file. Something
+  must also prove it green: a passing verification newer than every implementer
+  or fix run on the task, or a `verifyCommand`/`verifySteps` that the queue runs
+  on the landing head. A run that fails the gate is held with a receipt naming
+  the check. The queue's own gates still apply after it.
+- **What still wins:** the risk caps (only routine tasks are lifted), a per-gate
+  `block` pin, the irreversibility floor, and the `no-auto-land` task label. The
+  label opts the task out of auto-dispatch as well.
+- **Auto-dispatch** (`server/src/difficultyAutopilot.ts`) starts only tasks that
+  meet all of these: in the `ready` status role, never run before, unassigned or
+  the operator's own, clear of every live run's claims, and outside any live
+  epic session's scope.
+- **Receipts:** every lifted decision writes a ledger entry and an Activity
+  line, both naming the judgment and threshold
+  (`auto-decided by the difficulty lift (merge gate): judged trivial (0.91), within the small threshold`).
+  An auto-merge receipt also carries the safety gate's summary.
+
 ## Explicitly out of scope for the ladder
 
 - `permissionMode` stays an orchestrator config, not a rung: the ladder operates

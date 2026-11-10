@@ -1,0 +1,32 @@
+/* The reply under a thread (ReplyBox.tsx): who the reply goes to, the
+   PromptBar and the problem line, or the quiet sentence saying why there
+   is no reply box. */
+
+.reply {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.target {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+}
+
+/* "This conversation takes no replies here", then the door to it. */
+.elsewhere {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}

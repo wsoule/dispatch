@@ -1,9 +1,10 @@
 import type { ApiClient } from '@dispatch/client';
+import { Button, cx } from '@dispatch/ui';
 import { useId, useState } from 'react';
 
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import type { MemoryActivityItem } from '../../lib/memory';
-import { Button } from '@/ui/button';
+import styles from './MemoryActivityList.module.css';
 
 type UndoState =
   | { state: 'running' }
@@ -40,36 +41,27 @@ export function MemoryActivityList({ items, client }: MemoryActivityListProps) {
   }
 
   return (
-    <ul className="flex flex-col">
+    <ul className={styles.list}>
       {items.map((item, index) => {
         const status = undo.get(item.id);
         const summaryId = `${idBase}-${index}-summary`;
         const errorId = `${idBase}-${index}-error`;
         return (
-          <li
-            key={item.id}
-            data-slot="memory-activity"
-            className="rounded-control flex items-start gap-2 px-2 py-1.5"
-          >
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <li key={item.id} data-slot="memory-activity" className={styles.row}>
+            <div className={styles.text}>
               {/* The daemon's summary carries agent-written titles: plain text only. */}
-              <span
-                id={summaryId}
-                className="text-foreground text-[13px] break-words"
-              >
+              <span id={summaryId} className={styles.summary}>
                 {item.text}
               </span>
-              <time
-                dateTime={item.at}
-                className="font-book text-muted-foreground text-[12px]"
-              >
+              <time dateTime={item.at} className={styles.time}>
                 {formatRelativeTimeFromIso(item.at)}
               </time>
               {status?.state === 'failed' && (
                 <span
                   id={errorId}
                   role="alert"
-                  className="text-red text-[12px]"
+                  className={cx('toneText', styles.error)}
+                  data-tone="danger"
                 >
                   {status.error}
                 </span>
@@ -77,9 +69,9 @@ export function MemoryActivityList({ items, client }: MemoryActivityListProps) {
             </div>
             {item.undoable && (
               <Button
-                variant="outline"
-                size="xs"
-                className="shrink-0"
+                variant="secondary"
+                size="sm"
+                className={styles.undo}
                 aria-describedby={
                   status?.state === 'failed'
                     ? `${summaryId} ${errorId}`

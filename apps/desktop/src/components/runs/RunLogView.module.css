@@ -1,0 +1,344 @@
+/* A run's transcript (RunLogView.tsx): the sub-agent tree, the "Run log" scroller with
+   its chat lane, the asks pinned under it, and the composer. Message bubbles, the
+   in-flight working row and the terminal run's feedback box live here; transcript rows,
+   notices and the live composer bring their own styles. Tokens only. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  height: 100%;
+  min-height: 0;
+}
+
+.subagents {
+  flex: none;
+  margin: 0 4px;
+}
+
+/* The transcript and the pinned asks under it: everything but the composer. */
+.body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-height: 0;
+}
+
+.scroller {
+  flex: 1;
+  min-height: 0;
+  padding: 0 4px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* The chat lane: one column the full width of the scroller, at least its height so an
+   empty or loading state can centre in it. */
+.lane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  width: 100%;
+  min-height: 100%;
+  margin: 0 auto;
+}
+
+/* ---- the lane's own rows ------------------------------------------------- */
+
+/* "Resumed from run …" between two rules. */
+.resumed {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 4px 0;
+}
+
+.rule {
+  flex: 1;
+  height: 1px;
+  background: var(--divider);
+}
+
+.resumedNote {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  background: var(--surface);
+  font-size: var(--fs-2xs);
+  color: var(--text-2);
+}
+
+/* An empty or loading lane: its one row centred in the space. */
+.centre {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+}
+
+.empty {
+  flex-direction: column;
+  gap: var(--s-2);
+  color: var(--text-2);
+  text-align: center;
+}
+
+.emptyText {
+  margin: 0;
+  font-size: var(--fs);
+}
+
+/* In-flight work with nothing to show yet: spinner, shimmering words, elapsed time. */
+.working {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  color: var(--text-2);
+}
+
+.workingLabel {
+  font-size: var(--fs);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+.elapsed {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+/* A notice whose words keep the line breaks they were written with. */
+.preWrap {
+  white-space: pre-wrap;
+}
+
+/* ---- messages ------------------------------------------------------------ */
+
+/* A digest: one compact line, truncated, with its thread link at the end. */
+.digest {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.digestIcon {
+  flex: none;
+}
+
+.digestLine {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A run's own message to you: a full-width card. */
+.toYou {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r);
+  background: var(--surface-2);
+}
+
+/* A bubble: your own words on the right on --surface-2, everyone else's on the left on
+   --surface under a soft edge. Position and fill tell them apart, the heading names the
+   sender, so no hue is needed. */
+.bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 80%;
+  padding: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+}
+
+.bubble[data-align='start'] {
+  align-self: flex-start;
+}
+
+.bubble[data-align='end'] {
+  align-self: flex-end;
+  border-color: transparent;
+  background: var(--surface-2);
+}
+
+.heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+.bubble[data-align='end'] .heading {
+  color: var(--text-2);
+}
+
+.from {
+  font-weight: var(--fw-regular);
+  color: var(--text-2);
+}
+
+.openThread {
+  margin-inline-start: auto;
+  border-radius: var(--r-xs);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-regular);
+  color: var(--text-2);
+}
+
+.openThread:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+@media (hover: hover) {
+  .openThread:hover {
+    color: var(--text);
+    text-decoration: underline;
+  }
+}
+
+.messageText {
+  font-size: var(--fs);
+  line-height: var(--lh-long);
+  color: var(--text);
+}
+
+/* An A2A or external sender's body, exactly as typed. */
+.plainText {
+  margin: 0;
+  font-size: var(--fs);
+  line-height: var(--lh-long);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.notes {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.notes > p {
+  margin: 0;
+}
+
+/* ---- the pinned asks ----------------------------------------------------- */
+
+/* The open questions and the scope request, pinned above the composer. At most half of
+   the body they share with the transcript (less half the gap between them), scrolling
+   within themselves, so two cards together never leave the transcript (and the approval
+   card in it) less room than they take. A focusable scroller, so the ring is inset: the
+   overflow would clip an outer one. */
+.asks {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--s-3);
+  max-block-size: calc((100% - var(--s-3)) / 2);
+  padding: 0 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.asks:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+  border-radius: var(--r);
+}
+
+/* ---- the composer -------------------------------------------------------- */
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--divider);
+}
+
+.hint {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+/* A finished run's composer: pending attachment chips over the feedback row; a
+   file drag over it shows a ring. */
+.terminalBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  border-radius: var(--r);
+}
+
+.terminalBox[data-dragging='true'] {
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.thumb {
+  display: block;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-xs);
+  object-fit: cover;
+}
+
+.file {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+/* A finished run: the feedback box and its two actions on one line. */
+.terminal {
+  display: flex;
+  gap: var(--s-2);
+}
+
+.terminal .draft {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  resize: none;
+}
+
+.terminal .action {
+  align-self: flex-end;
+}
+
+/* Forced colours: the bubbles, the card and the resumed note keep their edges. */
+@media (forced-colors: active) {
+  .bubble,
+  .bubble[data-align='end'],
+  .toYou,
+  .resumedNote {
+    border-color: CanvasText;
+  }
+}

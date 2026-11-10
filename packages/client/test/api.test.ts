@@ -6,6 +6,7 @@ import {
   httpToWs,
   taskDraftToCreateInput,
   taskQueryString,
+  withRunAttachmentNote,
 } from '../src/api';
 
 // Captures the (url, init) a stubbed `fetch` was called with, so a test can
@@ -302,6 +303,55 @@ describe('attachments', () => {
   });
 });
 
+describe('run attachments', () => {
+  it('uploads under the run as FormData and answers the entries', async () => {
+    const entry = {
+      name: 'shot.png',
+      path: '/repo/.dispatch/attachments/runs/r-1/abc/shot.png',
+      size: 1,
+      mimeType: 'image/png',
+    };
+    const stub = stubFetch({ attachments: [entry] });
+    try {
+      const uploaded = await createApiClient(
+        'http://example.test'
+      ).uploadRunAttachments('r 1', [new File(['x'], 'shot.png')]);
+      expect(uploaded).toEqual([entry]);
+      expect(stub.calls[0].url).toBe(
+        'http://example.test/api/runs/r%201/attachments'
+      );
+      expect(stub.calls[0].init?.method).toBe('POST');
+      expect(stub.calls[0].init?.body instanceof FormData).toBe(true);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('lists attached files after the text, or alone when there is none', () => {
+    const shot = {
+      name: 'shot.png',
+      path: '/repo/shot.png',
+      size: 1,
+      mimeType: 'image/png',
+    };
+    expect(withRunAttachmentNote('fix this', [])).toBe('fix this');
+    expect(withRunAttachmentNote('fix this', [shot])).toBe(
+      [
+        'fix this',
+        '',
+        'Attached files (saved on this machine; read them when they matter):',
+        '- shot.png (image/png): /repo/shot.png',
+      ].join('\n')
+    );
+    expect(withRunAttachmentNote('', [shot])).toBe(
+      [
+        'Attached files (saved on this machine; read them when they matter):',
+        '- shot.png (image/png): /repo/shot.png',
+      ].join('\n')
+    );
+  });
+});
+
 describe('aiFilterTasks', () => {
   it('posts { sentence } as JSON to /api/tasks/filter/ai', async () => {
     const stub = stubFetch();
@@ -451,6 +501,58 @@ describe('overseer methods', () => {
         prompt: 'hi',
         model: 'claude-fable-5-1',
       });
+    } finally {
+      stub.restore();
+    }
+  });
+});
+
+describe('Linear sign-in methods', () => {
+  const client = (): ApiClient =>
+    createApiClient('http://127.0.0.1:4771', 'tok');
+
+  it('reads the account view', async () => {
+    const stub = stubFetch({ canSignIn: true });
+    try {
+      await client().fetchLinearAccount();
+      expect(stub.calls[0]?.url).toBe(
+        'http://127.0.0.1:4771/api/linear/account'
+      );
+      expect(stub.calls[0]?.init?.method).toBeUndefined();
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('starts, cancels and signs out with the right verbs', async () => {
+    const stub = stubFetch({
+      authorizeUrl: 'https://linear.app/oauth/authorize?x',
+    });
+    try {
+      const api = client();
+      await api.startLinearSignIn();
+      await api.startLinearSignIn({ anotherWorkspace: true });
+      await api.cancelLinearSignIn();
+      await api.signOutOfLinear();
+      await api.signOutOfLinear({ workspaceId: 'org-1' });
+      expect(
+        stub.calls.map((c) => [
+          c.init?.method,
+          c.url.replace('http://127.0.0.1:4771', ''),
+          c.init?.body ?? null,
+        ])
+      ).toEqual([
+        ['POST', '/api/linear/sign-in', '{}'],
+        ['POST', '/api/linear/sign-in', '{"anotherWorkspace":true}'],
+        ['DELETE', '/api/linear/sign-in', null],
+        ['POST', '/api/linear/sign-out', '{}'],
+        ['POST', '/api/linear/sign-out', '{"workspaceId":"org-1"}'],
+      ]);
+      const headers = new Headers(stub.calls[0]?.init?.headers);
+      expect(headers.get('authorization')).toBe('Bearer tok');
+      // The daemon reads a JSON body only with its content type.
+      const signOut = new Headers(stub.calls[4]?.init?.headers);
+      expect(signOut.get('content-type')).toBe('application/json');
     } finally {
       stub.restore();
     }

@@ -88,11 +88,17 @@ describe('a planned key rotation', () => {
     );
   });
 
+  // Two daemons, a pairing, a rotation and a wait of up to 5 s for the
+  // re-pin: about 0.6 s idle, but past Bun's 5 s default on a loaded CI
+  // runner (5.26 s), where the wait could not even report. 30 s, like the
+  // file's other two-daemon tests.
   it('refuses an older key-change statement once a newer one applied', async () => {
     const a = await daemon('a2a-keys-a-');
     const b = await daemon('a2a-keys-b-');
     await paired(a, b);
-    await rotate(a);
+    const oldKid = kidOf(a.root);
+    const bNotices = await noticesOf(b);
+    const rotated = await rotate(a);
     const read = readA2ANextSigningKey(a.root);
     if (read.status !== 'ok') throw new Error('no next key');
     const k2 = read.next.jwk;
@@ -122,10 +128,30 @@ describe('a planned key rotation', () => {
     };
     // b re-pins alice's next key when a's push lands, which is not awaited
     // by rotate(); a statement naming k2 before then is simply unknown (404).
-    await waitFor(
-      () => b.handle.a2a.store!.getPeer('alice')?.keyThumbprint === k2Kid,
-      5000
-    );
+    try {
+      await waitFor(
+        () => b.handle.a2a.store!.getPeer('alice')?.keyThumbprint === k2Kid,
+        5000
+      );
+    } catch (err) {
+      // This wait has timed out now and then in CI only. Say why: was bob
+      // untold (a's push threw, and its retry is 30 s off), or told yet
+      // still pinning another key?
+      const pinned = b.handle.a2a.store!.getPeer('alice')?.keyThumbprint;
+      throw new Error(
+        `b never re-pinned alice's next key: ${JSON.stringify({
+          rotated,
+          pinned,
+          pinnedIs:
+            pinned === oldKid ? 'old' : pinned === k2Kid ? 'next' : 'other',
+          pendingPushes: a.handle.a2a
+            .store!.notices('key-push')
+            .map(({ id, attempts, at }) => ({ id, attempts, at })),
+          bNotices: bNotices(),
+        })}`,
+        { cause: err }
+      );
+    }
     // Unsigned, naming the pinned key but signed by another: refused.
     const forger = newPrivateJwk();
     const forged = await rawFetch(`${b.listener}/a2a/v1/dispatch/key-change`, {
@@ -148,7 +174,7 @@ describe('a planned key rotation', () => {
     const newer = await post(applied + 60_000);
     expect(newer.status).toBe(200);
     expect(b.handle.a2a.store!.getPeer('alice')?.keyThumbprint).not.toBe(k2Kid);
-  });
+  }, 30_000);
 
   it('a peer that missed the push fetches the statement on its next key-unknown reply', async () => {
     const a = await daemon('a2a-keys-a-');

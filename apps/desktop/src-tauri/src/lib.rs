@@ -1,6 +1,8 @@
 mod commands;
 mod cost;
 mod db;
+mod downloads;
+mod loopback;
 mod parser;
 mod registry;
 mod setup;
@@ -8,6 +10,7 @@ mod sidecar;
 mod summarize;
 mod tags;
 mod watcher;
+mod window_theme;
 
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
@@ -47,6 +50,10 @@ pub fn run() {
     // capability permission.
     .plugin(tauri_plugin_deep_link::init())
     .setup(|app| {
+      // First, so the window opens as soon as it did when tauri.conf.json created it, and
+      // already in the theme the page last chose (see `window_theme`).
+      window_theme::create_main_window(app)?;
+
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()
@@ -80,6 +87,8 @@ pub fn run() {
       app.manage(summarize::HttpClient(reqwest::Client::new()));
       app.manage(sidecar::DispatchdChildren::new());
       app.manage(sidecar::SpawnedAppTokens::new());
+      app.manage(commands::DaemonPrewarm::default());
+      commands::prewarm_dispatchd(app.handle());
 
       watcher::start(app.handle().clone());
       spawn_idle_sweep(app.handle().clone());
@@ -113,6 +122,8 @@ pub fn run() {
       commands::touch_project_opened,
       commands::list_github_repos,
       commands::clone_github_repo,
+      downloads::download_workspace_file,
+      window_theme::remember_window_theme,
     ])
     .build(tauri::generate_context!())
     .expect("error while building tauri application")

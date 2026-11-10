@@ -250,12 +250,16 @@ function mimeTypeOf(file: File, name: string): string {
   return bare === '' ? 'application/octet-stream' : bare;
 }
 
-// POST /api/overseer/attachments — multipart upload under `files`. Answers
-// `{ attachments }`, the entries the next message's body may carry.
-export async function uploadOverseerAttachments(
+// Writes a multipart request's `files` each into its own random directory
+// under `dir` (project-relative), so two `image.png` pastes never collide.
+// Answers the entries written, or the error response when the request is too
+// big, malformed, or names a file no attachment may be called. Shared by the
+// overseer's and a run's upload routes, which differ only in where blobs land.
+async function writeUploads(
   req: Request,
-  rootDir: string
-): Promise<Response> {
+  rootDir: string,
+  dir: string
+): Promise<OverseerAttachment[] | Response> {
   const declared = Number(req.headers.get('content-length') ?? '0');
   if (Number.isFinite(declared) && declared > UPLOAD_REQUEST_MAX_BYTES) {
     return errorResponse(413, 'upload exceeds the 100 MB request limit');
@@ -281,7 +285,7 @@ export async function uploadOverseerAttachments(
   for (const file of files) {
     const name = sanitizeAttachmentName(file.name) as string;
     const uploadId = randomBytes(6).toString('hex');
-    const path = `${OVERSEER_ATTACHMENTS_DIR}/${uploadId}/${name}`;
+    const path = `${dir}/${uploadId}/${name}`;
     const absolute = resolve(rootDir, path);
     mkdirSync(resolve(absolute, '..'), { recursive: true });
     await Bun.write(absolute, file);
@@ -292,6 +296,58 @@ export async function uploadOverseerAttachments(
       mimeType: mimeTypeOf(file, name),
     });
   }
+  return attachments;
+}
+
+// POST /api/overseer/attachments — multipart upload under `files`. Answers
+// `{ attachments }`, the entries the next message's body may carry.
+export async function uploadOverseerAttachments(
+  req: Request,
+  rootDir: string
+): Promise<Response> {
+  const written = await writeUploads(req, rootDir, OVERSEER_ATTACHMENTS_DIR);
+  if (written instanceof Response) return written;
+  return jsonResponse({ attachments: written });
+}
+
+/** Where files attached to a run's follow-up messages live, relative to the
+ *  project root; one directory per run under it. */
+const RUN_ATTACHMENTS_DIR = '.dispatch/attachments/runs';
+
+// A run id as the orchestrator mints them, and the only shape that may name a
+// directory: no dots or separators, so it can never climb out of the root.
+const RUN_ID = /^[A-Za-z0-9_-]+$/;
+
+/** A file uploaded for a run's next follow-up. Unlike an overseer attachment
+ *  the path is absolute: the message body names it for an agent whose working
+ *  directory is a worktree, not the project root. */
+export interface RunAttachment {
+  name: string;
+  path: string;
+  size: number;
+  mimeType: string;
+}
+
+// POST /api/runs/:id/attachments — multipart upload under `files`, for a file
+// dropped, pasted or picked in a run's follow-up composer. Run messages are
+// plain text on the bus, so the desktop lists each answered `path` in the
+// message body; the agent reads the files from there.
+export async function uploadRunAttachments(
+  req: Request,
+  rootDir: string,
+  runId: string
+): Promise<Response> {
+  if (!RUN_ID.test(runId)) return errorResponse(400, 'invalid run id');
+  const written = await writeUploads(
+    req,
+    rootDir,
+    `${RUN_ATTACHMENTS_DIR}/${runId}`
+  );
+  if (written instanceof Response) return written;
+  const attachments: RunAttachment[] = written.map((a) => ({
+    ...a,
+    path: resolve(rootDir, a.path),
+  }));
   return jsonResponse({ attachments });
 }
 

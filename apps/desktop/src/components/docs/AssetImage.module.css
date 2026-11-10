@@ -1,0 +1,7 @@
+/* A doc preview's image (AssetImage.tsx): the quiet note left in place of
+   an image that could not load. */
+
+.failed {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}

@@ -47,7 +47,7 @@ export interface OverseerBus {
   ): Promise<Message>;
   raiseAction(
     conversationId: string,
-    action: { id: string; summary: string; lastError?: string }
+    action: { id: string; summary: string }
   ): Promise<void>;
   raiseToolApproval(
     conversationId: string,
@@ -131,17 +131,13 @@ export function createOverseerBus(
       return sent.message;
     },
     async raiseAction(conversationId, action) {
-      const failed =
-        action.lastError === undefined
-          ? ''
-          : ` (the last attempt failed: ${action.lastError})`;
       await engine.send(
         {
           to: [opts.owner],
           kind: 'question',
           blocking: true,
           choices: ['confirm', 'cancel'],
-          body: `The overseer wants to: ${action.summary}${failed}`,
+          body: `The overseer wants to: ${action.summary}`,
           data: {
             type: 'overseer-action',
             conversation: conversationId,

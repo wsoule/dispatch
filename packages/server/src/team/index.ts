@@ -39,13 +39,23 @@ export function syncSeats(
   };
 }
 
-export function createTeam(rootDir: string, operatorHandle: string): Team {
+export function createTeam(
+  rootDir: string,
+  operatorHandle: string,
+  /** A hosted planner (app.dispatch.foo): the people it serves plan in a
+   *  Linear workspace and count no seats. Seats cover team features
+   *  (machines, agents, messaging), which a hosted planner has none of. */
+  opts: { hostedPlanner?: boolean } = {}
+): Team {
   // The seat count is read through `team.license` on every check, not a
   // captured manager, so whichever license the team holds is the one that
   // counts. The closures run only after `team` below exists.
   const teammates = new TeammateTokens({
     store: fileTokenStore(teamTokensPath(rootDir)),
-    seats: () => team.license.seats(),
+    seats: () =>
+      opts.hostedPlanner === true
+        ? Number.POSITIVE_INFINITY
+        : team.license.seats(),
     seatMessage: (seats) => seatLimitMessage(seats, team.license.state()),
     operatorHandle,
   });

@@ -6,6 +6,7 @@ import {
   render as rtlRender,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react';
 import { afterEach, beforeEach, expect, mock, test } from 'bun:test';
 import type { ReactElement } from 'react';
@@ -37,8 +38,12 @@ const tauri = {
     Promise.resolve({ path: '/usr/local/bin/dispatch', onPath: true })
   ),
 };
-// bun replaces the whole module, so stub every export AddProjectDialog's import graph uses.
+// bun replaces the whole module for every file in the run, so keep the real exports (isTauri
+// and the rest, which other files import) and stub the ones the setup steps and
+// AddProjectDialog call.
+const realTauri = await import('../lib/tauri');
 void mock.module('../lib/tauri', () => ({
+  ...realTauri,
   ...tauri,
   // The mock registry is shared across test files, so AgentStep.test's import needs this.
   openUrl: mock(() => Promise.resolve()),
@@ -287,4 +292,71 @@ test('never shows internal words', async () => {
   expect(container.textContent).not.toMatch(
     /dispatchd|\.dispatch\/|tracker|worktree|executor/i
   );
+});
+
+test('each step is a section named by its h2, its glyph named for its state', async () => {
+  render(
+    <SetupView projectPath={null} onProjectChosen={() => Promise.resolve()} />
+  );
+  expect(
+    screen.getByRole('heading', { level: 1, name: 'Welcome to Dispatch' })
+  ).toBeTruthy();
+  const git = screen.getByRole('region', { name: 'Git' });
+  expect(within(git).getByRole('heading', { level: 2 }).textContent).toBe(
+    'Git'
+  );
+  // Probing the machine: a spinner and the words, no glyph name yet.
+  expect(within(git).getByText('Checking…')).toBeTruthy();
+  await within(git).findByRole('img', { name: 'Done' });
+  expect(
+    within(git).getByRole('img', { name: 'Done' }).getAttribute('data-tone')
+  ).toBe('success');
+  const project = screen.getByRole('region', { name: 'Your project' });
+  expect(
+    within(project)
+      .getByRole('img', { name: 'Needs you' })
+      .getAttribute('data-tone')
+  ).toBe('warning');
+  const agent = screen.getByRole('region', { name: 'Your AI agent' });
+  expect(
+    within(agent)
+      .getByRole('img', { name: 'Not yet' })
+      .getAttribute('data-tone')
+  ).toBe('muted');
+  // SetupView is only the column: App's signed-out frame owns the one <main>.
+  expect(screen.queryByRole('main')).toBeNull();
+});
+
+test('the project step waits for git, with a Not yet glyph', async () => {
+  tauri.gitSetupStatus.mockImplementationOnce(() =>
+    Promise.resolve({
+      installed: false,
+      version: null,
+      name: null,
+      email: null,
+      installHint: null,
+    })
+  );
+  render(
+    <SetupView projectPath={null} onProjectChosen={() => Promise.resolve()} />
+  );
+  await screen.findByText('Install Git');
+  const project = screen.getByRole('region', { name: 'Your project' });
+  expect(within(project).getByRole('img', { name: 'Not yet' })).toBeTruthy();
+  expect(within(project).queryByRole('button')).toBeNull();
+});
+
+test('a failed terminal command install names itself and keeps the reason under Details', async () => {
+  tauri.installCliCommand.mockImplementationOnce(() =>
+    Promise.reject('permission denied')
+  );
+  render(<CliCommandStep />);
+  const step = screen.getByRole('region', { name: 'Terminal command' });
+  expect(within(step).getByRole('img', { name: 'Not yet' })).toBeTruthy();
+  await click(within(step).getByRole('button', { name: 'Install command' }));
+  expect(
+    await within(step).findByText("Couldn't install the command.")
+  ).toBeTruthy();
+  await click(within(step).getByRole('button', { name: 'Details' }));
+  expect(within(step).getByText('permission denied')).toBeTruthy();
 });

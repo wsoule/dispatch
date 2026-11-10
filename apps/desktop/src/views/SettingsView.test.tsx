@@ -1,6 +1,7 @@
 import type { ApiClient, BoardSyncStatus, SyncStatus } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -8,9 +9,10 @@ import {
   within,
 } from '@testing-library/react';
 import { describe, expect, mock, test } from 'bun:test';
-import { Bot } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { Bot, Coins } from 'lucide-react';
+import { type ReactNode, useState } from 'react';
 
+import { SessionDetailModal } from '../components/sessions/SessionDetailModal';
 import {
   ATTACHED_BACKGROUND_READ_ONLY,
   ATTACHED_READ_ONLY,
@@ -18,12 +20,17 @@ import {
 } from '../components/settings/access';
 import {
   dataWith,
+  selectTrigger,
   testConfig,
   testProject,
+  visibleText,
 } from '../components/settings/fixtures.test-helper';
 import { OPERATOR_ONLY } from '../components/settings/SettingsGroup';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { SPLIT_MIN_WIDTH } from '../hooks/useFittedDiffLayout';
+import { useGlobalKeyboard } from '../hooks/useGlobalKeyboard';
 import type { SettingsPage } from '../lib/appNav';
+import type { GlobalKeyCommand } from '../lib/keyboard';
 
 // The Diffs tab's preview renders through `PierreWorkerPool`, which imports
 // `@pierre/diffs/worker/worker.js?worker&url` — a Vite-only specifier `bun test`
@@ -37,20 +44,22 @@ const { SettingsView } = await import('./SettingsView');
 const project = testProject;
 const data = dataWith();
 
-// The settings nav: a 28px row per page inside the `Settings` navigation landmark.
+// The settings rail: a link per page inside the `Settings` navigation landmark.
 function navRows() {
   return within(
     screen.getByRole('navigation', { name: 'Settings' })
-  ).getAllByRole('button');
+  ).getAllByRole('link');
+}
+
+function navLink(name: string): HTMLElement {
+  return within(screen.getByRole('navigation', { name: 'Settings' })).getByRole(
+    'link',
+    { name }
+  );
 }
 
 function selectPage(name: string) {
-  fireEvent.click(
-    within(screen.getByRole('navigation', { name: 'Settings' })).getByRole(
-      'button',
-      { name }
-    )
-  );
+  fireEvent.click(navLink(name));
 }
 
 test('with no project selected it explains what to do', () => {
@@ -61,11 +70,7 @@ test('with no project selected it explains what to do', () => {
 test('it opens on General and switches to Linear', () => {
   render(<SettingsView activeProject={project} data={data} />);
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('General');
-  expect(
-    within(screen.getByRole('navigation', { name: 'Settings' }))
-      .getByRole('button', { name: 'General' })
-      .getAttribute('aria-current')
-  ).toBe('page');
+  expect(navLink('General').getAttribute('aria-current')).toBe('page');
   selectPage('Linear');
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Linear');
   expect(screen.getByRole('heading', { name: 'Connection' })).toBeDefined();
@@ -95,11 +100,7 @@ test('initialPage opens on that page, and a new value while mounted switches to 
     { wrapper: withQueryClient() }
   );
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Linear');
-  expect(
-    within(screen.getByRole('navigation', { name: 'Settings' }))
-      .getByRole('button', { name: 'Linear' })
-      .getAttribute('aria-current')
-  ).toBe('page');
+  expect(navLink('Linear').getAttribute('aria-current')).toBe('page');
   rerender(
     <SettingsView activeProject={project} data={data} initialPage="daemon" />
   );
@@ -124,8 +125,7 @@ test('the rail groups every page, and the page title is the H1', () => {
     'Agents',
     'Checks',
     'Autonomy',
-    'Memory',
-    'Previews',
+    'Planning',
     'Notifications',
     'Members',
     'Board sync',
@@ -134,10 +134,14 @@ test('the rail groups every page, and the page title is the H1', () => {
     'Connected agents',
     'A2A',
     'Remotes',
+    'Web access',
+    'Devices',
     'Background',
     'Diff display',
   ]);
-  expect(screen.getByText(/The board's columns/)).toBeDefined();
+  expect(
+    screen.getByText(/The theme in this browser and the board's columns/)
+  ).toBeDefined();
   selectPage('Autonomy');
   expect(screen.getByRole('slider', { name: 'Autonomy' })).toBeDefined();
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(
@@ -147,8 +151,8 @@ test('the rail groups every page, and the page title is the H1', () => {
   expect(screen.getByLabelText('Webhook URL')).toBeDefined();
 });
 
-// Memory's page reads the store's health on its own, beside its run settings.
-test('the Memory page shows the store and the run settings', async () => {
+// Memory's groups sit on Agents: the store's health beside its run settings.
+test('the Agents page shows the memory store and run settings', async () => {
   const memoryData = dataWith({
     port: 4321,
     client: {
@@ -179,11 +183,11 @@ test('the Memory page shows the store and the run settings', async () => {
     <SettingsView
       activeProject={project}
       data={memoryData}
-      initialPage="memory"
+      initialPage="agents"
     />,
     { wrapper: withQueryClient() }
   );
-  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Memory');
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Agents');
   expect(
     await screen.findByText('3 entries · no open proposals · full-text search')
   ).toBeDefined();
@@ -195,7 +199,24 @@ test('a page renders its sections as level-2 headings', () => {
   render(<SettingsView activeProject={project} data={data} />);
   expect(
     screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
-  ).toEqual(['Board columns', 'Pull requests']);
+  ).toEqual(['Appearance', 'Board columns']);
+});
+
+// The theme is a per-computer preference, not config, so General shows it
+// before the config has loaded, and Settings search finds it.
+test('General shows Appearance and the Theme control even with no config yet', () => {
+  render(
+    <SettingsView activeProject={project} data={dataWith({ config: null })} />
+  );
+  expect(
+    screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
+  ).toEqual(['Appearance']);
+  const theme = screen.getByRole('radiogroup', { name: 'Theme' });
+  expect(
+    within(theme)
+      .getAllByRole('radio')
+      .map((el) => el.textContent)
+  ).toEqual(['System', 'Light', 'Dark']);
 });
 
 // Search renders every page, so the client needs what the Autonomy page reads.
@@ -203,11 +224,40 @@ const searchData = dataWith({
   client: { fetchLedger: () => Promise.resolve([]) } as unknown as ApiClient,
 });
 
+// Lets the reads a page starts on mount land inside act: the Autonomy page's
+// receipts (PolicySection's `fetchLedger`) resolve a tick after it renders, on
+// its page or in search results (which render every page), and a test that
+// ends before then sees React warn about an update outside act. Search also
+// mounts the license and team groups, whose react-query reads settle over a
+// few timer turns (the query, then its batched notify; two suffice today), so
+// this waits several.
+const SETTLE_TURNS = 5;
+async function settleReads() {
+  await act(async () => {
+    for (let turn = 0; turn < SETTLE_TURNS; turn += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  });
+}
+
 function search(value: string) {
   fireEvent.change(screen.getByLabelText('Search settings'), {
     target: { value },
   });
 }
+
+test('Settings search for dark finds the Theme control', async () => {
+  render(<SettingsView activeProject={project} data={searchData} />, {
+    wrapper: withQueryClient(),
+  });
+  search('dark');
+  await settleReads();
+  // Diff display's own group is "Diff appearance", so the two never share a
+  // heading; the Theme control is the one under General.
+  const theme = screen.getByRole('radiogroup', { name: 'Theme' });
+  expect(within(theme).getByRole('radio', { name: 'Dark' })).toBeDefined();
+  expect(screen.queryByText('No settings match')).toBeNull();
+});
 
 // Search swaps the page for the matching settings from every page, grouped
 // under the page they live on, and each is still the real, editable control.
@@ -234,12 +284,47 @@ test('search shows matching settings from every page, editable in place', async 
   expect(await screen.findByText('Saved')).toBeDefined();
 });
 
+// Rarely changed groups start folded, but a search reaches into the fold.
+test('Advanced starts closed, and search still finds what it holds', async () => {
+  render(
+    <SettingsView
+      activeProject={project}
+      data={searchData}
+      initialPage="planning"
+    />,
+    { wrapper: withQueryClient() }
+  );
+  const fold = screen.getByRole('button', { name: 'Advanced' });
+  expect(fold.getAttribute('aria-expanded')).toBe('false');
+  expect(screen.queryByLabelText('Warn ahead')).toBeNull();
+  fireEvent.click(fold);
+  expect(screen.getByLabelText('Warn ahead')).toBeDefined();
+
+  search('warn ahead');
+  await settleReads();
+  expect(screen.getByLabelText('Warn ahead')).toBeDefined();
+  expect(screen.queryByRole('button', { name: 'Advanced' })).toBeNull();
+});
+
+// Previews live on Checks now; searching for them still finds them. (A bare
+// "preview" also matches Diff display's sample, which happy-dom can't draw.)
+test('a search for live previews finds the Previews group on Checks', async () => {
+  render(<SettingsView activeProject={project} data={searchData} />, {
+    wrapper: withQueryClient(),
+  });
+  search('live previews');
+  await settleReads();
+  expect(screen.getByLabelText('Allow previews')).toBeDefined();
+  expect(screen.getByLabelText('Time to start')).toBeDefined();
+});
+
 // A page or group that matches by name shows everything in it.
-test('a search that names a group shows the whole group', () => {
+test('a search that names a group shows the whole group', async () => {
   render(<SettingsView activeProject={project} data={searchData} />, {
     wrapper: withQueryClient(),
   });
   search('limits');
+  await settleReads();
   for (const label of [
     'Runs at once',
     'Runs at once per milestone',
@@ -276,7 +361,9 @@ test('picking a page from the rail ends the search', () => {
 // AgentsSection has no saving/saved state of its own, so this passes only
 // because the shell's shared indicator rendered the text.
 test('a save reports through the shared indicator', async () => {
-  render(<SettingsView activeProject={project} data={data} />);
+  render(<SettingsView activeProject={project} data={data} />, {
+    wrapper: withQueryClient(),
+  });
   selectPage('Agents');
   fireEvent.click(screen.getByLabelText('Ask me every time'));
   expect(await screen.findByText('Saved')).toBeDefined();
@@ -285,7 +372,9 @@ test('a save reports through the shared indicator', async () => {
 // Diff display is a browser preference with no config write behind it, so
 // the indicator has nothing to say there.
 test('the Diff display page shows no save state', async () => {
-  render(<SettingsView activeProject={project} data={data} />);
+  render(<SettingsView activeProject={project} data={data} />, {
+    wrapper: withQueryClient(),
+  });
   selectPage('Agents');
   fireEvent.click(screen.getByLabelText('Ask me every time'));
   expect(await screen.findByText('Saved')).toBeDefined();
@@ -358,19 +447,13 @@ test('Board sync offers sharing on a database board and committing on a file boa
   expect(
     screen.queryByRole('switch', { name: 'Share this board with teammates' })
   ).toBeNull();
-  expect(screen.getByText("Sharing isn't available")).toBeDefined();
+  expect(screen.getByText(/reaches teammates through commits/)).toBeDefined();
 });
 
 // Whether a control can't be used: disabled itself, or a native control inside
-// a locked group (happy-dom doesn't carry a disabled fieldset down). A Switch
-// is a span the fieldset never reaches, so only its own flag counts.
+// a locked group (happy-dom doesn't carry a disabled fieldset down).
 function isDisabled(element: HTMLElement): boolean {
-  if (
-    (element as HTMLInputElement).disabled === true ||
-    element.hasAttribute('data-disabled')
-  ) {
-    return true;
-  }
+  if ((element as HTMLInputElement).disabled === true) return true;
   return (
     element.matches('button, input, select, textarea') &&
     element.closest('fieldset')?.disabled === true
@@ -495,10 +578,16 @@ interface PageLocks {
   controls: () => HTMLElement[];
 }
 
+// Opens a page's Advanced fold, so the groups inside are on screen to check.
+function openAdvanced() {
+  const fold = screen.queryByRole('button', { name: 'Advanced' });
+  if (fold !== null) fireEvent.click(fold);
+}
+
 const CONFIG_PAGES: PageLocks[] = [
   {
     page: 'general',
-    locked: ['Board columns', 'Pull requests'],
+    locked: ['Board columns'],
     controls: () => [
       screen.getByLabelText('Add a column'),
       screen.getByRole('button', { name: 'Move backlog down' }),
@@ -514,21 +603,30 @@ const CONFIG_PAGES: PageLocks[] = [
       'Permissions',
       'Defaults',
       'Command-line agents',
+      'Memory',
     ],
     controls: () => [
-      screen.getByRole('combobox', { name: 'Coding runs model' }),
-      ...within(group('Streaming')).getAllByRole('button'),
+      selectTrigger('Coding runs model'),
+      ...within(group('Streaming')).getAllByRole('radio'),
       screen.getByLabelText('Runs at once'),
       screen.getByLabelText('Spend per run'),
       screen.getByLabelText('Ask me every time'),
-      screen.getByRole('combobox', { name: 'Default agent' }),
+      selectTrigger('Default agent'),
     ],
   },
   {
     page: 'checks',
-    locked: ['Before merging', 'Trying the change', 'Fix loop', 'Escalation'],
+    locked: [
+      'Before merging',
+      'Trying the change',
+      'Previews',
+      'Fix loop',
+      'Escalation',
+    ],
     controls: () => [
       screen.getByLabelText('Time limit per check'),
+      screen.getByRole('switch', { name: 'Allow previews' }),
+      screen.getByLabelText('Stop when unused for'),
       screen.getByLabelText('Address'),
       screen.getByLabelText('Notes for the agent'),
       screen.getByRole('switch', { name: 'Start fixing automatically' }),
@@ -542,17 +640,8 @@ const CONFIG_PAGES: PageLocks[] = [
     open: ['Hard stops', 'Recent automatic decisions'],
     controls: () => [
       screen.getByRole('slider', { name: 'Autonomy' }),
-      ...screen.getAllByRole('combobox', { name: / override$/ }),
+      ...screen.getAllByRole('button', { name: / override: / }),
       ...within(group('Task ranking')).getAllByRole('textbox'),
-    ],
-  },
-  {
-    page: 'previews',
-    locked: ['Live previews', 'Timing'],
-    controls: () => [
-      screen.getByRole('switch', { name: 'Allow previews' }),
-      screen.getByLabelText('Time to start'),
-      screen.getByLabelText('Stop when unused for'),
     ],
   },
   {
@@ -579,7 +668,7 @@ const CONFIG_PAGES: PageLocks[] = [
     open: ['Connection', 'Sync', 'Coverage', 'Capacity'],
     controls: () => [
       screen.getByRole('switch', { name: 'Sync this project with Linear' }),
-      screen.getByRole('combobox', { name: 'Direction' }),
+      selectTrigger('Direction'),
       screen.getByLabelText('Poll interval'),
       screen.getByRole('switch', {
         name: 'Send Acceptance Criteria to Linear',
@@ -588,16 +677,16 @@ const CONFIG_PAGES: PageLocks[] = [
         name: 'Archive finished tasks in Linear too',
       }),
       screen.getByRole('checkbox', { name: 'Link Unknown team' }),
-      screen.getByRole('combobox', { name: 'Run finishes status' }),
+      selectTrigger('Run finishes status'),
     ],
   },
   {
     page: 'daemon',
-    locked: ['Receipt log', 'Code understanding'],
+    locked: ['Receipt log', 'Code understanding', 'Pull requests'],
     open: ['Status'],
     controls: () => [
       screen.getByRole('switch', { name: 'Keep a receipt log' }),
-      screen.getByRole('combobox', { name: 'Code map' }),
+      selectTrigger('Code map'),
       screen.getByRole('switch', { name: 'Repo summary' }),
       screen.getByLabelText('Refresh the summary at most every'),
     ],
@@ -608,9 +697,16 @@ describe('below the decide tier, config is read-only', () => {
   for (const spec of CONFIG_PAGES) {
     test(`${spec.page}: every config control is locked, with the reason`, async () => {
       renderAt(tierData({ myTier: 'request' }), spec.page);
+      openAdvanced();
+      await settleReads();
       // Board sync's status line arrives from a query.
       if (spec.page === 'sync') await screen.findByText('Not sharing');
       expect(screen.getByRole('note').textContent).toBe(NEEDS_DECIDE);
+      // The note leads with the lock the locked rows carry; the mark is
+      // decoration, so the note's text stays exactly the reason.
+      expect(
+        screen.getByRole('note').querySelector('svg[aria-hidden="true"]')
+      ).not.toBeNull();
       for (const name of spec.locked) {
         expect({ name, lock: headingLock(name) }).toEqual({
           name,
@@ -634,8 +730,8 @@ describe('below the decide tier, config is read-only', () => {
     });
   }
 
-  // Clicks rather than a disabled check: the fieldset never reaches a Switch,
-  // so only a click shows one is really locked.
+  // Clicks as well as the disabled check: only a click shows a switch is
+  // really locked.
   test('clicking any switch saves nothing', async () => {
     for (const spec of CONFIG_PAGES) {
       const handleUpdateConfig = mock((_patch: ConfigSave) =>
@@ -645,6 +741,7 @@ describe('below the decide tier, config is read-only', () => {
         tierData({ myTier: 'request', handleUpdateConfig }),
         spec.page
       );
+      openAdvanced();
       if (spec.page === 'sync') await screen.findByText('Not sharing');
       for (const toggle of screen.queryAllByRole('switch')) {
         fireEvent.click(toggle);
@@ -658,17 +755,51 @@ describe('below the decide tier, config is read-only', () => {
     }
   });
 
+  // The theme is saved in this browser, not config, so General draws it above
+  // the read-only note: the note then speaks only for the config below it.
+  test('General: Appearance sits above the note and stays editable', () => {
+    try {
+      renderAt(tierData({ myTier: 'request' }), 'general');
+      const note = screen.getByRole('note');
+      expect(note.textContent).toBe(NEEDS_DECIDE);
+      const follows = (a: Node, b: Node) =>
+        (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+      const appearance = screen.getByRole('heading', {
+        level: 2,
+        name: 'Appearance',
+      });
+      const columns = screen.getByRole('heading', {
+        level: 2,
+        name: 'Board columns',
+      });
+      expect(follows(appearance, note)).toBe(true);
+      expect(follows(note, columns)).toBe(true);
+      expect(headingLock('Appearance')).toBeNull();
+      const dark = within(
+        screen.getByRole('radiogroup', { name: 'Theme' })
+      ).getByRole('radio', { name: 'Dark' });
+      expect(isDisabled(dark)).toBe(false);
+      fireEvent.click(dark);
+      expect(localStorage.getItem('dispatch:theme')).toBe('dark');
+      expect(headingLock('Board columns')).toBe(NEEDS_DECIDE);
+    } finally {
+      localStorage.removeItem('dispatch:theme');
+      delete document.documentElement.dataset.theme;
+      document.documentElement.removeAttribute('data-theme-switching');
+    }
+  });
+
   // Can approve access isn't enough for an owner-only row, so its own lock
   // stays; in an attached window, restarting from the app unlocks both.
   test('owner-only rows keep their own lock inside a locked group', () => {
-    const { unmount } = renderAt(tierData({ myTier: 'request' }), 'general');
+    const { unmount } = renderAt(tierData({ myTier: 'request' }), 'daemon');
     expect(headingLock('Pull requests')).toBe(NEEDS_DECIDE);
     expect(rowLock('Checkout folder')).toBe(OPERATOR_ONLY);
     unmount();
 
     renderAt(
       tierData({ myTier: 'request', attachedWithoutAppToken: true }),
-      'general'
+      'daemon'
     );
     expect(headingLock('Pull requests')).toBe(ATTACHED_READ_ONLY);
     expect(rowLock('Checkout folder')).toBeNull();
@@ -800,15 +931,22 @@ describe('below the decide tier, what has its own route stays usable', () => {
   test('Diff display: every control, and no read-only note', () => {
     renderAt(dataWith({ myTier: 'request' }), 'diffs');
     expect(screen.queryByRole('note')).toBeNull();
-    expect(headingLock('Appearance')).toBeNull();
+    expect(headingLock('Diff appearance')).toBeNull();
     for (const control of [
-      screen.getByRole('combobox', { name: 'Diff layout' }),
-      screen.getByRole('combobox', { name: 'Diff change indicators' }),
+      selectTrigger('Diff layout'),
+      selectTrigger('Diff change indicators'),
       screen.getByRole('switch', { name: 'Wrap long lines' }),
       screen.getByRole('switch', { name: 'Show line numbers' }),
     ]) {
       expect(isDisabled(control)).toBe(false);
     }
+    // A review diff draws unified below useFittedDiffLayout's SPLIT_MIN_WIDTH
+    // whatever the layout says, and the Layout row says so with that width.
+    expect(
+      screen.getByText(
+        `Split shows unified in a review while its diff is narrower than ${SPLIT_MIN_WIDTH}px.`
+      )
+    ).toBeTruthy();
   });
 });
 
@@ -830,7 +968,7 @@ describe('Connected agents', () => {
     expect(screen.queryByRole('note')).toBeNull();
     expect(headingLock('Agents')).toBeNull();
     expect(rowLock('Approving, muting and revoking')).toBe(NEEDS_DECIDE);
-    expect(screen.getByText(NEEDS_DECIDE)).toBeDefined();
+    expect(visibleText(NEEDS_DECIDE)).toHaveLength(1);
     expect(actions().every((a) => a.disabled)).toBe(true);
   });
 
@@ -849,10 +987,13 @@ describe('at the decide tier', () => {
     expect(screen.queryAllByLabelText(NEEDS_DECIDE)).toHaveLength(0);
     expect(headingLock('Board columns')).toBeNull();
     expect(isDisabled(screen.getByLabelText('Add a column'))).toBe(false);
+    unmount();
+
     // Read-only text behind a lock, never an input.
+    const daemon = renderAt(tierData({ myTier: 'decide' }), 'daemon');
     expect(rowLock('Checkout folder')).toBe(OPERATOR_ONLY);
     expect(document.getElementById('pr-worktree-dir')).toBeNull();
-    unmount();
+    daemon.unmount();
 
     renderAt(tierData({ myTier: 'decide' }), 'checks');
     expect(screen.queryByRole('note')).toBeNull();
@@ -885,11 +1026,7 @@ describe('at the decide tier', () => {
     expect(rowLock('Share this board with teammates')).toBe(OPERATOR_ONLY);
     expect(screen.queryByRole('textbox', { name: 'Branch' })).toBeNull();
     expect(rowLock('Branch')).toBe(OPERATOR_ONLY);
-    expect(
-      isDisabled(
-        screen.getByRole('combobox', { name: 'Where the board is kept' })
-      )
-    ).toBe(true);
+    expect(isDisabled(selectTrigger('Where the board is kept'))).toBe(true);
     expect(
       isDisabled(screen.getByLabelText("Check for teammates' changes every"))
     ).toBe(false);
@@ -900,6 +1037,8 @@ describe('at the operator tier', () => {
   for (const spec of CONFIG_PAGES) {
     test(`${spec.page}: nothing is locked`, async () => {
       renderAt(tierData({ myTier: 'operator' }), spec.page);
+      openAdvanced();
+      await settleReads();
       if (spec.page === 'sync') await screen.findByText('Not sharing');
       expect(screen.queryByRole('note')).toBeNull();
       expect(screen.queryAllByLabelText(NEEDS_DECIDE)).toHaveLength(0);
@@ -920,7 +1059,7 @@ describe('at the operator tier', () => {
   }
 
   test('the owner-only fields are real, enabled inputs', () => {
-    const { unmount } = renderAt(tierData({ myTier: 'operator' }), 'general');
+    const { unmount } = renderAt(tierData({ myTier: 'operator' }), 'daemon');
     expect(isDisabled(screen.getByLabelText('Checkout folder'))).toBe(false);
     unmount();
     renderAt(tierData({ myTier: 'operator' }), 'checks');
@@ -1073,7 +1212,7 @@ describe('Board sync by storage backend', () => {
       'sync'
     );
     expect(screen.queryByRole('switch')).toBeNull();
-    expect(screen.queryByText("Sharing isn't available")).toBeNull();
+    expect(screen.queryByText('Task files')).toBeNull();
   });
 
   // An older daemon doesn't name its backend; its receipt log being off does.
@@ -1096,7 +1235,7 @@ describe('Board sync by storage backend', () => {
     ).toBeNull();
   });
 
-  test('a file board with no main branch says so beside the switch', () => {
+  test('a file board with no main branch says why in one line, with no switch', () => {
     renderAt(
       tierData({
         myTier: 'operator',
@@ -1105,7 +1244,8 @@ describe('Board sync by storage backend', () => {
       }),
       'sync'
     );
-    expect(screen.getByText('No main branch to commit to')).toBeDefined();
+    expect(screen.getByText('Nothing to sync yet')).toBeDefined();
+    expect(screen.queryByRole('switch')).toBeNull();
   });
 
   test('a daemon that says sqlite offers sharing, not committing', async () => {
@@ -1123,10 +1263,10 @@ describe('Board sync by storage backend', () => {
     expect(
       screen.queryByRole('switch', { name: /Commit task files/ })
     ).toBeNull();
-    expect(screen.queryByText("Sharing isn't available")).toBeNull();
+    expect(screen.queryByText('Task files')).toBeNull();
   });
 
-  test('search finds the commit switch by its config key on a file board', () => {
+  test('search finds the commit switch by its config key on a file board', async () => {
     render(
       <SettingsView
         activeProject={project}
@@ -1138,6 +1278,7 @@ describe('Board sync by storage backend', () => {
       { wrapper: withQueryClient() }
     );
     search('auto-commit');
+    await settleReads();
     const toggle = screen.getByRole('switch', {
       name: 'Commit task files to the main branch',
     });
@@ -1147,7 +1288,7 @@ describe('Board sync by storage backend', () => {
     ).toBeNull();
   });
 
-  test('on a database board there is no commit switch to find', () => {
+  test('on a database board there is no commit switch to find', async () => {
     render(
       <SettingsView
         activeProject={project}
@@ -1156,6 +1297,7 @@ describe('Board sync by storage backend', () => {
       { wrapper: withQueryClient() }
     );
     search('auto-commit');
+    await settleReads();
     expect(
       screen.queryByRole('switch', { name: /Commit task files/ })
     ).toBeNull();
@@ -1163,7 +1305,7 @@ describe('Board sync by storage backend', () => {
   });
 });
 
-// Two views folds whole views (Sessions, All agents) into Settings as pages.
+// App folds whole views (Usage, Runs) into Settings as pages.
 test('a hosted page joins the rail and renders full width', () => {
   render(
     <SettingsView
@@ -1180,11 +1322,214 @@ test('a hosted page joins the rail and renders full width', () => {
       ]}
     />
   );
-  fireEvent.click(screen.getByRole('button', { name: 'Runs' }));
+  const runs = navLink('Runs');
+  expect(runs.getAttribute('href')).toBe('#/runs');
+  fireEvent.click(runs);
   expect(screen.getByText('every run here')).toBeTruthy();
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Runs');
+  expect(navLink('Runs').getAttribute('aria-current')).toBe('page');
+  // The Activity group holds the hosted pages.
+  expect(
+    within(screen.getByRole('group', { name: 'Activity' }))
+      .getAllByRole('link')
+      .map((link) => link.textContent)
+  ).toEqual(['Runs']);
 });
 
 test('Classic shows no hosted pages', () => {
   render(<SettingsView activeProject={project} data={data} />);
-  expect(screen.queryByRole('button', { name: 'Runs' })).toBeNull();
+  expect(
+    within(screen.getByRole('navigation', { name: 'Settings' })).queryByRole(
+      'link',
+      { name: 'Runs' }
+    )
+  ).toBeNull();
+  expect(screen.queryByRole('group', { name: 'Activity' })).toBeNull();
+});
+
+// Settings renders in the shell's main column: no header row and no close
+// button (the crumbs name the place; Escape or any navigation leaves it).
+test('the page root carries the settings-panel test id and has no close button', () => {
+  render(<SettingsView activeProject={project} data={data} />);
+  expect(screen.getByTestId('settings-panel')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Close settings' })).toBeNull();
+  // The empty state keeps the test id too: the place is still Settings.
+  render(<SettingsView activeProject={null} data={data} />);
+  expect(screen.getAllByTestId('settings-panel')).toHaveLength(2);
+});
+
+// Rail links are real hrefs (a middle click opens the page in a new tab).
+test('every rail link is the page’s own Settings href', () => {
+  render(<SettingsView activeProject={project} data={data} />);
+  expect(navLink('General').getAttribute('href')).toBe('#/settings/general');
+  expect(navLink('Linear').getAttribute('href')).toBe(
+    '#/settings/integrations'
+  );
+  expect(navLink('Connected agents').getAttribute('href')).toBe(
+    '#/settings/connected-agents'
+  );
+});
+
+test('picking a page tells the host, from the rail or from search results', () => {
+  const picked: string[] = [];
+  render(
+    <SettingsView
+      activeProject={project}
+      data={searchData}
+      onSelectPage={(page) => picked.push(page)}
+    />,
+    { wrapper: withQueryClient() }
+  );
+  selectPage('Members');
+  expect(picked).toEqual(['team']);
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Members');
+  search('webhook');
+  const results = screen.getByRole('region', { name: 'Notifications' });
+  fireEvent.click(
+    within(results).getByRole('button', { name: 'Notifications' })
+  );
+  expect(picked).toEqual(['team', 'notifications']);
+  expect(screen.getByLabelText<HTMLInputElement>('Search settings').value).toBe(
+    ''
+  );
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe(
+    'Notifications'
+  );
+});
+
+// Records the Escapes that would reach the app's own listener: useGlobalKeyboard
+// listens on window and returns early on a key something already handled.
+function appEscapes(): { count: () => number; stop: () => void } {
+  let seen = 0;
+  const listener = (event: KeyboardEvent) => {
+    if (event.key === 'Escape' && !event.defaultPrevented) seen += 1;
+  };
+  window.addEventListener('keydown', listener);
+  return {
+    count: () => seen,
+    stop: () => window.removeEventListener('keydown', listener),
+  };
+}
+
+test('Escape in a search with text clears it and stops there', () => {
+  render(<SettingsView activeProject={project} data={searchData} />, {
+    wrapper: withQueryClient(),
+  });
+  search('no such setting');
+  expect(screen.getByText('No settings match')).toBeDefined();
+  const field = screen.getByLabelText<HTMLInputElement>('Search settings');
+  const app = appEscapes();
+  const passed = fireEvent.keyDown(field, { key: 'Escape' });
+  app.stop();
+  expect(passed).toBe(false);
+  expect(field.value).toBe('');
+  expect(app.count()).toBe(0);
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('General');
+});
+
+test('Escape in an empty search reaches the app, which closes Settings', () => {
+  render(<SettingsView activeProject={project} data={data} />);
+  const field = screen.getByLabelText<HTMLInputElement>('Search settings');
+  const app = appEscapes();
+  const passed = fireEvent.keyDown(field, { key: 'Escape' });
+  app.stop();
+  expect(passed).toBe(true);
+  expect(app.count()).toBe(1);
+});
+
+// From the old floating panel's tests: a picker open inside Settings takes
+// Escape first, so the same press never also closes Settings.
+test('Escape in an open picker closes the picker, not Settings', () => {
+  render(
+    <SettingsView activeProject={project} data={data} initialPage="agents" />,
+    { wrapper: withQueryClient() }
+  );
+  fireEvent.click(selectTrigger('Coding runs effort'));
+  const list = screen.getByRole('listbox');
+  const app = appEscapes();
+  fireEvent.keyDown(document.activeElement ?? list, { key: 'Escape' });
+  app.stop();
+  expect(screen.queryByRole('listbox')).toBeNull();
+  expect(app.count()).toBe(0);
+  expect(screen.getByTestId('settings-panel')).toBeTruthy();
+});
+
+// The app's own keyboard (useGlobalKeyboard on window), recording each command it
+// would run, so a test sees what a key does in the app and not only in Settings.
+function AppKeys({ commands }: { commands: GlobalKeyCommand[] }) {
+  useGlobalKeyboard({ onCommand: (command) => commands.push(command) });
+  return null;
+}
+
+// Settings is a place, not a modal, so the app's shortcuts work in it; an open
+// picker still owns every letter typed into its list, matched or not.
+test('letters typed in an open picker never reach the app’s shortcuts', () => {
+  const commands: GlobalKeyCommand[] = [];
+  render(
+    <>
+      <AppKeys commands={commands} />
+      <SettingsView activeProject={project} data={data} initialPage="agents" />
+    </>,
+    { wrapper: withQueryClient() }
+  );
+  // Low, Medium and High: no option starts with g, h, c or ?.
+  fireEvent.click(selectTrigger('Coding runs effort'));
+  const list = screen.getByRole('listbox');
+  for (const key of ['g', 'h', 'c', '?', '[']) {
+    fireEvent.keyDown(document.activeElement ?? list, { key });
+  }
+  expect(commands).toEqual([]);
+  expect(screen.getByRole('listbox')).toBeTruthy();
+  // Outside the picker the same letter is the app's again.
+  fireEvent.keyDown(document.activeElement ?? list, { key: 'Escape' });
+  expect(screen.queryByRole('listbox')).toBeNull();
+  fireEvent.keyDown(screen.getByRole('heading', { level: 1 }), { key: 'c' });
+  expect(commands).toEqual(['new-task']);
+});
+
+// The Usage page's session detail is a modal SlideOver rendered in place, so it
+// sits inside the Settings page, aria-modal while open and a layer of the
+// overlay stack: its Escape closes it alone, the app's keyboard stays quiet and
+// Settings stays open.
+test('the Usage page’s session detail takes its own Escape, not Settings’', async () => {
+  const commands: GlobalKeyCommand[] = [];
+  function Usage() {
+    const [sessionId, setSessionId] = useState<string | null>('s1');
+    return (
+      <SessionDetailModal
+        sessionId={sessionId}
+        onClose={() => setSessionId(null)}
+      />
+    );
+  }
+  render(
+    <>
+      <AppKeys commands={commands} />
+      <SettingsView
+        activeProject={project}
+        data={data}
+        initialPage="usage"
+        hostedPages={[
+          {
+            id: 'usage',
+            label: 'Usage',
+            icon: Coins,
+            intro: 'Every agent session and what it cost.',
+            render: () => <Usage />,
+          },
+        ]}
+      />
+    </>,
+    { wrapper: withQueryClient() }
+  );
+  const page = screen.getByTestId('settings-panel');
+  const detail = await screen.findByRole('dialog', { name: /session/i });
+  expect(page.contains(detail)).toBe(true);
+  expect(detail.getAttribute('aria-modal')).toBe('true');
+  fireEvent.keyDown(detail, { key: 'Escape' });
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: /session/i })).toBeNull()
+  );
+  expect(commands).toEqual([]);
+  expect(screen.getByTestId('settings-panel')).toBeTruthy();
 });

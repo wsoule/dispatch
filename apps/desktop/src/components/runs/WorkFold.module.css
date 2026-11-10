@@ -1,0 +1,44 @@
+/* T3 Code's turn fold (WorkFold.tsx): a run of tool calls behind one quiet "Worked for
+   12s · 5 steps" line, ruled off from the prose under it. Tokens only. */
+
+.fold {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 4px 0 var(--s-2);
+  border-bottom: 1px solid var(--divider);
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* The rows under an open fold: a hair of air below the trigger. */
+.opened {
+  padding-top: 4px;
+}
+
+/* The quiet trigger, left-aligned with the rows, in the secondary ink. */
+.fold .trigger {
+  padding-inline: 2px;
+  color: var(--text-2);
+  font-size: var(--fs);
+  font-weight: var(--fw-regular);
+}
+
+.steps {
+  color: var(--text-2);
+}
+
+/* The chevron turns down while the rows show. */
+.open {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .chevron {
+    transition: transform var(--dur) var(--ease);
+  }
+}

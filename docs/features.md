@@ -24,6 +24,33 @@ direct messages, channels and threads, with one inbox.
 - **Agents use it natively.** MCP tools (`msg_*`, `inbox_*`, `thread_*`,
   `channel_*`) work in Claude Code, Codex and any MCP client.
 
+### Answer from your phone
+
+A run never stalls because you stepped away from your desk.
+
+- **A phone app, served by your own daemon.** Open it on your phone and add it
+  to your Home Screen. It shows what is waiting on you, and you answer a
+  question or approve a tool call in place. It also lists your live and recent
+  runs. There is no app store and no account.
+- **Push notifications.** Your daemon sends them straight to your phone. The
+  phone hears about a new question, a failed run or a run ready for review even
+  when the app is closed. Each notification says what kind of thing is waiting
+  and from which task, never what it says.
+- **Paired, not logged in.** `dispatch pair --tier decide` prints a one-time
+  code, and the phone redeems it for its own revocable token.
+  - The phone can see and answer.
+  - It cannot dispatch, merge, read files or open a terminal, whatever tier it
+    was paired at.
+- **Reached through a tunnel you already trust.**
+  - Turn on the mobile listener:
+    `dispatch serve --mobile-port 4800 --mobile-url https://<machine>.<tailnet>.ts.net`.
+  - Point Tailscale at it:
+    `tailscale serve --bg --https=443 http://127.0.0.1:4800`.
+  - A Cloudflare Tunnel works the same way.
+
+  The listener is separate from the app's own: it trusts no request for coming
+  from this machine, so a tunnel in front of it is safe.
+
 ## Memory your agents share, with you in charge
 
 Agents learn lessons, and Dispatch keeps them: personal, per project, or shared

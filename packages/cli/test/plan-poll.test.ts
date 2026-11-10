@@ -50,6 +50,9 @@ function makeClient(getPlan: ApiClient['getPlan']): ApiClient {
     issueTeamToken: () => Promise.reject(new Error('not used')),
     listTeamTokens: () => Promise.reject(new Error('not used')),
     revokeTeamToken: () => Promise.reject(new Error('not used')),
+    offerPairing: () => Promise.reject(new Error('not used')),
+    listDevices: () => Promise.reject(new Error('not used')),
+    revokeDevice: () => Promise.reject(new Error('not used')),
     getSyncStatus: () => Promise.reject(new Error('not used')),
     syncNow: () => Promise.reject(new Error('not used')),
     getLicense: () => Promise.reject(new Error('not used')),
@@ -91,6 +94,9 @@ function makeClient(getPlan: ApiClient['getPlan']): ApiClient {
     switchTransport: () => Promise.reject(new Error('not used')),
     getContentE2e: () => Promise.reject(new Error('not used')),
     enableContentE2e: () => Promise.reject(new Error('not used')),
+    getRemoteAccess: () => Promise.reject(new Error('not used')),
+    pairPhone: () => Promise.reject(new Error('not used')),
+    unpairPhone: () => Promise.reject(new Error('not used')),
   };
 }
 

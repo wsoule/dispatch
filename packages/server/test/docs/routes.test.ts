@@ -9,6 +9,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,14 +26,15 @@ function json<T>(res: Response): Promise<T> {
 
 async function boot(
   root: string,
-  executor: StallingExecutor
+  executor: StallingExecutor,
+  executorName = 'claude'
 ): Promise<ServerHandle> {
   const h = await startServer({
     rootDir: root,
     port: 0,
     webDistDir: null,
     writeDaemonFile: false,
-    registerExecutors: (o) => o.registerExecutor('claude', executor),
+    registerExecutors: (o) => o.registerExecutor(executorName, executor),
   });
   useTestAuth(h);
   return h;
@@ -513,6 +515,34 @@ describe('publish route', () => {
     doc: { published: unknown; lastPublishPath: string | null };
   };
 
+  it.each([
+    ['claude', 'claude-publish'],
+    ['codex', 'codex-publish'],
+    ['gemini', undefined],
+  ])(
+    'uses the configured execute model for publishing on %s',
+    async (name, model) => {
+      await handle.stop();
+      writeFileSync(
+        join(root, '.dispatch/config.yml'),
+        'models:\n  execute: claude-publish\n  plan: claude-plan\n' +
+          'executors:\n  codex:\n    models:\n      execute: codex-publish\n' +
+          'orchestrator:\n  executor: ' +
+          name +
+          '\n'
+      );
+      handle = await boot(root, executor, name);
+      base = 'http://127.0.0.1:' + handle.port + '/api';
+      await post('/docs', { title: 'Spec', body: '# Spec\n' });
+      const out = await json<Published>(
+        await post('/docs/spec/publish', { path: 'docs/spec.md' })
+      );
+      expect(out.dispatchError).toBeNull();
+      expect(out.run).not.toBeNull();
+      expect(executor.started.map((s) => s.model)).toEqual([model]);
+    }
+  );
+
   it('creates the elevated task, dispatches it with the doc seeded, and refuses a run or a bad path', async () => {
     await post('/docs', { title: 'Spec', body: '# Spec v1\n' });
     expect(
@@ -645,6 +675,12 @@ describe('publish route', () => {
 
   it('dispatches an open publish with no run once the daemon starts again', async () => {
     await handle.stop();
+    writeFileSync(
+      join(root, '.dispatch/config.yml'),
+      'models:\n  execute: claude-publish\n' +
+        'executors:\n  codex:\n    models:\n      execute: codex-publish\n' +
+        'orchestrator:\n  executor: codex\n'
+    );
     // No executor: the publish row is written but its run never starts.
     handle = await startServer({
       rootDir: root,
@@ -660,14 +696,16 @@ describe('publish route', () => {
       await post('/docs/spec/publish', { path: 'docs/spec.md' })
     );
     expect(out.run).toBeNull();
+    expect(out.dispatchError).not.toBeNull();
     await handle.stop();
-    handle = await boot(root, executor);
+    handle = await boot(root, executor, 'codex');
     base = `http://127.0.0.1:${handle.port}/api`;
     const runs = handle.orchestrator
       .list()
       .filter((r) => r.taskId === out.task);
     expect(runs).toHaveLength(1);
     expect(runs[0].operator).toMatch(/^human:/);
+    expect(executor.started.map((s) => s.model)).toEqual(['codex-publish']);
   });
 
   it('records no landing from a status alone: the task needs a merged run', async () => {

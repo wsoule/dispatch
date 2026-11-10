@@ -1,5 +1,24 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
-import { SearchIcon, Waypoints } from 'lucide-react';
+import {
+  Button,
+  ChipButton,
+  COPIED_MS,
+  cx,
+  EmptyState,
+  type PickerOption,
+  PickerPopover,
+  Popover,
+  SegmentedControl,
+  Switch,
+  writeClipboard,
+} from '@dispatch/ui';
+import {
+  CircleHelp,
+  Network,
+  PanelRight,
+  SearchIcon,
+  SlidersHorizontal,
+} from 'lucide-react';
 import {
   type KeyboardEvent,
   type ReactNode,
@@ -39,78 +58,65 @@ import {
   type CanvasEdge,
   ChartCanvas,
   type EdgeTone,
+  LegendItem,
   NO_MILESTONE_GROUP,
   type NodeTrace,
   PillSwatch,
   TraceSwatch,
 } from './ChartCanvas';
 import {
+  capital,
+  ChartHelp,
+  type ChartUnit,
   InspectorOverview,
   LinkInspector,
+  MILESTONE_UNIT,
   MilestoneInspector,
   SetInspector,
   TaskInspector,
 } from './ChartInspector';
 import {
-  CHART_STATE,
   MILESTONE_NODE,
   MilestoneChartNode,
-  STATE_ORDER,
   StateSwatch,
   TASK_NODE,
   TaskChartNode,
 } from './ChartNodes';
+import { CHART_STATE, STATE_ORDER } from './chartTones';
+import styles from './MilestoneMap.module.css';
 import { type ChartViewportApi, useChartViewport } from './useChartViewport';
-import { DisplayIconButton, SidePanelIconButton } from '@/ui/ai/page-header';
-import { PillButton } from '@/ui/ai/pill';
-import { Switch } from '@/ui/ai/switch';
-import { Button } from '@/ui/button';
-import { EmptyState } from '@/ui/chrome';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/ui/command';
-import { Kbd } from '@/ui/kbd';
-import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
-import { Toggle } from '@/ui/toggle';
-import { ToggleGroup, ToggleGroupItem } from '@/ui/toggle-group';
 
-/** Layouts drawn by another view's component rather than by the map itself. */
-type GraphLayoutId = 'projects' | 'live';
-type GraphMode = 'milestones' | 'tasks' | GraphLayoutId;
-type ChartView = 'milestones' | 'tasks';
+// The smallest scale an embedded chart's automatic fit goes to: cards stay readable and
+// a bigger plan pans instead of shrinking.
+const COMPACT_MIN_SCALE = 0.85;
 
-/** One of those layouts: its body, and controls for the toolbar while it shows. */
-interface GraphLayout {
-  body: ReactNode;
-  actions?: ReactNode;
-}
+/** The chart's two views: milestones as cards, or every linked task. */
+export type ChartView = 'milestones' | 'tasks';
 
-const GRAPH_MODES: { id: GraphMode; label: string }[] = [
-  { id: 'projects', label: 'Projects' },
+const ALL_VIEWS: readonly ChartView[] = ['milestones', 'tasks'];
+
+const GRAPH_MODES: { id: ChartView; label: string }[] = [
   { id: 'milestones', label: 'Milestones' },
   { id: 'tasks', label: 'Tasks' },
-  { id: 'live', label: 'Live' },
 ];
 
-// Remembered per project; storage that throws just means it is not remembered.
-function storedMode(
-  key: string,
-  offered: readonly { id: GraphMode }[]
-): GraphMode {
+/** More task cards than this is too many for one readable chart (or one quick ELK
+ * layout): the Tasks chart asks to be narrowed instead. */
+export const TASK_DRAW_CAP = 400;
+
+// Remembered per project; storage that throws just means it is not remembered. A view the
+// host does not offer reads as its first one.
+function storedMode(key: string, views: readonly ChartView[]): ChartView {
+  const fallback = views[0] ?? 'milestones';
   try {
     const stored = localStorage.getItem(key);
-    return offered.find((m) => m.id === stored)?.id ?? 'milestones';
+    return views.find((view) => view === stored) ?? fallback;
   } catch {
-    return 'milestones';
+    return fallback;
   }
 }
 
-function storeMode(key: string, mode: GraphMode): void {
+function storeMode(key: string, mode: ChartView): void {
   try {
     localStorage.setItem(key, mode);
   } catch {
@@ -119,7 +125,7 @@ function storeMode(key: string, mode: GraphMode): void {
 }
 
 /** The chart's display choices, remembered per project like the layout. */
-interface ChartPrefs {
+export interface ChartPrefs {
   hideLanded: boolean;
   showUnlinked: boolean;
   /** Box the Tasks chart's cards by milestone (off by default: boxes stretch the layout). */
@@ -134,14 +140,15 @@ const DEFAULT_PREFS: ChartPrefs = {
   inspector: true,
 };
 
-// Reads each flag on its own, so a stored object from an older shape keeps what still fits.
-function storedPrefs(key: string): ChartPrefs {
+// Reads each flag on its own, so a stored object from an older shape keeps what still fits;
+// a flag never stored takes the host's default.
+function storedPrefs(key: string, defaults: ChartPrefs): ChartPrefs {
   try {
     const raw: unknown = JSON.parse(localStorage.getItem(key) ?? 'null');
-    if (typeof raw !== 'object' || raw === null) return DEFAULT_PREFS;
+    if (typeof raw !== 'object' || raw === null) return defaults;
     const flag = (name: keyof ChartPrefs) => {
       const value: unknown = Reflect.get(raw, name);
-      return typeof value === 'boolean' ? value : DEFAULT_PREFS[name];
+      return typeof value === 'boolean' ? value : defaults[name];
     };
     return {
       hideLanded: flag('hideLanded'),
@@ -150,7 +157,7 @@ function storedPrefs(key: string): ChartPrefs {
       inspector: flag('inspector'),
     };
   } catch {
-    return DEFAULT_PREFS;
+    return defaults;
   }
 }
 
@@ -396,12 +403,11 @@ function TasksLegend({
         (state) =>
           present.has(state) && !(both && LEGEND_MERGED[state] !== undefined)
       ).map((state) => (
-        <span key={state} className="inline-flex items-center gap-1.5">
-          <StateSwatch state={state} />
+        <LegendItem key={state} swatch={<StateSwatch state={state} />}>
           {state === 'blocked' && both
             ? 'Blocked or draft'
             : CHART_STATE[state].label}
-        </span>
+        </LegendItem>
       ))}
       <TraceLegend />
     </>
@@ -411,32 +417,28 @@ function TasksLegend({
 function TraceLegend() {
   return (
     <>
-      <span className="inline-flex items-center gap-1.5">
-        <TraceSwatch dir="up" />
-        Waits on
-      </span>
-      <span className="inline-flex items-center gap-1.5">
-        <TraceSwatch dir="down" />
-        Unblocks
-      </span>
+      <LegendItem swatch={<TraceSwatch dir="up" />}>Waits on</LegendItem>
+      <LegendItem swatch={<TraceSwatch dir="down" />}>Unblocks</LegendItem>
     </>
   );
 }
 
-/** The legend under the Milestones chart: the trace lines and what the pills count. */
-function MilestonesLegend({ attention }: { attention: boolean }) {
+/** The legend under the card chart: the trace lines and what the pills count. */
+function MilestonesLegend({
+  attention,
+  unit,
+}: {
+  attention: boolean;
+  unit: ChartUnit;
+}) {
   return (
     <>
       <TraceLegend />
-      <span className="inline-flex items-center gap-1.5">
-        <PillSwatch />
-        Task waits
-      </span>
+      <LegendItem swatch={<PillSwatch />}>Task waits</LegendItem>
       {attention && (
-        <span className="inline-flex items-center gap-1.5">
-          <PillSwatch attention />
-          From a milestone that needs attention
-        </span>
+        <LegendItem swatch={<PillSwatch attention />}>
+          From a {unit.one} that needs attention
+        </LegendItem>
       )}
     </>
   );
@@ -446,14 +448,48 @@ export interface MilestoneMapViewProps {
   groups: readonly ListGroup[];
   bucketOf: (doc: TaskListItem) => TaskBucket | null;
   asksByTask: ReadonlyMap<string, number>;
-  /** Keys the remembered layout choice (Milestones, Tasks, Projects…). Callers key the
+  /** Keys the remembered view (Milestones or Tasks) and display choices. Callers key the
    * component by it too, so a project switch starts from that project's own state. */
   projectKey: string;
-  /** Extra layouts for the toggle; each shows only when given. */
-  layouts?: Partial<Record<GraphLayoutId, GraphLayout>>;
   /** A milestone's due date, if it has one. */
   dueDateOf?: (milestoneId: string) => string | null;
+  /** A task to select on arrival (a link that named one): the chart switches to Tasks and
+   * frames it. */
+  arrivalTaskId?: string | null;
+  /** Stands in for the Tasks chart when it would draw more than TASK_DRAW_CAP cards: the
+   * narrower charts to open instead. */
+  renderTooLarge?: (count: number) => ReactNode;
+  /** Opens a task (the drawer); `plan` asks for a milestone's own page. */
   onOpenTask: (taskId: string, tab?: TaskTab) => void;
+  /** The views the toolbar offers, the first the default; one view hides the switch. */
+  views?: readonly ChartView[];
+  /** Display choices before the user makes their own (a plan shows its unlinked tasks). */
+  defaultPrefs?: Partial<ChartPrefs>;
+  /** The host's verbs in a selected task's inspector (a plan's Send agent). */
+  taskActions?: (taskId: string) => ReactNode;
+  /** The host's verbs in a selected milestone's inspector (a plan band's fan-out). */
+  milestoneActions?: (milestoneId: string) => ReactNode;
+  /** A chart inside a scrolling page: a plain scroll scrolls the page, a pinch zooms. */
+  embedded?: boolean;
+  /** What the card view's cards are (milestones unless the host says otherwise). */
+  unit?: ChartUnit;
+  /** A card's way down a level: a double-click, and the inspector's primary button
+   * (`unit.drill`). Without it a double-click opens the card's own page. */
+  onDrill?: (id: string) => void;
+  /** The frame each card sits in when "Box by …" is on (a milestone's project), and the
+   * frame's name in that switch ("project"). */
+  cardParents?: {
+    of: ReadonlyMap<string, { id: string; label: string }>;
+    one: string;
+  };
+  /** With the inspector toggled off, a selection still opens it, for the host's verbs. */
+  inspectorOnSelect?: boolean;
+  /** `compact` is an embed (a plan, a Live band): the canvas, zoom and legend, the
+   * view switch when there are two, and `graphHref`; no Find, chips, Display or help. */
+  variant?: 'full' | 'compact';
+  /** The Graph page scoped to this chart: a compact chart's "Open in Graph" link. */
+  graphHref?: string;
+  className?: string;
 }
 
 /**
@@ -469,27 +505,45 @@ export function MilestoneMapView({
   asksByTask,
   projectKey,
   dueDateOf,
-  layouts,
+  arrivalTaskId = null,
+  renderTooLarge,
   onOpenTask,
+  views = ALL_VIEWS,
+  defaultPrefs,
+  taskActions,
+  milestoneActions,
+  embedded = false,
+  inspectorOnSelect = false,
+  unit = MILESTONE_UNIT,
+  onDrill,
+  cardParents,
+  variant = 'full',
+  graphHref,
+  className,
 }: MilestoneMapViewProps) {
+  const compact = variant === 'compact';
+  // An embed's automatic fit stops at a legible scale; the fit button still shows all.
+  const autoFitFloor = compact ? COMPACT_MIN_SCALE : undefined;
   const storageKey = `dispatch:graph-mode:${projectKey}`;
   const prefsKey = `dispatch:graph-chart:${projectKey}`;
-  const offered = GRAPH_MODES.filter(
-    (m) =>
-      m.id === 'milestones' || m.id === 'tasks' || layouts?.[m.id] !== undefined
+  const [mode, setMode] = useState<ChartView>(() =>
+    arrivalTaskId !== null && views.includes('tasks')
+      ? 'tasks'
+      : storedMode(storageKey, views)
   );
-  const [mode, setMode] = useState<GraphMode>(() =>
-    storedMode(storageKey, offered)
-  );
-  const [prefs, setPrefs] = useState<ChartPrefs>(() => storedPrefs(prefsKey));
-  const view: ChartView | null =
-    mode === 'milestones' || mode === 'tasks' ? mode : null;
-  const layout =
-    mode === 'milestones' || mode === 'tasks' ? undefined : layouts?.[mode];
+  // A compact chart has no Display menu, so it draws the host's defaults, never a
+  // remembered choice it offers no way to undo.
+  const [prefs, setPrefs] = useState<ChartPrefs>(() => {
+    const defaults = { ...DEFAULT_PREFS, ...defaultPrefs };
+    return compact ? defaults : storedPrefs(prefsKey, defaults);
+  });
+  const view: ChartView = mode;
   const [copied, setCopied] = useState(false);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
-  const viewport = useChartViewport();
+  const [displayOpen, setDisplayOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const viewport = useChartViewport({ pageScroll: embedded });
 
   const map = useMemo(() => milestoneMap(groups), [groups]);
   const chart = useMemo(
@@ -585,7 +639,7 @@ export function MilestoneMapView({
   // or is hidden by a toggle, a milestone that was archived or a link that no longer
   // exists reads as no selection, so the chart never fades around something it cannot show.
   const active: Selection | null = (() => {
-    if (selection === null || view === null) return null;
+    if (selection === null) return null;
     switch (selection.kind) {
       case 'task':
         return view === 'tasks' && drawnSet.has(selection.id)
@@ -607,33 +661,53 @@ export function MilestoneMapView({
   const activeSet = useMemo(() => resolveSet(active), [resolveSet, active]);
   // Drop a selection once it stops naming anything, so it cannot come back later.
   useEffect(() => {
-    if (selection !== null && active === null && view !== null) {
+    if (selection !== null && active === null) {
       setSelection(null);
     }
-  }, [selection, active, view]);
+  }, [selection, active]);
 
   // The spec is rebuilt from JSON so its identity changes only when its content does: a
   // data update that moves nothing on the chart neither re-runs the layout nor re-renders
   // the chart twice.
+  // Past the draw cap the Tasks chart is not laid out at all: the host's narrower charts
+  // stand in for it.
+  const tooLarge =
+    view === 'tasks' &&
+    renderTooLarge !== undefined &&
+    drawn.length > TASK_DRAW_CAP;
   const specJson = useMemo((): string => {
     if (view === 'milestones') {
       if (map.nodes.length === 0) return '';
-      const spec: ChartSpec = {
-        nodes: map.nodes.map((n) => ({
+      // "Box by …" frames each card in its parent (a milestone in its project).
+      const framed = prefs.grouped && cardParents !== undefined;
+      const frames = new Map<string, string>();
+      const nodes = map.nodes.map((n) => {
+        const parent = framed ? cardParents.of.get(n.id) : undefined;
+        if (parent !== undefined) frames.set(parent.id, parent.label);
+        return {
           id: n.id,
           width: MILESTONE_NODE.width,
           height: MILESTONE_NODE.height,
-        })),
+          group: parent === undefined ? null : `parent:${parent.id}`,
+        };
+      });
+      const spec: ChartSpec = {
+        nodes,
         edges: map.edges.map((e) => ({
           id: pairKey(e.from, e.to),
           from: e.from,
           to: e.to,
         })),
+        groups: [...frames].map(([id, label]) => ({
+          id: `parent:${id}`,
+          label,
+          parent: null,
+        })),
       };
       return JSON.stringify(spec);
     }
     if (view === 'tasks') {
-      if (drawn.length === 0) return '';
+      if (drawn.length === 0 || tooLarge) return '';
       const height = TASK_NODE.height + (prefs.grouped ? 0 : TASK_NODE.kicker);
       const tasks = stableOrder(chart, drawn);
       const boxes = new Map<string, string>();
@@ -659,7 +733,7 @@ export function MilestoneMapView({
       return JSON.stringify(spec);
     }
     return '';
-  }, [view, map, chart, drawn, drawnSet, prefs.grouped]);
+  }, [view, map, chart, drawn, drawnSet, prefs.grouped, tooLarge, cardParents]);
   const spec = useMemo(
     (): ChartSpec | null =>
       specJson === '' ? null : (JSON.parse(specJson) as ChartSpec),
@@ -675,7 +749,7 @@ export function MilestoneMapView({
   } | null>(null);
   const [layoutError, setLayoutError] = useState<string | null>(null);
   useEffect(() => {
-    if (spec === null || view === null) return;
+    if (spec === null) return;
     let live = true;
     setLayoutError(null);
     layoutChart(spec).then(
@@ -759,7 +833,10 @@ export function MilestoneMapView({
       if (headBox !== null) {
         viewport.fit(headBox, { maxScale: 0.6, animate: false });
       } else {
-        viewport.fit(wholeBox(next), { animate: false });
+        viewport.fit(wholeBox(next), {
+          animate: false,
+          minScale: autoFitFloor,
+        });
       }
       return;
     }
@@ -773,9 +850,9 @@ export function MilestoneMapView({
       const { k } = viewport.transform();
       viewport.pan((before.x - after.x) * k, (before.y - after.y) * k);
     } else if (!viewport.moved()) {
-      viewport.fit(wholeBox(next), { animate: false });
+      viewport.fit(wholeBox(next), { animate: false, minScale: autoFitFloor });
     }
-  }, [placed, spec, viewport, framingKey, chart, view, anchorId]);
+  }, [placed, spec, viewport, framingKey, chart, view, anchorId, autoFitFloor]);
 
   const fitAll = useCallback(() => {
     if (current !== null) viewport.fit(wholeBox(current));
@@ -797,7 +874,10 @@ export function MilestoneMapView({
           });
         }
       } else if (!viewport.moved()) {
-        viewport.fit(wholeBox(current), { animate: false });
+        viewport.fit(wholeBox(current), {
+          animate: false,
+          minScale: autoFitFloor,
+        });
       }
     };
   });
@@ -821,10 +901,10 @@ export function MilestoneMapView({
   const updatePrefs = (patch: Partial<ChartPrefs>) => {
     const next = { ...prefs, ...patch };
     setPrefs(next);
-    storePrefs(prefsKey, next);
+    if (!compact) storePrefs(prefsKey, next);
   };
 
-  const pick = (next: GraphMode) => {
+  const pick = (next: ChartView) => {
     setMode(next);
     storeMode(storageKey, next);
     // A highlighted set survives the switch (the overview shows its milestones); a task,
@@ -863,7 +943,8 @@ export function MilestoneMapView({
    * switching view and opening toggles as needed, and zooms to it. A task the chart can
    * never draw (landed, with no links) opens instead. */
   const goTo = (id: string) => {
-    if (!findableSet.has(id)) {
+    // A chart of cards alone (an upper Graph level) opens a task it lists.
+    if (!views.includes('tasks') || !findableSet.has(id)) {
       if (chart.tasks.has(id)) onOpenTask(id);
       return;
     }
@@ -875,6 +956,17 @@ export function MilestoneMapView({
     setSelection({ kind: 'task', id });
     focusOn(new Set([id]), 1, awaitsLayout);
   };
+
+  // A link that named a task selects and frames it once on arrival (and again only when
+  // a later link names another).
+  const goToRef = useRef(goTo);
+  goToRef.current = goTo;
+  const arrivedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (arrivalTaskId === null || arrivedRef.current === arrivalTaskId) return;
+    arrivedRef.current = arrivalTaskId;
+    goToRef.current(arrivalTaskId);
+  }, [arrivalTaskId]);
 
   const selectMilestone = (id: string) => {
     if (fromInspector()) setFocusNode(id);
@@ -937,9 +1029,10 @@ export function MilestoneMapView({
               })),
             }))
           );
-    void navigator.clipboard.writeText(text).then(() => {
+    void writeClipboard(text).then((ok) => {
+      if (!ok) return;
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      setTimeout(() => setCopied(false), COPIED_MS);
     });
   };
 
@@ -947,7 +1040,7 @@ export function MilestoneMapView({
   // Escape still work elsewhere): a handled key is defaultPrevented, which the global
   // handler respects.
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (view === null || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
     const target = event.target as HTMLElement;
     if (
       target.closest(
@@ -957,7 +1050,7 @@ export function MilestoneMapView({
       return;
     }
     let handled = true;
-    if (event.key === '/') setSearchOpen(true);
+    if (event.key === '/' && !compact) setSearchOpen(true);
     else if (event.key === 'Escape' && active !== null) clear();
     else if (event.key === '0') fitAll();
     else if (event.key === '+' || event.key === '=') viewport.zoomBy(ZOOM_STEP);
@@ -967,15 +1060,12 @@ export function MilestoneMapView({
   };
 
   const highlight = useMemo(
-    () =>
-      view === null
-        ? AT_REST
-        : highlightFor(active, activeSet, view, chart, map.edges),
+    () => highlightFor(active, activeSet, view, chart, map.edges),
     [active, activeSet, view, chart, map.edges]
   );
 
   const canvasEdges = useMemo((): CanvasEdge[] => {
-    if (shown === null || view === null) return [];
+    if (shown === null) return [];
     return shown.edges.map((edge) => {
       const traced = highlight.edge(edge.from, edge.to);
       if (view === 'tasks') {
@@ -1027,9 +1117,9 @@ export function MilestoneMapView({
 
   // Stable handlers for the memoised node cards, so a selection re-renders only the two
   // cards whose `selected` flips; they read the latest props through a ref.
-  const handlersRef = useRef({ onOpenTask });
+  const handlersRef = useRef({ onOpenTask, onDrill });
   useEffect(() => {
-    handlersRef.current = { onOpenTask };
+    handlersRef.current = { onOpenTask, onDrill };
   });
   const onSelectTask = useCallback(
     (id: string) => setSelection({ kind: 'task', id }),
@@ -1043,10 +1133,13 @@ export function MilestoneMapView({
     (id: string) => handlersRef.current.onOpenTask(id),
     []
   );
-  const onOpenMilestoneNode = useCallback(
-    (id: string) => handlersRef.current.onOpenTask(id, 'plan'),
-    []
-  );
+  // A double-click on a card drills a level down when the host offers it, else opens it.
+  const onOpenMilestoneNode = useCallback((id: string) => {
+    const { onOpenTask: open, onDrill: drill } = handlersRef.current;
+    if (drill !== undefined) drill(id);
+    else open(id, 'plan');
+  }, []);
+
   const emptyStatus = useMemo(
     () => containerStatus([], { bucketOf, asksByTask }),
     [bucketOf, asksByTask]
@@ -1101,6 +1194,7 @@ export function MilestoneMapView({
           onFitChain={(ids) => focusOn(ids, 1, false)}
           onOpen={(id) => onOpenTask(id)}
           onClear={clear}
+          extraActions={taskActions?.(active.id)}
         />
       );
     }
@@ -1128,10 +1222,15 @@ export function MilestoneMapView({
           onPick={goTo}
           onPickMilestone={selectMilestone}
           onOpenPlan={(mid) => onOpenTask(mid, 'plan')}
-          onShowTasks={(mid) =>
-            showSet({ kind: 'tasks-of', milestone: mid }, 'tasks')
+          onShowTasks={
+            views.includes('tasks')
+              ? (mid) => showSet({ kind: 'tasks-of', milestone: mid }, 'tasks')
+              : undefined
           }
+          onDrill={onDrill}
+          unit={unit}
           onClear={clear}
+          extraActions={milestoneActions?.(id)}
         />
       );
     }
@@ -1149,6 +1248,7 @@ export function MilestoneMapView({
           }}
           onPick={goTo}
           onClear={clear}
+          unit={unit}
         />
       );
     }
@@ -1167,7 +1267,7 @@ export function MilestoneMapView({
     return (
       <InspectorOverview
         chart={chart}
-        view={view ?? 'milestones'}
+        view={view}
         unlinkedHidden={unlinkedHidden}
         onPick={goTo}
         onShowUnlinked={() => updatePrefs({ showUnlinked: true })}
@@ -1200,9 +1300,8 @@ export function MilestoneMapView({
   const empty =
     view === 'milestones' && map.nodes.length === 0
       ? {
-          heading: 'No milestones yet',
-          description:
-            'Group tasks under milestones to see how they wait on each other.',
+          heading: `No ${unit.many} yet`,
+          description: `Group tasks under ${unit.many} to see how they wait on each other.`,
         }
       : view === 'tasks' && chart.tasks.size === 0
         ? {
@@ -1213,139 +1312,121 @@ export function MilestoneMapView({
   // Tasks exist but the display toggles leave nothing to draw.
   const nothingDrawn = view === 'tasks' && empty === null && drawn.length === 0;
 
-  return (
-    <div data-testid="milestone-map" className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-2 px-4 py-2">
-        <ToggleGroup
-          aria-label="Graph of"
-          variant="outline"
-          size="sm"
-          value={[mode]}
-          onValueChange={([next]) => {
-            const picked = offered.find((m) => m.id === next);
-            if (picked !== undefined) pick(picked.id);
-          }}
-        >
-          {offered.map((m) => (
-            <ToggleGroupItem key={m.id} value={m.id}>
-              {m.label}
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
-        {layout === undefined && (
-          <span
-            data-testid="milestone-map-summary"
-            className="text-muted-foreground truncate text-[12px] tabular-nums"
+  const searchOptions = useMemo((): PickerOption[] => {
+    // A chart without the Milestones view finds tasks only.
+    const out: PickerOption[] = views.includes('milestones')
+      ? map.nodes.map((n) => ({
+          value: `m:${n.id}`,
+          label: n.title,
+          group: capital(unit.many),
+        }))
+      : [];
+    for (const id of findable) {
+      const task = chart.tasks.get(id);
+      if (task === undefined) continue;
+      out.push({
+        value: `t:${id}`,
+        label: task.title,
+        hint: id,
+        keywords: [task.milestoneTitle],
+        group: 'Tasks',
+        mark: {
+          kind: 'node',
+          node: <StatusIcon status={task.status} size={14} />,
+        },
+      });
+    }
+    return out;
+  }, [map, findable, chart, views, unit.many]);
+
+  const onSearchPick = (value: string | null) => {
+    if (value === null) return;
+    const id = value.slice(2);
+    if (value.startsWith('m:')) {
+      if (mode !== 'milestones') pick('milestones');
+      selectMilestone(id);
+      focusOn(new Set([id]), 1, mode !== 'milestones');
+    } else {
+      goTo(id);
+    }
+  };
+
+  const modes = GRAPH_MODES.filter((m) => views.includes(m.id));
+  // A tasks-only chart counts tasks and waits; with the Milestones view, milestones too.
+  const taskSummary = `${chart.tasks.size} ${chart.tasks.size === 1 ? 'task' : 'tasks'} · ${chart.edges.length} ${chart.edges.length === 1 ? 'wait' : 'waits'} · ${landed}/${total} landed`;
+  // A compact chart has no inspector toggle: the inspector opens on a selection only.
+  const showInspector = compact
+    ? active !== null
+    : prefs.inspector || (inspectorOnSelect && active !== null);
+  const summary = !views.includes('milestones')
+    ? taskSummary
+    : `${map.nodes.length} ${map.nodes.length === 1 ? unit.one : unit.many} · ${
+        waits === 0
+          ? 'no waits between them'
+          : `${waits} ${waits === 1 ? 'wait' : 'waits'} between them`
+      } · ${landed}/${total} landed`;
+
+  const viewSwitch =
+    modes.length > 1 ? (
+      <SegmentedControl
+        label="Graph of"
+        size="sm"
+        options={modes}
+        value={mode}
+        onChange={(next) => {
+          const picked = modes.find((m) => m.id === next);
+          if (picked !== undefined) pick(picked.id);
+        }}
+      />
+    ) : null;
+  const toolbar = compact ? (
+    (viewSwitch !== null || graphHref !== undefined) && (
+      <div
+        data-testid="chart-toolbar"
+        data-variant="compact"
+        className={styles.toolbar}
+      >
+        {viewSwitch}
+        <span className={styles.spacer} />
+        {graphHref !== undefined && (
+          <Button
+            variant="quiet"
+            size="sm"
+            href={graphHref}
+            data-testid="chart-open-graph"
+            icon={<Network aria-hidden size={14} strokeWidth={1.8} />}
           >
-            {map.nodes.length}{' '}
-            {map.nodes.length === 1 ? 'milestone' : 'milestones'} ·{' '}
-            {waits === 0
-              ? 'no waits between them'
-              : `${waits} ${waits === 1 ? 'wait' : 'waits'} between them`}{' '}
-            · {landed}/{total} landed
-          </span>
-        )}
-        <span className="flex-1" />
-        {layout === undefined ? (
-          <Button size="sm" variant="outline" onClick={copy}>
-            {copied ? 'Copied' : 'Copy as Mermaid'}
+            Open in Graph
           </Button>
-        ) : (
-          layout.actions
         )}
       </div>
-      {layout !== undefined ? (
-        <div
-          data-testid={`graph-layout-${mode}`}
-          className="min-h-0 flex-1 overflow-hidden"
-        >
-          {layout.body}
-        </div>
-      ) : empty !== null ? (
-        <EmptyState
-          icon={Waypoints}
-          heading={empty.heading}
-          description={empty.description}
-          className="flex-1"
-        />
-      ) : (
-        <div className="border-border @container/chart flex min-h-0 flex-1 flex-col border-t-[0.5px]">
-          <div
-            data-testid="chart-toolbar"
-            className="border-border flex flex-wrap items-center gap-2 border-b-[0.5px] px-4 py-1.5"
-          >
-            <Popover open={searchOpen} onOpenChange={setSearchOpen}>
-              <PopoverTrigger
-                render={
-                  <PillButton data-testid="chart-search" aria-keyshortcuts="/">
-                    <SearchIcon aria-hidden />
-                    Find
-                    <Kbd>/</Kbd>
-                  </PillButton>
-                }
-              />
-              <PopoverContent align="start" className="w-80 p-0">
-                <Command>
-                  <CommandInput placeholder="Find a task or milestone" />
-                  <CommandList className="max-h-72 p-1">
-                    <CommandEmpty>Nothing on this chart matches.</CommandEmpty>
-                    {map.nodes.length > 0 && (
-                      <CommandGroup heading="Milestones">
-                        {map.nodes.map((n) => (
-                          <CommandItem
-                            key={n.id}
-                            value={`${n.id} ${n.title}`}
-                            onSelect={() => {
-                              setSearchOpen(false);
-                              if (mode !== 'milestones') pick('milestones');
-                              selectMilestone(n.id);
-                              focusOn(
-                                new Set([n.id]),
-                                1,
-                                mode !== 'milestones'
-                              );
-                            }}
-                            className="h-8"
-                          >
-                            <span className="min-w-0 flex-1 truncate">
-                              {n.title}
-                            </span>
-                          </CommandItem>
-                        ))}
-                      </CommandGroup>
-                    )}
-                    <CommandGroup heading="Tasks">
-                      {findable.map((id) => {
-                        const task = chart.tasks.get(id);
-                        if (task === undefined) return null;
-                        return (
-                          <CommandItem
-                            key={id}
-                            value={`${id} ${task.title} ${task.milestoneTitle}`}
-                            onSelect={() => {
-                              setSearchOpen(false);
-                              goTo(id);
-                            }}
-                            className="h-8"
-                          >
-                            <StatusIcon
-                              status={task.status}
-                              className="size-3.5 shrink-0"
-                            />
-                            <span className="text-muted-foreground font-book shrink-0 text-[12px] tracking-(--id-tracking)">
-                              {id}
-                            </span>
-                            <span className="min-w-0 flex-1 truncate">
-                              {task.title}
-                            </span>
-                          </CommandItem>
-                        );
-                      })}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
+    )
+  ) : (
+    <div data-testid="chart-toolbar" className={styles.toolbar}>
+      {viewSwitch}
+      {empty === null && (
+        <>
+          <PickerPopover
+            label="Find on the chart"
+            appearance="quiet"
+            action
+            value={null}
+            options={searchOptions}
+            open={searchOpen}
+            onOpenChange={setSearchOpen}
+            shortcut="/"
+            searchPlaceholder="Find a task or milestone"
+            emptyLabel="Nothing on this chart matches."
+            triggerLabel="Find on the chart"
+            trigger={
+              <span className={styles.find} data-testid="chart-search">
+                <SearchIcon aria-hidden size={14} strokeWidth={1.8} />
+                Find
+              </span>
+            }
+            onChange={onSearchPick}
+          />
+          <span className={styles.presets}>
             {PRESETS.map((preset) => {
               const count = preset
                 .ids(chart)
@@ -1353,137 +1434,208 @@ export function MilestoneMapView({
               const pressed =
                 active?.kind === 'preset' && active.id === preset.id;
               return (
-                <Toggle
+                <ChipButton
                   key={preset.id}
-                  variant="outline"
                   data-testid={`chart-preset-${preset.id}`}
-                  pressed={pressed}
+                  selected={pressed}
                   // A pressed preset stays clickable even once it empties, so it can be let go.
                   disabled={count === 0 && !pressed}
-                  onPressedChange={() => {
+                  onClick={() => {
                     if (pressed) clear();
-                    else
-                      showSet(
-                        { kind: 'preset', id: preset.id },
-                        view ?? 'tasks'
-                      );
+                    else showSet({ kind: 'preset', id: preset.id }, view);
                   }}
-                  className="shrink-0"
                 >
-                  {preset.label}
-                  <span className="text-muted-foreground font-book tabular-nums">
-                    {count}
-                  </span>
-                </Toggle>
+                  {preset.label} <span className={styles.count}>{count}</span>
+                </ChipButton>
               );
             })}
-            <span className="flex-1" />
-            {view === 'tasks' && (
-              <Popover>
-                <PopoverTrigger
-                  render={<DisplayIconButton label="Chart display" />}
-                />
-                <PopoverContent
-                  align="end"
-                  className="flex w-60 flex-col gap-3 p-3"
-                >
-                  <Switch
-                    label="Hide landed tasks"
-                    checked={prefs.hideLanded}
-                    onCheckedChange={(checked) =>
-                      updatePrefs({ hideLanded: checked })
-                    }
-                  />
-                  <Switch
-                    label="Show unlinked tasks"
-                    checked={prefs.showUnlinked}
-                    onCheckedChange={(checked) =>
-                      updatePrefs({ showUnlinked: checked })
-                    }
-                  />
-                  <Switch
-                    label="Box by milestone"
-                    checked={prefs.grouped}
-                    onCheckedChange={(checked) =>
-                      updatePrefs({ grouped: checked })
-                    }
-                  />
-                </PopoverContent>
-              </Popover>
-            )}
-            <SidePanelIconButton
-              label="Inspector"
-              active={prefs.inspector}
-              aria-pressed={prefs.inspector}
-              onClick={() => updatePrefs({ inspector: !prefs.inspector })}
+          </span>
+        </>
+      )}
+      <span className={styles.spacer} />
+      <span data-testid="milestone-map-summary" className={styles.summary}>
+        {summary}
+      </span>
+      {empty === null && (
+        <Popover
+          open={helpOpen}
+          onOpenChange={setHelpOpen}
+          label="Reading the chart"
+          align="end"
+          width={300}
+          trigger={
+            <Button
+              variant="quiet"
+              size="sm"
+              data-testid="chart-help-toggle"
+              aria-label="Reading the chart"
+              icon={<CircleHelp aria-hidden size={14} strokeWidth={1.8} />}
             />
+          }
+        >
+          <div className={styles.help}>
+            <ChartHelp view={view} unit={unit} />
           </div>
-          <div className="flex min-h-0 flex-1 flex-col @min-[880px]/chart:flex-row">
-            {nothingDrawn ? (
+        </Popover>
+      )}
+      {empty === null && (
+        <Popover
+          open={displayOpen}
+          onOpenChange={setDisplayOpen}
+          label="Chart display"
+          align="end"
+          width={240}
+          trigger={
+            <Button
+              variant="quiet"
+              size="sm"
+              icon={
+                <SlidersHorizontal aria-hidden size={14} strokeWidth={1.8} />
+              }
+            >
+              Display
+            </Button>
+          }
+        >
+          <div className={styles.display}>
+            {view === 'tasks' && (
+              <>
+                <Switch
+                  label="Hide landed tasks"
+                  checked={prefs.hideLanded}
+                  onChange={(checked) => updatePrefs({ hideLanded: checked })}
+                />
+                <Switch
+                  label="Show unlinked tasks"
+                  checked={prefs.showUnlinked}
+                  onChange={(checked) => updatePrefs({ showUnlinked: checked })}
+                />
+              </>
+            )}
+            {(view === 'tasks' || cardParents !== undefined) && (
+              <Switch
+                label={`Box by ${view === 'tasks' ? 'milestone' : (cardParents?.one ?? 'parent')}`}
+                checked={prefs.grouped}
+                onChange={(checked) => updatePrefs({ grouped: checked })}
+              />
+            )}
+            <Button
+              variant="secondary"
+              size="sm"
+              data-testid="chart-copy-mermaid"
+              onClick={copy}
+            >
+              {copied ? 'Copied' : 'Copy as Mermaid'}
+            </Button>
+          </div>
+        </Popover>
+      )}
+      {empty === null && (
+        <Button
+          variant="quiet"
+          size="sm"
+          icon={<PanelRight aria-hidden size={14} strokeWidth={1.8} />}
+          aria-label="Inspector"
+          aria-pressed={prefs.inspector}
+          onClick={() => updatePrefs({ inspector: !prefs.inspector })}
+        />
+      )}
+    </div>
+  );
+
+  return (
+    <div
+      data-testid="milestone-map"
+      data-variant={variant}
+      className={cx(styles.root, className)}
+    >
+      {toolbar}
+      {empty !== null ? (
+        <div className={styles.empty}>
+          <EmptyState label={empty.heading}>{empty.description}</EmptyState>
+        </div>
+      ) : (
+        <div className={styles.body}>
+          {tooLarge && renderTooLarge !== undefined ? (
+            <div className={styles.tooLarge}>
+              {renderTooLarge(drawn.length)}
+            </div>
+          ) : nothingDrawn ? (
+            <div className={styles.empty}>
               <EmptyState
-                icon={Waypoints}
-                heading={
+                label={
                   chart.linked.size > 0
                     ? 'Every linked task has landed'
                     : 'Every task has landed'
                 }
-                description="Landed tasks are hidden, so there is nothing left to draw."
-                primary={{
-                  label: 'Show landed tasks',
-                  onClick: () => updatePrefs({ hideLanded: false }),
-                }}
-                secondary={
-                  !prefs.showUnlinked && chart.unlinkedOpen.length > 0
-                    ? {
-                        label: 'Show unlinked tasks',
-                        onClick: () => updatePrefs({ showUnlinked: true }),
-                      }
-                    : undefined
+                action={
+                  <span className={styles.emptyActions}>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => updatePrefs({ hideLanded: false })}
+                    >
+                      Show landed tasks
+                    </Button>
+                    {!prefs.showUnlinked && chart.unlinkedOpen.length > 0 && (
+                      <Button
+                        size="sm"
+                        variant="quiet"
+                        onClick={() => updatePrefs({ showUnlinked: true })}
+                      >
+                        Show unlinked tasks
+                      </Button>
+                    )}
+                  </span>
                 }
-                className="min-h-0 flex-1"
-              />
-            ) : (
-              <ChartCanvas
-                viewport={viewport}
-                layout={shown}
-                message={
-                  layoutError ??
-                  (spec !== null && shown === null
-                    ? 'Laying out the chart…'
-                    : null)
-                }
-                edges={canvasEdges}
-                renderNode={(box) => renderNode(box.id)}
-                nodeTrace={highlight.node}
-                onBackgroundClick={clear}
-                onKeyDown={onKeyDown}
-                onFit={fitAll}
-                legend={
-                  view === 'tasks' ? (
-                    <TasksLegend chart={chart} drawn={drawn} />
-                  ) : (
-                    <MilestonesLegend attention={attentionEdges} />
-                  )
-                }
-                ariaLabel={
-                  view === 'tasks' ? 'Task dependencies' : 'Milestone map'
-                }
-              />
-            )}
-            <div role="status" className="sr-only">
-              {status}
-            </div>
-            {prefs.inspector && (
-              <aside
-                ref={asideRef}
-                data-testid="chart-inspector"
-                aria-label="Inspector"
-                className="border-border max-h-[42%] shrink-0 overflow-y-auto border-t-[0.5px] p-4 @min-[880px]/chart:max-h-none @min-[880px]/chart:w-80 @min-[880px]/chart:border-t-0 @min-[880px]/chart:border-l-[0.5px]"
               >
-                {inspector}
-              </aside>
-            )}
+                Landed tasks are hidden, so there is nothing left to draw.
+              </EmptyState>
+            </div>
+          ) : (
+            <ChartCanvas
+              viewport={viewport}
+              layout={shown}
+              message={
+                layoutError ??
+                (spec !== null && shown === null
+                  ? 'Laying out the chart…'
+                  : null)
+              }
+              edges={canvasEdges}
+              renderNode={(box) => renderNode(box.id)}
+              nodeTrace={highlight.node}
+              onBackgroundClick={clear}
+              onKeyDown={onKeyDown}
+              onFit={fitAll}
+              legend={
+                view === 'tasks' ? (
+                  <TasksLegend chart={chart} drawn={drawn} />
+                ) : (
+                  <MilestonesLegend attention={attentionEdges} unit={unit} />
+                )
+              }
+              ariaLabel={
+                view === 'tasks'
+                  ? 'Task dependencies'
+                  : `${capital(unit.one)} map`
+              }
+              zoomHint={embedded ? 'pinch to zoom' : undefined}
+            />
+          )}
+          <div role="status" className={styles.srOnly}>
+            {status}
           </div>
+          {showInspector && (
+            <aside
+              ref={asideRef}
+              data-testid="chart-inspector"
+              aria-label="Inspector"
+              className={styles.inspector}
+            >
+              {inspector}
+            </aside>
+          )}
         </div>
       )}
     </div>

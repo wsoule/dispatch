@@ -1,0 +1,134 @@
+/* One message in a thread (MessageRow.tsx): the sender's avatar in the left
+   column, then the head line (the sender's name, the badge chips and the
+   time), the body, its refs and the notes under it. Your own messages sit
+   in a soft bubble; a message a link opened the thread at is briefly marked
+   in the accent's selection tint. Tokens only; badge colour comes from the
+   chips' data-tone. */
+
+.row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--s-3);
+  align-items: start;
+  padding: var(--s-2);
+  border-radius: var(--r);
+}
+
+.row[data-linked='true'] {
+  background: var(--accent-soft);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .row {
+    transition: background-color 700ms var(--ease);
+  }
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.sender {
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+
+/* The sender as a link to where it leads (a run, a task, a person). */
+.senderButton {
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-xs);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-weight: var(--fw-medium);
+  cursor: pointer;
+}
+
+.senderButton:hover {
+  text-decoration: underline;
+}
+
+.senderButton:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.time {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The body: bare on the page for others, a soft bubble for your own. */
+.bubble {
+  min-width: 0;
+  color: var(--text);
+  font-size: var(--fs);
+  line-height: var(--lh-long);
+}
+
+.row[data-mine='true'] .bubble {
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r);
+  background: var(--surface-2);
+}
+
+.markdown {
+  font-size: var(--fs);
+}
+
+/* An A2A sender's words and a task proposal: verbatim, never Markdown. */
+.plain {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.note {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+}
+
+/* Refs, remote handles and other machine-read strings: Geist Mono. */
+.mono {
+  font-family: var(--font-mono);
+}
+
+.deliveries {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--s-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+/* Forced colours: your bubble and a linked message keep an edge. */
+@media (forced-colors: active) {
+  .row[data-linked='true'],
+  .row[data-mine='true'] .bubble {
+    border: 1px solid CanvasText;
+  }
+}

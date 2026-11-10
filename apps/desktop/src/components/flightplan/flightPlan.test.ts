@@ -9,7 +9,6 @@ import { describe, expect, test } from 'bun:test';
 
 import { buildFlightPlan, tasksWithRunBranch } from './flightPlan';
 import { childrenByParent, flightScope } from './flightScope';
-import { queuePositions } from './flightViews';
 
 function child(
   id: string,
@@ -146,7 +145,26 @@ describe('buildFlightPlan', () => {
     expect(plan.queued).toBe(0);
   });
 
-  test('a blocker in review no longer holds its dependent (the server stacks it)', () => {
+  test('under startDependents: review, a blocker in review no longer holds its dependent (the server stacks it)', () => {
+    const plan = buildFlightPlan(
+      [
+        child('t-a', { status: 'review' }),
+        child('t-b', { blockedBy: ['t-a'] }),
+      ],
+      {
+        ...opts(),
+        withRunBranch: new Set(['t-a']),
+        startDependents: 'review',
+      }
+    );
+    expect(plan.nodes.map((n) => [n.task.meta.id, n.state])).toEqual([
+      ['t-a', 'review'],
+      ['t-b', 'queued'],
+    ]);
+    expect(plan.nodes[1]?.waitingOn).toEqual([]);
+  });
+
+  test('by default, a blocker in review holds its dependent until it lands', () => {
     const plan = buildFlightPlan(
       [
         child('t-a', { status: 'review' }),
@@ -154,11 +172,8 @@ describe('buildFlightPlan', () => {
       ],
       { ...opts(), withRunBranch: new Set(['t-a']) }
     );
-    expect(plan.nodes.map((n) => [n.task.meta.id, n.state])).toEqual([
-      ['t-a', 'review'],
-      ['t-b', 'queued'],
-    ]);
-    expect(plan.nodes[1]?.waitingOn).toEqual([]);
+    expect(plan.nodes.map((n) => n.state)).toEqual(['review', 'blocked']);
+    expect(plan.nodes[1]?.waitingOn).toEqual(['t-a']);
   });
 
   test('a blocker in review with no run branch, or a teammate’s, holds until done', () => {
@@ -330,21 +345,6 @@ describe('teammates in the plan', () => {
     );
     expect(stateById(plan)).toEqual({ 't-a': 'teammate', 't-b': 'queued' });
   });
-
-  test('queue positions skip a teammate’s node', () => {
-    const plan = buildFlightPlan(
-      [
-        child('t-a', { assignee: 'human:sam', priority: 'urgent' }),
-        child('t-b', { priority: 'high' }),
-        child('t-c', { priority: 'low' }),
-      ],
-      { ...opts(), me: 'human:wyat' }
-    );
-    const queue = queuePositions(plan.nodes, () => 1);
-    expect(queue.has('t-a')).toBe(false);
-    expect(queue.get('t-b')).toEqual({ position: 0, free: 1 });
-    expect(queue.get('t-c')).toEqual({ position: 1, free: 1 });
-  });
 });
 
 // initiative → project → { milestone → { issue, parent issue → sub-issue }, direct }
@@ -411,6 +411,7 @@ describe('buildFlightPlan where review shares the dispatched status', () => {
       model,
       withRunBranch: new Set(['t-a']),
       withFinishedRun: new Set(['t-a']),
+      startDependents: 'review',
     });
     expect(plan.nodes.map((n) => n.state)).toEqual(['review', 'queued']);
   });
@@ -421,6 +422,7 @@ describe('buildFlightPlan where review shares the dispatched status', () => {
       model,
       withRunBranch: new Set(['t-a']),
       withFinishedRun: new Set(),
+      startDependents: 'review',
     });
     expect(plan.nodes[1]?.waitingOn).toEqual(['t-a']);
   });

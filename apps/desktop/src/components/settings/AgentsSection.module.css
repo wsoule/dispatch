@@ -1,0 +1,9 @@
+/* The Models rows' two selects, sized so every row's columns line up. */
+.model {
+  width: 124px;
+}
+
+.effort {
+  display: inline-block;
+  width: 112px;
+}

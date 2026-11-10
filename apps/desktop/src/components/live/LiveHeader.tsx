@@ -1,89 +1,199 @@
+import { Button, ProgressRule, type StatCell, StatsStrip } from '@dispatch/ui';
 import { Pause, Play } from 'lucide-react';
 import { memo, type ReactNode } from 'react';
 
 import type { LiveCeilings } from '../../lib/liveSpend';
 import { formatUsd } from '../../lib/milestoneSession';
 import type { LiveTotals } from './liveBandModel';
-import { PillButton } from '@/ui/ai/pill';
+import styles from './LiveHeader.module.css';
 
-// A number and its word, the number bright — the Flight Plan header's reading.
-function Stat({
-  value,
-  label,
-  dot,
-  title,
-  slot,
-}: {
-  value: ReactNode;
+const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
+
+/** The spend cell's key, its short value, its short note (if any) and the title that says
+ * it in full. */
+interface LiveSpend {
   label: string;
-  dot?: string;
-  title?: string;
-  slot: string;
-}) {
-  return (
-    <span
-      data-slot={slot}
-      title={title}
-      className="flex shrink-0 items-center gap-1.5 text-[12px]"
-    >
-      {dot !== undefined && (
-        <span
-          aria-hidden
-          className="size-1.5 rounded-full"
-          style={{ backgroundColor: dot }}
-        />
-      )}
-      <span className="text-foreground font-medium tabular-nums">{value}</span>
-      <span className="text-(--text-muted)">{label}</span>
-    </span>
-  );
+  value: string;
+  note?: string;
+  title: string;
 }
 
-// Slots across every live fan-out: a hairline that fills as agents take them.
-function SlotBar({ used, total }: { used: number; total: number }) {
-  const pct = total === 0 ? 0 : Math.min(100, (used / total) * 100);
-  return (
-    <span
-      data-slot="live-slots"
-      role="img"
-      aria-label={`${Math.min(used, total)} of ${total} slots in use`}
-      className="flex shrink-0 items-center gap-1.5 text-[12px]"
-    >
-      <span
-        aria-hidden
-        className="relative h-1.5 w-16 overflow-hidden rounded-full bg-(--border-strong)"
-      >
-        <span
-          className="bg-state-working absolute inset-y-0 left-0 transition-[width] duration-300"
-          style={{ width: `${pct}%` }}
-        />
-      </span>
-      <span aria-hidden className="text-foreground font-medium tabular-nums">
-        {Math.min(used, total)}/{total}
-      </span>
-      <span aria-hidden className="text-(--text-muted)">
-        slots
-      </span>
-    </span>
-  );
+// What the fan-outs' settled spend is measured against, for the note (`of $60 ceilings`,
+// worded as Overseer's flow columns word it, or `no ceiling`) and in full for the title.
+function ceilingWords(ceilings: LiveCeilings): { note: string; title: string } {
+  const settled = formatUsd(ceilings.settledUsd);
+  if (ceilings.ceilingUsd === null) {
+    return {
+      note: 'no ceiling',
+      title: `${settled} settled in the live fan-outs, which set no ceiling`,
+    };
+  }
+  const ceiling = formatUsd(ceilings.ceilingUsd);
+  return {
+    note: `of ${ceiling} ceilings`,
+    title: `${settled} settled in the live fan-outs, of their ${ceiling} ceilings`,
+  };
 }
 
-// `$4.20 today · $8.10 of $60 ceilings`, the parts that exist.
-function liveSpendLabel(
+// The key says which amount the value is, so it reads at a glance on the row (the strip
+// puts the note in the cell's hint, `LiveHeader`): today's spend under "Today" with the
+// fan-outs' settled spend as its note (`$4.20` · `$8.10 of $60 ceilings`), else the live
+// fan-outs' settled spend under "Spend" (`$8.10` · `of $60 ceilings`), or null when there
+// is neither. Keys of five letters, so the cells still fit beside Pause all at 1024px
+// ("Spend today" would not). The title says it all in full and is the hint's words.
+function liveSpend(
   today: number | null,
   ceilings: LiveCeilings | null
-): string | null {
-  const parts: string[] = [];
-  if (today !== null) parts.push(`${formatUsd(today)} today`);
-  if (ceilings !== null) {
+): LiveSpend | null {
+  if (today !== null) {
+    const spent = `${formatUsd(today)} spent today`;
+    if (ceilings === null) {
+      return { label: 'Today', value: formatUsd(today), title: spent };
+    }
+    const words = ceilingWords(ceilings);
     const settled = formatUsd(ceilings.settledUsd);
-    parts.push(
-      ceilings.ceilingUsd === null
-        ? `${settled} in fan-outs, no ceiling`
-        : `${settled} of ${formatUsd(ceilings.ceilingUsd)} ceilings`
+    return {
+      label: 'Today',
+      value: formatUsd(today),
+      note:
+        ceilings.ceilingUsd === null
+          ? `${settled}, ${words.note}`
+          : `${settled} ${words.note}`,
+      title: `${spent}; ${words.title}`,
+    };
+  }
+  if (ceilings === null) return null;
+  const words = ceilingWords(ceilings);
+  return {
+    label: 'Spend',
+    value: formatUsd(ceilings.settledUsd),
+    note: words.note,
+    title: words.title,
+  };
+}
+
+// The agent slots across every live fan-out: a ProgressRule meter, warning once every
+// slot is taken. With no fan-out live no slot is held, so there is no cell at all.
+function slotsCell(slots: LiveTotals['slots']): StatCell | null {
+  if (slots.total <= 0) return null;
+  const used = Math.min(slots.used, slots.total);
+  return {
+    id: 'slots',
+    label: 'Agent slots',
+    value: (
+      <ProgressRule
+        data-slot="live-slots"
+        done={used}
+        total={slots.total}
+        aria-label="Agent slots"
+        valueText={`${used} of ${slots.total} slots in use`}
+        tone={slots.used >= slots.total ? 'warning' : 'default'}
+      />
+    ),
+    title: `${used} of ${slots.total} agent slots in use`,
+  };
+}
+
+// Every cell of the strip, in reading order: slots (while a fan-out is live), running, queued, waiting on a
+// teammate, landing, then the spend when there is any. A count takes its status tone
+// only while it is above zero (blue running and landing, amber blocked behind a teammate).
+// Keys stay short so the cells and Pause all share the header's row at common widths, but
+// each still says what it counts on its own; the hints only add detail, and hold the
+// spend's note.
+function headerCells(totals: LiveTotals, spend: LiveSpend | null): StatCell[] {
+  const slots = slotsCell(totals.slots);
+  const cells: StatCell[] = [
+    ...(slots === null ? [] : [slots]),
+    {
+      id: 'running',
+      'data-slot': 'live-running',
+      label: 'Running',
+      value: totals.running,
+      tone: totals.running > 0 ? 'info' : 'default',
+    },
+    {
+      id: 'queued',
+      'data-slot': 'live-queued',
+      label: 'Queued',
+      value: totals.queued,
+      title: 'Starts on its own as a fan-out slot frees',
+    },
+    {
+      id: 'teammate',
+      'data-slot': 'live-teammate',
+      label: 'Blocked on teammates',
+      value: totals.waitingOnTeammate,
+      tone: totals.waitingOnTeammate > 0 ? 'warning' : 'default',
+      title: "Blocked behind a teammate's issue, which no fan-out starts",
+    },
+    {
+      id: 'landing',
+      'data-slot': 'live-landing',
+      label: 'Landing',
+      value: totals.landing,
+      tone: totals.landing > 0 ? 'info' : 'default',
+    },
+  ];
+  if (spend !== null) {
+    cells.push({
+      id: 'spend',
+      'data-slot': 'live-spend',
+      label: spend.label,
+      value: spend.value,
+      ...(spend.note === undefined ? {} : { note: spend.note }),
+      title: spend.title,
+      // The title says the note's amounts: the hint says it alone.
+      hint: spend.title,
+    });
+  }
+  return cells;
+}
+
+// The one control for the whole fleet, drawn at the end of the strip's row: Pause all
+// while any fan-out fills slots, else Resume all for what someone paused (its hint says
+// a ceiling-paused fan-out stays paused), else nothing.
+function fleetControl({
+  active,
+  resumable,
+  capped,
+  busy,
+  onPauseAll,
+  onResumeAll,
+}: Omit<LiveHeaderProps, 'totals' | 'spendToday' | 'ceilings'>): ReactNode {
+  if (active > 0) {
+    return (
+      <Button
+        variant="secondary"
+        size="sm"
+        data-slot="live-pause-all"
+        disabled={busy}
+        icon={<Pause {...ICON} />}
+        onClick={onPauseAll}
+      >
+        Pause all
+      </Button>
     );
   }
-  return parts.length === 0 ? null : parts.join(' · ');
+  if (resumable > 0) {
+    return (
+      <Button
+        variant="secondary"
+        size="sm"
+        data-slot="live-resume-all"
+        disabled={busy}
+        icon={<Play {...ICON} />}
+        onClick={onResumeAll}
+        title={
+          capped > 0
+            ? `${capped} paused on a ceiling stay paused: raise it on the band`
+            : undefined
+        }
+      >
+        Resume all
+      </Button>
+    );
+  }
+  return null;
 }
 
 interface LiveHeaderProps {
@@ -102,10 +212,17 @@ interface LiveHeaderProps {
 }
 
 /**
- * The Live view's strip: slots across every live fan-out, what is running, queued,
- * waiting on a teammate and landing, today's spend against the fan-outs' ceilings, and
- * one control for the whole fleet — Pause all while anything is filling slots, else
- * Resume all for what someone paused.
+ * The Live view's strip: a library StatsStrip of the agent slots across every live
+ * fan-out, what is running, queued, waiting on a teammate and landing, and today's spend
+ * against the fan-outs' ceilings; then one control for the whole fleet on the right —
+ * Pause all while anything is filling slots, else Resume all for what someone paused,
+ * passed as the strip's `end` so it sits at the end of the same row. The strip is the
+ * compact variant (owner decision 2026-11-03): one 26px row at every width, the cells
+ * scrolling sideways inside the strip when the column is too narrow, so the bands keep
+ * the height the old panel took. As on Flight Plan's (owner decision 2026-11-04), the
+ * spend's note is in the cell's hint (a Tooltip on hover and keyboard focus; still in the
+ * cell's text for a screen reader, and on the row on a touch screen) while its key says
+ * which amount the value is, so every cell fits beside Pause all at 1024px.
  */
 export const LiveHeader = memo(function LiveHeader({
   totals,
@@ -118,78 +235,24 @@ export const LiveHeader = memo(function LiveHeader({
   onPauseAll,
   onResumeAll,
 }: LiveHeaderProps) {
-  const spend = liveSpendLabel(spendToday, ceilings);
+  const spend = liveSpend(spendToday, ceilings);
   return (
-    <div
-      data-slot="live-header"
-      className="shadow-hairline-bottom flex min-h-11 shrink-0 flex-wrap items-center gap-x-4 gap-y-1 px-4 py-1.5"
-    >
-      {totals.slots.total > 0 ? (
-        <SlotBar used={totals.slots.used} total={totals.slots.total} />
-      ) : (
-        <span className="shrink-0 text-[12px] text-(--text-muted)">
-          No fan-out live
-        </span>
-      )}
-      <Stat
-        slot="live-running"
-        value={totals.running}
-        label="running"
-        dot="var(--state-working-fg)"
+    <div className={styles.header}>
+      <StatsStrip
+        variant="compact"
+        data-slot="live-header"
+        label="Live"
+        notes="hint"
+        cells={headerCells(totals, spend)}
+        end={fleetControl({
+          active,
+          resumable,
+          capped,
+          busy,
+          onPauseAll,
+          onResumeAll,
+        })}
       />
-      <Stat
-        slot="live-queued"
-        value={totals.queued}
-        label="queued"
-        title="Starts on its own as a fan-out slot frees"
-      />
-      <Stat
-        slot="live-teammate"
-        value={totals.waitingOnTeammate}
-        label="waiting on teammates"
-        dot="var(--status-progress)"
-        title="Blocked behind a teammate's issue, which no fan-out starts"
-      />
-      <Stat
-        slot="live-landing"
-        value={totals.landing}
-        label="landing"
-        dot="var(--state-landing-fg)"
-      />
-      <div className="ml-auto flex shrink-0 items-center gap-3">
-        {spend !== null && (
-          <span
-            data-slot="live-spend"
-            className="font-book text-[12px] text-(--text-muted) tabular-nums"
-          >
-            {spend}
-          </span>
-        )}
-        {active > 0 ? (
-          <PillButton
-            data-slot="live-pause-all"
-            disabled={busy}
-            onClick={onPauseAll}
-          >
-            <Pause className="size-3" />
-            Pause all
-          </PillButton>
-        ) : resumable > 0 ? (
-          <PillButton
-            data-slot="live-resume-all"
-            disabled={busy}
-            onClick={onResumeAll}
-            title={
-              capped > 0
-                ? `${capped} paused on a ceiling stay paused: raise it on the band`
-                : undefined
-            }
-          >
-            <Play className="size-3" />
-            Resume all
-          </PillButton>
-        ) : null}
-      </div>
     </div>
   );
 });

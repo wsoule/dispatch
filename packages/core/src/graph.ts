@@ -113,6 +113,25 @@ export function dispatchableTasks<T extends TaskListItem = TaskDoc>(
   );
 }
 
+/**
+ * When a fan-out may start a task whose blocker has not reached done.
+ *
+ * - `landed` (the default): only once the blocker is done, i.e. merged. A
+ *   blocker sitting in review is still waiting on a human, and a dependent
+ *   started on top of it builds on work nobody has approved yet.
+ * - `review`: as soon as the blocker's run reaches the review (or landing)
+ *   role with a run branch to stack on — the dependent is cut from that
+ *   branch and restacked by the merge queue once the blocker lands.
+ *
+ * Set per project as `orchestrator.startDependents`.
+ */
+export type DependentStart = 'landed' | 'review';
+
+export const DEPENDENT_START_MODES: readonly DependentStart[] = [
+  'landed',
+  'review',
+];
+
 /** What a fan-out knows about one blocker beyond its status. */
 export interface FanoutBlocker {
   /** A teammate's (core's `fanoutHolder` is non-null for it). */
@@ -124,18 +143,21 @@ export interface FanoutBlocker {
 }
 
 /**
- * Whether a blocker lets a fan-out start its dependents. Done always does; the
- * review and landing roles only with a run branch to stack on that is no
- * teammate's. A teammate's In Review (or one moved there by hand) has no such
- * branch, so a dependent cut then would lack that work: it waits for done.
+ * Whether a blocker lets a fan-out start its dependents. Done always does.
+ * Under `start: 'review'` the review and landing roles do too, but only with a
+ * run branch to stack on that is no teammate's. A teammate's In Review (or one
+ * moved there by hand) has no such branch, so a dependent cut then would lack
+ * that work: it waits for done. Under `'landed'` nothing short of done does.
  */
 export function releasesFanoutDependents(
   status: string,
   model: StatusModel,
-  blocker: FanoutBlocker
+  blocker: FanoutBlocker,
+  start: DependentStart = 'landed'
 ): boolean {
   if (isDoneStatus(status, model)) return true;
   return (
+    start === 'review' &&
     !blocker.held &&
     blocker.hasRunBranch &&
     isSatisfiedForDispatchStatus(
@@ -155,14 +177,20 @@ export function fanoutWaitingOn<T extends TaskListItem>(
   task: T,
   lookup: (id: string) => T | null | undefined,
   model: StatusModel,
-  describe: (blocker: T) => FanoutBlocker
+  describe: (blocker: T) => FanoutBlocker,
+  start: DependentStart = 'landed'
 ): string[] {
   return task.meta.blockedBy.filter((id) => {
     const blocker = lookup(id);
     return (
       blocker !== null &&
       blocker !== undefined &&
-      !releasesFanoutDependents(blocker.meta.status, model, describe(blocker))
+      !releasesFanoutDependents(
+        blocker.meta.status,
+        model,
+        describe(blocker),
+        start
+      )
     );
   });
 }

@@ -95,7 +95,7 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
   const a2a = program
     .command('a2a')
     .description(
-      'A2A for this project: the listener, its card, clients and their tasks, outbound peers, pairing and keys, standalone hosts (hosts, serve), and the relay'
+      'A2A for this project: the listener, its card, clients and their tasks, intake links, outbound peers, pairing and keys, standalone hosts (hosts, serve), and the relay'
     );
 
   const withAgentToken = async (): Promise<A2AApiClient> => {
@@ -765,6 +765,65 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
     )
     .action(async () => {
       printRelay(await (await withAgentToken()).relayStatus());
+    });
+
+  const intake = a2a
+    .command('intake')
+    .description(
+      'Intake links: web forms outside people send requests through, as an approved client (needs the daemon app token)'
+    );
+  intake
+    .command('list', { isDefault: true })
+    .description('List intake links')
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (o: { token?: string }) => {
+      const client = await withAppToken(o.token, 'dispatch a2a intake list');
+      const { links } = await client.intakeLinks();
+      ctx.log(
+        links.length === 0
+          ? 'No intake links yet. Add one with: dispatch a2a intake add <client>'
+          : formatTable([
+              ['ID', 'LABEL', 'CLIENT', 'STATUS', 'ADDED BY'],
+              ...links.map((l) => [
+                l.id,
+                l.label,
+                l.client,
+                l.revokedAt === null ? 'active' : `revoked ${l.revokedAt}`,
+                l.createdBy,
+              ]),
+            ])
+      );
+    });
+  intake
+    .command('add <client>')
+    .description(
+      'Mint an intake link for an approved A2A client and print its form URL once; each request becomes a handoff awaiting approval in Needs you'
+    )
+    .option('--label <text>', 'the heading the form shows')
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (name: string, o: { label?: string; token?: string }) => {
+      const client = await withAppToken(o.token, 'dispatch a2a intake add');
+      const added = await client.addIntakeLink(name, o.label);
+      ctx.log(`${added.id} · ${added.label} · ${added.client}`);
+      ctx.log(
+        added.url === null
+          ? `form path: /r/${added.token} (open the listener with dispatch a2a listen; the form is served on it)`
+          : `form URL: ${added.url}`
+      );
+      ctx.log(
+        'This link is shown once. Anyone holding it can send requests; revoke it with dispatch a2a intake revoke.'
+      );
+    });
+  intake
+    .command('revoke <id>')
+    .description(
+      'Stop a link taking requests; status pages of requests already sent keep working'
+    )
+    .option('--token <token>', TOKEN_HELP)
+    .action(async (id: string, o: { token?: string }) => {
+      const client = await withAppToken(o.token, 'dispatch a2a intake revoke');
+      await client.revokeIntakeLink(id);
+      ctx.log(`Revoked intake link ${id}.`);
     });
 
   const hosts = a2a

@@ -1,25 +1,23 @@
 import { ContainerFlightPlanSection } from '../../flightplan/ContainerFlightPlanSection';
 import type { TaskPageModel } from './pageModel';
+import styles from './PlanMode.module.css';
 import { useTaskPageHost } from './TaskPageHost';
 
 /**
  * Plan mode — a container's Flight Plan as the main pane: its children as waves, live.
- * On the full page a node opens in a pane beside the plan; a split pane or peek has no
- * room for one, so there a node opens its own page.
+ * On the Tasks page a node quick-looks in the slide-over; a host that says
+ * `planOpensPages`, or a page embedded in another view (the Overseer's column), opens a
+ * node as its own page instead.
  */
 export function PlanMode({ page }: { page: TaskPageModel }) {
-  // Two views has no room for a third column: a node opens its own page there.
   const opensPages = useTaskPageHost()?.planOpensPages === true;
-  const full = page.layout === 'full' && !opensPages;
+  const peeks = !page.embedded && !opensPages;
   return (
-    <div
-      data-slot="plan-mode"
-      className="shadow-hairline-top flex min-h-0 flex-1 flex-col"
-    >
+    <div data-slot="plan-mode" className={styles.root}>
       <ContainerFlightPlanSection
         containerId={page.item.meta.id}
-        openIn={full ? 'pane' : 'page'}
-        focusOnMount={page.layout === 'full'}
+        openIn={peeks ? 'peek' : 'page'}
+        focusOnMount={!page.embedded}
       />
     </div>
   );

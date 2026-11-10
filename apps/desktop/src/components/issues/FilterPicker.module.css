@@ -1,0 +1,84 @@
+/* The Issues toolbar's Filter: a quiet funnel trigger (PickerPopover) with an
+   accent dot while any clause applies, and the AI filter popover on the same
+   trigger. */
+
+.root {
+  display: inline-flex;
+  align-items: center;
+}
+
+.picker {
+  display: inline-flex;
+}
+
+/* The funnel face; the dot sits on its top right corner. */
+.face {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+}
+
+.face[data-active='true'] {
+  color: var(--text);
+}
+
+.dot {
+  position: absolute;
+  top: -3px;
+  right: -4px;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--accent);
+}
+
+/* The AI filter popover: a head with Back and the title, the sentence input
+   with its ⏎ cap (a spinner while the call runs), and an error line. */
+.ai {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 240px;
+}
+
+.aiHead {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.aiTitle {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+}
+
+.aiRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.aiInput {
+  flex: 1;
+  min-width: 0;
+}
+
+.aiError {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--tone-ink);
+}
+
+@media (forced-colors: active) {
+  .dot {
+    background: CanvasText;
+  }
+}

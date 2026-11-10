@@ -3,9 +3,12 @@ import { describe, expect, it } from 'bun:test';
 import {
   consultFloor,
   consultPolicy,
+  DEFAULT_DIFFICULTY_POLICY,
   DEFAULT_POLICY,
   describeFloorHold,
   describePolicyAuthorization,
+  difficultyEligibility,
+  difficultyWithin,
   effectiveRung,
   FLOOR_CHECKS,
   GATE_RUNGS,
@@ -289,6 +292,85 @@ describe('the irreversibility floor', () => {
     const check: FloorCheck = 'publish';
     expect(describeFloorHold(check)).toBe(
       'held by the irreversibility floor (Publishing artifacts) — always blocks for a human at every policy rung'
+    );
+  });
+});
+
+describe('difficultyEligibility', () => {
+  const on = {
+    ...DEFAULT_DIFFICULTY_POLICY,
+    autoLand: true,
+    autoDispatch: true,
+  };
+  const easy = { level: 'trivial' as const, confidence: 0.9 };
+
+  it('orders levels easiest first, a threshold admitting its own level', () => {
+    expect(difficultyWithin('trivial', 'small')).toBe(true);
+    expect(difficultyWithin('small', 'small')).toBe(true);
+    expect(difficultyWithin('small', 'trivial')).toBe(false);
+    expect(difficultyWithin('substantial', 'small')).toBe(false);
+  });
+
+  it('admits a confident, routine, at-threshold judgment with its switch on', () => {
+    expect(
+      difficultyEligibility(on, 'land', { risk: 'routine' }, easy)
+    ).toEqual({
+      eligible: true,
+      judgment: easy,
+      threshold: 'small',
+    });
+  });
+
+  it('reads each stage off its own switch', () => {
+    const landOnly = { ...on, autoDispatch: false };
+    expect(difficultyEligibility(landOnly, 'land', {}, easy).eligible).toBe(
+      true
+    );
+    expect(difficultyEligibility(landOnly, 'dispatch', {}, easy)).toEqual({
+      eligible: false,
+      reason: 'policy.difficulty.autoDispatch is off',
+    });
+  });
+
+  it('refuses the opt-out label, non-routine risk, no judgment, low confidence and hard work', () => {
+    const reasons = [
+      difficultyEligibility(on, 'land', { labels: ['no-auto-land'] }, easy),
+      difficultyEligibility(on, 'land', { risk: 'elevated' }, easy),
+      difficultyEligibility(on, 'land', {}, null),
+      difficultyEligibility(
+        on,
+        'land',
+        {},
+        { level: 'trivial', confidence: 0.69 }
+      ),
+      difficultyEligibility(
+        on,
+        'land',
+        {},
+        { level: 'substantial', confidence: 0.99 }
+      ),
+    ].map((e) => (e.eligible ? 'eligible' : e.reason));
+    expect(reasons).toEqual([
+      'the task is labelled no-auto-land',
+      'the task is elevated risk',
+      'no difficulty judgment is available',
+      'judged trivial (0.69), below the 0.7 confidence floor',
+      'judged substantial (0.99), above the small threshold',
+    ]);
+  });
+
+  it('phrases a lifted ruling with its judgment and threshold', () => {
+    expect(
+      describePolicyAuthorization({
+        mode: 'auto',
+        gate: 'merge',
+        rung: 1,
+        authorizedBy: 'difficulty',
+        judgment: easy,
+        threshold: 'small',
+      })
+    ).toBe(
+      'auto-decided by the difficulty lift (merge gate): judged trivial (0.90), within the small threshold'
     );
   });
 });

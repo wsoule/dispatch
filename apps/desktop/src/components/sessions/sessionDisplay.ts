@@ -1,20 +1,28 @@
+import type { UiTone } from '@dispatch/ui';
+
 import type { ProjectSummary, Session } from '../../lib/types';
 
-/** Session status renders as a small colored dot rather than a filled pill — the review
- * green while the session is still active, a muted dot once it's ended. Shared by every
- * session row/detail surface in the Sessions hub (the session list's `SessionRow` and
- * `SessionDetailModal`) so the status → color mapping lives in exactly one place. */
-export function statusDotClass(status: Session['status']): string {
-  return status === 'active' ? 'bg-state-review' : 'bg-muted-foreground/50';
+/** The `UiTone` a session status renders in, for the `data-tone` dot beside its status word.
+ * A live (active) session is blue, `info`, per the status hue table in AGENTS.md (blue means
+ * in progress and live); an ended session is grey, `muted`. The word always sits beside the
+ * dot, so the colour is never the only signal. Shared by `SessionRow` and
+ * `SessionDetailModal` so the status → tone mapping lives in one place. */
+export function sessionStatusTone(status: Session['status']): UiTone {
+  switch (status) {
+    case 'active':
+      return 'info';
+    case 'ended':
+      return 'muted';
+  }
 }
 
-/** The spend windows the Sessions header offers as view tabs, in days. 30 is the default —
- * `ReportView`'s own former default, kept when the range picker was cut. */
+/** The spend windows the Usage toolbar's segmented window control offers, in days. 30 is the
+ * default — `ReportView`'s own former default, kept when the range picker was cut. */
 export const SPEND_WINDOWS: readonly number[] = [7, 30, 90];
 
 export const DEFAULT_SPEND_WINDOW = 30;
 
-/** A window's tab label: `7 days`, `30 days`, `90 days`. */
+/** A window option's label: `7 days`, `30 days`, `90 days`. */
 export function spendWindowLabel(days: number): string {
   return `${String(days)} days`;
 }

@@ -31,8 +31,10 @@ interface SplitNode {
 
 export type LayoutNode = PaneNode | SplitNode;
 
-const MIN_RATIO = 0.1;
-const MAX_RATIO = 0.9;
+/** The smallest share either side of a split can be dragged or stepped to. */
+export const MIN_RATIO = 0.1;
+/** The largest share the first side can take; the second keeps the rest. */
+export const MAX_RATIO = 0.9;
 
 export function makePane(
   id: string,

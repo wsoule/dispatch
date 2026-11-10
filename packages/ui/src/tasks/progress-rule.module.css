@@ -1,0 +1,68 @@
+.wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+
+/* Gr8r's progress bar: 4px, rounded, a --surface-3 track. The fill is the
+   accent (Gr8r's progress colour) unless a tone says the progress itself
+   is a status (docs/architecture.md §8.2): danger (overdue), warning
+   (behind pace), success (complete), muted (inactive). */
+.track {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 40px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: var(--r-xs);
+  background: var(--surface-3);
+}
+
+.fill {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--accent);
+  transform-origin: left center;
+  transition: transform 0.5s var(--ease);
+}
+
+/* Any tone but default (data-tone gives --tone). */
+.toned .fill {
+  background: var(--tone);
+}
+
+/* The count stays quiet whatever the tone (Gr8r tones only the fill):
+   the fill and the row's own date or chip already say the status, so one
+   fact is not coloured three times. */
+.label {
+  flex: none;
+  min-width: 4ch;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--text-3);
+}
+
+/* Forced colours drop backgrounds: the fill keeps the system's text
+   colour and the track an edge, so the progress still shows. */
+@media (forced-colors: active) {
+  .track {
+    border: 1px solid CanvasText;
+  }
+
+  .fill,
+  .toned .fill {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fill {
+    transition: none;
+  }
+}

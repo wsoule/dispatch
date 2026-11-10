@@ -172,6 +172,16 @@ export interface SubagentSummary {
   stopped: number;
 }
 
+/** GET /api/setup/accounts: each executor's accounts in failover order,
+ *  `default` (its own login) first, and which are out of usage until when. */
+export interface AccountsReport {
+  executors: {
+    executor: string;
+    failover: boolean;
+    accounts: { label: string; addedAt?: string; limitedUntil?: string }[];
+  }[];
+}
+
 export interface RunMeta {
   id: string;
   taskId: string;
@@ -191,6 +201,9 @@ export interface RunMeta {
   model?: string;
   /** The reasoning effort this run started at; absent is the model default. */
   effort?: EffortLevel;
+  /** The subscription account this run ran on ('default' is the executor's
+   *  own login); absent when no extra accounts are stored. */
+  account?: string;
   /** ActorRef of the human the run is for (who dispatched it, or started its
    *  fan-out) — see the server's RunMeta. */
   dispatchedBy?: string;
@@ -261,6 +274,10 @@ export interface RunMeta {
   // Present on merged runs that reached origin, when the repo has `v*` tags:
   // the newest tag and whether it contains this run's merge commit.
   release?: { tag: string; included: boolean };
+  // Present on ended runs another run resumed from: that successor's id (see
+  // decorateRunsWithPushed server-side). The run's work moved on, so surfaces
+  // show it as superseded rather than by its own failed/finished state.
+  supersededBy?: string;
   // The git survey of this run's worktree, set on `failed`/`interrupted-dirty`.
   survey?: RunSurvey;
   // Absent on runs recorded before review runs existed; treat that as
@@ -1249,6 +1266,8 @@ export type ServerEvent =
     }
   | { type: 'review.changed'; runId: string }
   | { type: 'config.changed' }
+  // A GET /api/health field settled after boot; refetch health.
+  | { type: 'health.changed' }
   // A task draft changed state or was dismissed — no id, refetch the list.
   | { type: 'draft.changed' }
   // A finding's verdict/ruling changed, or a review run raised a new one.
@@ -1309,6 +1328,8 @@ export type ServerEvent =
   // is derived on every read, so there is no increment to carry. Mirrors
   // packages/server/src/events.ts exactly.
   | { type: 'decisions.changed' }
+  // A blocking item waited long enough to ping a human again; once per item.
+  | { type: 'decision.reminder'; itemId: string; messageId?: string }
   // The PR poll's cached repo-PR set changed (a delta in number, head sha,
   // state, mergeable, review decision, checks, draft-ness, or updatedAt) —
   // refetch GET /api/landing. No payload: the cache itself is the source of
@@ -1527,7 +1548,7 @@ export interface TaskDraft {
 }
 
 // Maps a reviewed `TaskDraft` onto core's `CreateInput` so it saves through the
-// exact same createTask path CreateTaskModal uses, criteria in their own section.
+// exact same createTask path the task composer's Quick add uses, criteria in their own section.
 export function taskDraftToCreateInput(draft: TaskDraft): CreateInput {
   return {
     title: draft.title,
@@ -1688,6 +1709,9 @@ export interface OverseerMessage {
   actionId?: string;
   /** `approval` entries: the OverseerApproval this entry reports on. */
   requestId?: string;
+  /** Applied `action` entries: the tasks the action created or dispatched, in
+   *  order. Absent on older entries and on actions that touch no task. */
+  taskIds?: string[];
   /**
    * `action` and `approval` entries only. `failed` means the human approved
    * an action but the effect itself threw — the action stays pending so it
@@ -1702,6 +1726,27 @@ export interface OverseerMessage {
   notice?: 'stopped' | 'rollover' | 'restarted';
   /** `user` entries: the files the human attached to the line. */
   attachments?: OverseerAttachment[];
+  /** `action` entries at `pending`: the action's validated input, so a decided
+   *  action's card can still show what was proposed. */
+  input?: unknown;
+  /** `action` entries at `applied`: the task ids the effect created or changed. */
+  entities?: string[];
+  /** `action` entries for a call that ran with no card: a receipt. */
+  auto?: boolean;
+  /** `action` entries: the tool's risk tier. */
+  tier?: OverseerActionTier;
+  /** `action` entries: what an update changed, before → after. */
+  changes?: OverseerFieldChange[];
+}
+
+/** How risky an overseer action is; `high` always asks. */
+export type OverseerActionTier = 'low' | 'medium' | 'high';
+
+/** One field an overseer action changes, before → after. */
+export interface OverseerFieldChange {
+  field: string;
+  before: string;
+  after: string;
 }
 
 // Mirrors OverseerAttachment in packages/server/src/orchestrator/overseer.ts —
@@ -1713,6 +1758,32 @@ export interface OverseerAttachment {
   path: string;
   size: number;
   mimeType: string;
+}
+
+// Mirrors RunAttachment in packages/server/src/api/attachments.ts — a file
+// dropped, pasted or picked in a run's follow-up composer, uploaded with
+// uploadRunAttachments. Run messages are plain text on the bus, so the
+// follow-up names each `path` in its body (withRunAttachmentNote).
+export interface RunAttachment {
+  name: string;
+  /** Absolute path of the blob on the daemon's machine. */
+  path: string;
+  size: number;
+  mimeType: string;
+}
+
+/** A run follow-up's body with its attached files listed after the text, in
+ *  the overseer's wording, so the agent knows where to read them. */
+export function withRunAttachmentNote(
+  text: string,
+  attachments: readonly RunAttachment[]
+): string {
+  if (attachments.length === 0) return text;
+  const lines = [
+    'Attached files (saved on this machine; read them when they matter):',
+    ...attachments.map((a) => `- ${a.name} (${a.mimeType}): ${a.path}`),
+  ];
+  return text === '' ? lines.join('\n') : [text, '', ...lines].join('\n');
 }
 
 /** One slash command an Overseer session accepts: `/name`, with what it does. */
@@ -1761,14 +1832,26 @@ export interface OverseerAction {
   /** One sentence, safe to render verbatim in the chat UI. */
   summary: string;
   createdAt: string;
-  status: 'pending' | 'applied' | 'denied';
+  status: 'pending' | 'applied' | 'denied' | 'failed';
+  tier: OverseerActionTier;
+  /** What the action would change, when its tool can say (update_task). */
+  changes?: OverseerFieldChange[];
+  /** Once applied: the tasks it created, dispatched or touched. */
+  taskIds?: string[];
+  /** Once applied: the task (and milestone) ids the effect created or changed, in card order. */
+  entities?: string[];
+  /** The turn that queued it: actions sharing one are answered on one card. */
+  batch?: string;
+  /** Its card may also allow the tool for the rest of the conversation. */
+  grantable?: boolean;
 }
 
 // Mirrors OverseerRecord in packages/server/src/orchestrator/overseer.ts — the
 // body of `POST /api/overseer` and `GET /api/overseer/:id`.
 /** One live "Allow for this conversation" grant. */
 export interface OverseerGrant {
-  /** `Bash program "<program>"` or `Bash command "<text>"` for a command, else the tool's name. */
+  /** `Bash program "<program>"` or `Bash command "<text>"` for a command,
+   *  `overseer action <tool>` for an overseer action, else the tool's name. */
   key: string;
   grantedAt: string;
   expiresAt: string;
@@ -2039,6 +2122,112 @@ type MilestoneLandResult =
 // replaced the notes store. `createdByRunId` is how "an agent flagged this mid-run" survives.
 export type InboxKind = 'bug' | 'idea' | 'task' | 'note';
 
+// The allocation run log (GET/POST /api/planning/allocation-runs): what a
+// preview or an apply of the planning's allocation would do or did, item by
+// item. Mirrors packages/server/src/planning/allocationRuns.ts.
+export type AllocationRunMode = 'dry_run' | 'applied';
+
+export type AllocationItemOutcome = 'assigned' | 'would_assign' | 'failed';
+
+export interface AllocationRunItem {
+  issueId: string;
+  identifier: string;
+  title: string;
+  projectId: string;
+  projectName: string;
+  milestoneId: string;
+  milestoneName: string;
+  assigneeId: string;
+  assigneeName: string;
+  fromStatus: string;
+  /** null: the issue kept its status. */
+  toStatus: string | null;
+  outcome: AllocationItemOutcome;
+  note: string | null;
+}
+
+export interface AllocationRunProject {
+  projectId: string;
+  projectName: string;
+  outcome: string;
+  reason: string | null;
+  skipped: number;
+}
+
+export interface AllocationRunInput {
+  mode: AllocationRunMode;
+  items: AllocationRunItem[];
+  projects: AllocationRunProject[];
+}
+
+export interface AllocationRunSummary {
+  id: string;
+  /** Someone in the app, or the daemon's daily job. */
+  trigger: 'manual' | 'daily';
+  at: string;
+  by: string;
+  mode: AllocationRunMode;
+  counts: {
+    assigned: number;
+    wouldAssign: number;
+    failed: number;
+    blocked: number;
+    skipped: number;
+  };
+}
+
+export interface AllocationRun extends AllocationRunSummary {
+  items: AllocationRunItem[];
+  projects: AllocationRunProject[];
+}
+
+// GET /api/planning/digests: the daily digests of milestones at risk the
+// daemon sent (or logged), newest first. The digest is @dispatch/planning's
+// Digest, carried here with the fields a surface reads.
+export interface PlanningDigestItem {
+  notice: {
+    kind: 'overdue' | 'at_risk' | 'invalid_due_soon' | 'allocation_blocked';
+    subjectId: string;
+    projectId: string;
+    milestoneId: string | null;
+  };
+  projectName: string;
+  milestoneName: string | null;
+  openCount: number;
+  unassignedCount: number;
+  /** Why, in plain lines ("2 open issues unassigned"). */
+  lines: string[];
+}
+
+export interface PlanningDigest {
+  recipientId: string;
+  recipientName: string;
+  day: string;
+  items: PlanningDigestItem[];
+}
+
+export interface PlanningDigestRecord {
+  id: number;
+  at: string;
+  /** Posted to the notifications webhook, kept in the log only, or a failed post. */
+  delivery: 'webhook' | 'logged' | 'failed';
+  error: string | null;
+  digest: PlanningDigest;
+}
+
+// GET /api/planning/audit: who changed which planning setting, when, and
+// from what to what, newest first. Mirrors packages/server/src/planning/audit.ts.
+export interface PlanningAuditEntry {
+  id: number;
+  at: string;
+  by: string;
+  /** What changed, in words ("Warn ahead", "Weight of Beta"). */
+  what: string;
+  /** The value before and after, in words; null for none. */
+  before: string | null;
+  after: string | null;
+}
+
 export interface InboxItem {
   id: string;
   kind: InboxKind;
@@ -2234,6 +2423,8 @@ export interface MergeQueueEntry {
   steps?: VerifyStepResult[];
   /** Failure detail — set only once an entry lands in `failed`. */
   reason?: string;
+  /** The files a failed rebase stopped on — set only when the rebase conflicted. */
+  conflicts?: string[];
   /**
    * When this entry last changed state — distinct from `enqueuedAt`, which never
    * moves. Render elapsed time from this on in-flight entries ("Verifying · 4m"):
@@ -2360,6 +2551,36 @@ export interface IssuedTeamToken {
   tier: AuthTier;
   token: string;
   expiresAt: string | null;
+}
+
+/** One of the operator's paired devices — mirrors PairedDevice in
+ *  packages/server/src/devices.ts. Never carries the token. */
+export interface PairedDevice {
+  id: string;
+  name: string;
+  tier: AuthTier;
+  pairedAt: string;
+  lastUsedAt: string | null;
+}
+
+/** A one-time pairing code, from POST /api/pair/offer. `origins` are where
+ *  this daemon is reachable beyond loopback; empty when it is loopback-only
+ *  (reach it over an SSH forward). */
+export interface PairingOffer {
+  code: string;
+  tier: AuthTier;
+  expiresAt: string;
+  shared: boolean;
+  origins: string[];
+}
+
+/** A device's new credential, from POST /api/pair: the only response that
+ *  carries one. */
+export interface PairedCredential {
+  token: string;
+  device: PairedDevice;
+  handle: string;
+  tier: AuthTier;
 }
 
 /** Why board sync isn't running — mirrors BoardSyncOffReason in
@@ -2780,6 +3001,63 @@ export interface LinearIssueLink {
   url: string;
 }
 
+/** Why the last sign-in attempt, or the sign-in itself, ended. */
+export type LinearSignInProblemCode =
+  | 'denied'
+  | 'wrong-workspace'
+  | 'expired'
+  | 'ended'
+  | 'failed';
+
+// Mirrors PublicLinearAccount in packages/core/src/linearAccounts.ts: a
+// person's Linear sign-in as the API shows it, never with a token.
+export interface LinearSignedInAccount {
+  userId: string;
+  name: string;
+  displayName: string;
+  email: string;
+  guest: boolean;
+  admin: boolean;
+  /** Linear granted `write`; without it changes still use the connection. */
+  canWrite: boolean;
+  workspace: { id: string; name: string; urlKey: string };
+  signedInAt: string;
+}
+
+// Mirrors LinearAccountView in packages/server/src/linear/signIn.ts: the
+// "Your Linear account" group's state for this caller. Never a token; only
+// the daemon's owner on their app token sees who is signed in.
+export interface LinearAccountView {
+  /** True only for the owner's own credential, configured and connected. */
+  canSignIn: boolean;
+  unavailable:
+    | 'teammate'
+    | 'attached'
+    | 'not-configured'
+    | 'not-connected'
+    | null;
+  /** The exact callback URL to register in Linear; not a secret. */
+  callbackUrl: string;
+  clientIdSource: 'env' | 'config' | 'builtin' | null;
+  /** A sign-in is waiting for Linear's redirect (owner only). */
+  pending: boolean;
+  /** The signed-in person for this project's workspace (owner only),
+   *  shown whatever the setup says so a sign-in can always be ended. */
+  account: LinearSignedInAccount | null;
+  /** Every sign-in stored on this computer, when this project's workspace
+   *  cannot be told now (no connection, or Linear could not say); empty
+   *  otherwise. Owner only; each can be signed out of by its workspace. */
+  stored: LinearSignedInAccount[];
+  /** The project connection's Linear user and workspace (owner only). */
+  connection: {
+    /** The Linear user the project's API key acts as. */
+    userId: string;
+    userName: string;
+    workspace: { id: string; name: string; urlKey: string };
+  } | null;
+  problem: { code: LinearSignInProblemCode; message: string } | null;
+}
+
 // Mirrors LinearStatus in packages/server/src/linear/sync.ts. Carries no API key
 // — `keySource` says where the daemon found one, never what it is.
 export interface LinearStatus {
@@ -3078,6 +3356,13 @@ interface ApiTarget {
   baseUrl: string;
   /** The daemon token; omitted only when none is available, which 401s. */
   token?: string;
+  /** Stands in for global fetch, such as the phone's relay tunnel. */
+  fetch?: typeof fetch;
+}
+
+interface ApiClientOptions {
+  /** How requests reach the daemon; global fetch when omitted. */
+  fetch?: typeof fetch;
 }
 
 // The daemon injects its agent token into the HTML it serves, because a
@@ -3135,7 +3420,10 @@ async function send(
   if (target.token !== undefined) {
     headers.set('authorization', `Bearer ${target.token}`);
   }
-  const res = await fetch(`${target.baseUrl}${path}`, { ...init, headers });
+  const res = await (target.fetch ?? fetch)(`${target.baseUrl}${path}`, {
+    ...init,
+    headers,
+  });
   if (!res.ok && !allowed.includes(res.status)) {
     throw apiError(res.status, await res.json().catch(() => null));
   }
@@ -3161,9 +3449,14 @@ function isDocConflict(body: unknown): body is DocConflict {
 }
 
 // request() for a binary body: same auth and error handling, the response
-// as a Blob (an attachment download).
-async function requestBlob(target: ApiTarget, path: string): Promise<Blob> {
-  return (await send(target, path)).blob();
+// as a Blob (an attachment download, a file preview). `init` carries only
+// what a read needs, such as an AbortSignal.
+async function requestBlob(
+  target: ApiTarget,
+  path: string,
+  init?: RequestInit
+): Promise<Blob> {
+  return (await send(target, path, init)).blob();
 }
 
 // An entry's route; a `#handle` travels as %23 so it is not read as a fragment.
@@ -3260,6 +3553,79 @@ export function canPostReviewToPr(prUrl: string | undefined): boolean {
   return /github\.com\/[^/]+\/[^/]+\/pull\/\d+/.test(prUrl);
 }
 
+/**
+ * Trades a pairing code for this device's own token on the daemon at
+ * `baseUrl`. Needs no credential — the code is the credential — so it sits
+ * outside createApiClient. Rejects with an ApiError whose `code` is
+ * `pair_code_invalid` or `pair_code_expired` for a bad code.
+ */
+export async function redeemPairingCode(
+  baseUrl: string,
+  code: string,
+  name: string
+): Promise<PairedCredential> {
+  return (
+    await send({ baseUrl }, '/api/pair', {
+      method: 'POST',
+      ...jsonBody({ code, name }),
+    })
+  ).json() as Promise<PairedCredential>;
+}
+
+/** The `dispatch://pair?url=<daemon>&code=<code>` link `dispatch pair`
+ *  prints, as its parts; null for anything else. */
+export function parsePairingLink(
+  link: string
+): { baseUrl: string; code: string } | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(link.trim());
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'dispatch:' || parsed.hostname !== 'pair')
+    return null;
+  const baseUrl = parsed.searchParams.get('url');
+  const code = parsed.searchParams.get('code');
+  if (baseUrl === null || code === null || code === '') return null;
+  return { baseUrl, code };
+}
+
+/** Formats the link `parsePairingLink` reads. */
+export function formatPairingLink(baseUrl: string, code: string): string {
+  return `dispatch://pair?url=${encodeURIComponent(baseUrl)}&code=${encodeURIComponent(code)}`;
+}
+
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
+
+/**
+ * Why a remote daemon URL is not safe to send a token to, or null when it
+ * is. A token (and every task, diff and transcript after it) must not cross
+ * a network in the clear, so anything off this machine has to be https.
+ * Plain http is allowed to loopback only — that is where an SSH forward
+ * (`dispatch remote forward`) lands, and SSH is the encryption.
+ */
+export function remoteUrlProblem(raw: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return 'not a URL: expected something like https://devbox.example.com:4771';
+  }
+  if (url.protocol === 'https:') return null;
+  if (url.protocol === 'http:') {
+    return LOOPBACK_HOSTS.has(url.hostname)
+      ? null
+      : `${url.host} is not this machine, so the connection must be https (run the daemon with --tls-cert/--tls-key, or reach it over an SSH forward on 127.0.0.1)`;
+  }
+  return `unsupported scheme ${url.protocol}: use https://`;
+}
+
+/** The URL with only its origin kept — what a daemon base URL should be. */
+export function normalizeDaemonUrl(raw: string): string {
+  return new URL(raw.trim()).origin;
+}
+
 // Pure helper (no DOM involved): swaps an http(s) origin for its ws(s)
 // equivalent and appends `/ws`.
 export function httpToWs(origin: string): string {
@@ -3290,37 +3656,79 @@ export interface SocketLike {
   close(): void;
 }
 
+/** Where an event stream stands. `connecting` is the first attempt; `open`
+ *  means the daemon has answered on the current socket; `reconnecting` means
+ *  the socket dropped (or never answered) and another attempt is scheduled. */
+export type EventStreamState = 'connecting' | 'open' | 'reconnecting';
+
+export interface EventStreamStatus {
+  state: EventStreamState;
+  /** Attempts that have failed in a row since the stream was last open. */
+  failures: number;
+  /** When the next attempt runs (epoch ms), while `reconnecting`. */
+  retryAt: number | null;
+}
+
 export interface ConnectEventsOptions {
   // Defaults to `(url) => new WebSocket(url)`. Overridden in tests to inject
   // a fake socket instead of opening a real network connection.
   createSocket?: (url: string) => SocketLike;
-  // Defaults to 1000ms. Overridden in tests so reconnect assertions don't
-  // have to wait a full second.
+  // The first retry's delay; each further failure doubles it up to
+  // `maxReconnectDelayMs`. Defaults to 500ms. Overridden in tests so
+  // reconnect assertions don't have to wait.
   reconnectDelayMs?: number;
+  // The longest wait between attempts. Defaults to 15s: long enough that a
+  // laptop whose remote daemon is gone is not hammering it, short enough
+  // that the app notices it came back without a manual retry.
+  maxReconnectDelayMs?: number;
+  // Jitter source, [0, 1). Defaults to Math.random; injectable for tests.
+  random?: () => number;
   // Called for every parsed ServerEvent, where `onChange` hears only
   // `task.changed`; a malformed frame never reaches it (see JSON.parse below).
   onEvent?: (event: ServerEvent) => void;
+  // Hears every change in the stream's state, for a connection indicator.
+  onStatus?: (status: EventStreamStatus) => void;
   // Daemon token for the upgrade, since the guard covers `/ws` too. Defaults
   // to whatever the daemon injected into the page it served.
   token?: string;
 }
 
+/** How long to wait before retry number `failures` (1-based): doubling from
+ *  `base` up to `max`, then spread over the upper half of that window so a
+ *  fleet of clients that lost the same daemon does not return in lockstep. */
+export function reconnectDelay(
+  failures: number,
+  base: number,
+  max: number,
+  random: () => number = Math.random
+): number {
+  const ceiling = Math.min(max, base * 2 ** Math.max(failures - 1, 0));
+  return Math.round(ceiling / 2 + (random() * ceiling) / 2);
+}
+
 // Opens a WS connection to dispatchd and calls `onChange` for every
-// `task.changed` event. Reconnects on close/error with a fixed backoff — the
-// protocol is "go refetch," not a diff, so a connection dropping briefly just
-// means the UI is briefly less live, never wrong. Returns a disposer that
-// stops reconnecting and closes the current socket.
+// `task.changed` event. Reconnects on close/error with exponential backoff
+// and jitter — the protocol is "go refetch," not a diff, so a connection
+// dropping briefly just means the UI is briefly less live, never wrong. The
+// backoff resets once a socket proves open by delivering a frame (the daemon
+// always sends `hello` first), and a browser coming back `online` retries at
+// once. Returns a disposer that stops reconnecting and closes the socket.
 export function connectEvents(
   baseUrl: string,
   onChange: () => void,
   options: ConnectEventsOptions = {}
 ): () => void {
   const createSocket = options.createSocket ?? ((url) => new WebSocket(url));
-  const reconnectDelayMs = options.reconnectDelayMs ?? 1000;
+  const baseDelay = options.reconnectDelayMs ?? 500;
+  const maxDelay = options.maxReconnectDelayMs ?? 15_000;
+  const random = options.random ?? Math.random;
   const token = options.token ?? injectedDaemonToken();
 
   let closed = false;
   let socket: SocketLike | null = null;
+  let failures = 0;
+  let isOpen = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
   // A failed browser WebSocket fires 'error' then 'close' on the same
   // socket, and both listeners below call scheduleReconnect — without this
   // guard that queues two reconnect timers per failure, each of which can
@@ -3329,17 +3737,32 @@ export function connectEvents(
   // the next one.
   let scheduled = false;
 
+  function report(state: EventStreamState, retryAt: number | null = null) {
+    options.onStatus?.({ state, failures, retryAt });
+  }
+
   function scheduleReconnect() {
     if (closed || scheduled) return;
     scheduled = true;
-    setTimeout(connect, reconnectDelayMs);
+    isOpen = false;
+    failures += 1;
+    const delay = reconnectDelay(failures, baseDelay, maxDelay, random);
+    report('reconnecting', Date.now() + delay);
+    timer = setTimeout(connect, delay);
   }
 
   function connect() {
     if (closed) return;
     scheduled = false;
-    socket = createSocket(wsUrl(baseUrl, token));
-    socket.addEventListener('message', (event) => {
+    timer = null;
+    const current: SocketLike = createSocket(wsUrl(baseUrl, token));
+    socket = current;
+    current.addEventListener('message', (event) => {
+      if (socket === current && !isOpen) {
+        isOpen = true;
+        failures = 0;
+        report('open');
+      }
       // A malformed frame (bad JSON, or JSON that isn't a ServerEvent) should
       // never take down the UI's reconnect loop — ignore it and wait for the
       // next message rather than letting JSON.parse throw out of this
@@ -3353,13 +3776,31 @@ export function connectEvents(
       if (data.type === 'task.changed') onChange();
       options.onEvent?.(data);
     });
-    socket.addEventListener('close', scheduleReconnect);
-    socket.addEventListener('error', scheduleReconnect);
+    // Only the live socket's failure counts: a replaced one (after an
+    // `online` retry) finishing its teardown late must not queue another.
+    const failed = () => {
+      if (socket === current) scheduleReconnect();
+    };
+    current.addEventListener('close', failed);
+    current.addEventListener('error', failed);
   }
 
+  // The network came back: waiting out a 15s backoff would only make the
+  // app look broken for longer than it is.
+  const onOnline = () => {
+    if (closed || timer === null) return;
+    clearTimeout(timer);
+    connect();
+  };
+  const win = typeof window === 'undefined' ? null : window;
+  win?.addEventListener('online', onOnline);
+
+  report('connecting');
   connect();
   return () => {
     closed = true;
+    if (timer !== null) clearTimeout(timer);
+    win?.removeEventListener('online', onOnline);
     socket?.close();
   };
 }
@@ -3604,6 +4045,18 @@ export interface ApiClient {
   fetchExecutors(): Promise<ExecutorsResponse>;
   fetchSetup(): Promise<SetupReport>;
   saveAgentKey(provider: string, apiKey: string | null): Promise<SetupReport>;
+  /** The subscription accounts usage-limit failover moves runs between. */
+  fetchAccounts(): Promise<AccountsReport>;
+  saveAccount(
+    executor: string,
+    label: string,
+    token: string
+  ): Promise<AccountsReport>;
+  removeAccount(executor: string, label: string): Promise<AccountsReport>;
+  setAccountFailover(
+    executor: string,
+    enabled: boolean
+  ): Promise<AccountsReport>;
   refreshSetup(): Promise<{ added: string[] }>;
   // Every in-memory conversation agent (planner chats, enrich agents, task
   // drafts, overseer chats), newest activity first — the non-run half of the
@@ -3647,6 +4100,14 @@ export interface ApiClient {
   revokeTeamToken(handle: string): Promise<void>;
   /** Decide-tier: where teammates reach this daemon. */
   fetchTeamAddress(): Promise<TeamAddress>;
+  /** The operator only: a one-time code another of their devices trades
+   *  for its own token. `tier` defaults to operator and is capped at the
+   *  caller's own. */
+  offerPairing(input?: { tier?: AuthTier }): Promise<PairingOffer>;
+  /** The operator only: every paired device, without tokens. */
+  fetchDevices(): Promise<PairedDevice[]>;
+  /** The operator only: unpairs a device; its token stops at once. */
+  revokeDevice(id: string): Promise<void>;
   /** Board sync between replicas' databases (boardSync/ on the server);
    *  `{ enabled: false }` when it is off. Not `fetchSyncStatus`, which is the
    *  file backend's board syncer. */
@@ -3655,6 +4116,11 @@ export interface ApiClient {
   syncBoardNow(): Promise<BoardSyncStatus>;
   /** The plan this project runs on, and how many seats are in use. */
   fetchLicense(): Promise<LicenseStatus>;
+  /** Whether app.dispatch.foo may reach this machine's projects (409 when
+   *  no Dispatch hub runs here). */
+  getWebAccess(): Promise<{ enabled: boolean }>;
+  /** Turns web access on or off for this whole machine (operator only). */
+  setWebAccess(enabled: boolean): Promise<{ enabled: boolean }>;
   /** Installs a license key. Rejects with the reason when it does not
    *  verify; the key already installed stays. */
   installLicense(key: string): Promise<LicenseStatus>;
@@ -3804,6 +4270,17 @@ export interface ApiClient {
   // The brain-dump inbox. `addInbox` splits its text server-side into one item per line, so
   // the splitting rule has exactly one implementation. `convertInbox` reports per-item results
   // rather than throwing on a partial failure.
+  /** The allocation run log, newest first, without items. */
+  fetchAllocationRuns(): Promise<AllocationRunSummary[]>;
+  /** Applied runs recorded since `since` (ISO), whole: My week's "New to you". */
+  fetchAppliedAllocationRuns(since: string): Promise<AllocationRun[]>;
+  fetchAllocationRun(id: string): Promise<AllocationRun>;
+  /** Records a dry run or an applied run the client carried out. */
+  recordAllocationRun(input: AllocationRunInput): Promise<AllocationRun>;
+  /** The daily digests the daemon sent or logged, newest first. */
+  fetchPlanningDigests(): Promise<PlanningDigestRecord[]>;
+  /** Who changed which planning setting, newest first. */
+  fetchPlanningAudit(): Promise<PlanningAuditEntry[]>;
   fetchInbox(): Promise<InboxItem[]>;
   addInbox(input: {
     text: string;
@@ -3902,6 +4379,20 @@ export interface ApiClient {
     viewer: LinearViewer;
   }>;
   disconnectLinear(): Promise<LinearStatus>;
+  // "Sign in with Linear", for the daemon's owner on their own app token: the
+  // account view, a start that answers Linear's consent URL to open in the
+  // system browser, cancelling a pending start, and signing out (which
+  // deletes the token, then revokes it at Linear).
+  fetchLinearAccount(): Promise<LinearAccountView>;
+  startLinearSignIn(opts?: {
+    anotherWorkspace?: boolean;
+  }): Promise<{ authorizeUrl: string }>;
+  cancelLinearSignIn(): Promise<void>;
+  // `workspaceId` names the sign-in to end (the app passes the workspace of
+  // the account it shows), so signing out needs no Linear lookup first.
+  signOutOfLinear(opts?: {
+    workspaceId?: string;
+  }): Promise<{ revoked: boolean; account: LinearAccountView }>;
   fetchLinearTeams(): Promise<LinearTeam[]>;
   fetchLinearStates(teamId: string): Promise<LinearWorkflowState[]>;
   // Runs a pass now. `taskIds` pushes exactly those tasks, bypassing the gate
@@ -3974,6 +4465,8 @@ export interface ApiClient {
   uploadOverseerAttachments(files: File[]): Promise<OverseerAttachment[]>;
   /** An overseer attachment's bytes, for a thumbnail or a download. */
   fetchOverseerAttachment(attachment: OverseerAttachment): Promise<Blob>;
+  /** Uploads files for a run's next follow-up message to name. */
+  uploadRunAttachments(runId: string, files: File[]): Promise<RunAttachment[]>;
   /** Stops the running turn; anything queued waits for the next send. */
   stopOverseer(conversationId: string): Promise<OverseerRecordView>;
   /** Jev's read on whether `text` starts a new subject; fail-open reads "no". */
@@ -4444,7 +4937,6 @@ export interface ApiClient {
   /** Operator tier. */
   rotateA2AKey(compromised: boolean): Promise<A2ARotation>;
 
-  /** The `/ws` URL, token included — it is a credential, so never render or log it. */
   /** One directory's children, for a lazily expanded tree. */
   fetchWorkspaceTree(
     path: string,
@@ -4459,8 +4951,34 @@ export interface ApiClient {
     text: string,
     scope?: WorkspaceScope
   ): Promise<{ path: string; size: number; modifiedAt: string }>;
-  /** A URL the browser can put straight in an `img` or `embed` tag. */
+  /**
+   * The raw route's URL for a file, without a credential. It is a target for
+   * a download link's `href` on a team-local page, whose session cookie rides
+   * along; a loopback or desktop page authenticates with the bearer header an
+   * element `src` cannot send, so a preview reads the bytes with
+   * `fetchWorkspaceBlob` instead.
+   */
   workspaceFileUrl(path: string, scope?: WorkspaceScope): string;
+  /**
+   * A one-time URL that downloads a file with no credential on the request:
+   * the daemon checks the path and this client's token now, and the URL then
+   * serves the file once, as an attachment, within about a minute. It is what
+   * a Download link on a bearer-authenticated page points at, so the browser
+   * streams the file to disk instead of the page holding it in memory first.
+   * Rejects with the server's error (400 outside the project or worktree, 404
+   * for no such file) like any other call.
+   */
+  workspaceDownloadUrl(path: string, scope?: WorkspaceScope): Promise<string>;
+  /**
+   * A file's raw bytes, read with this client's credential like every other
+   * call. A page shows them through `URL.createObjectURL`, since an `img` or
+   * `iframe` pointed at the raw route would 401 on a bearer-authenticated
+   * page. `signal` cancels a large read when the file changes.
+   */
+  fetchWorkspaceBlob(
+    path: string,
+    scope?: WorkspaceScope & { signal?: AbortSignal }
+  ): Promise<Blob>;
   /** Quick open: fuzzy filename search, gitignore-aware. */
   searchWorkspace(
     query: string,
@@ -4487,6 +5005,7 @@ export interface ApiClient {
   closeTerminal(id: string): Promise<void>;
   /** Ends the process and forgets the session, scrollback included. */
   removeTerminal(id: string): Promise<void>;
+  /** The `/ws` URL, token included — it is a credential, so never render or log it. */
   wsUrl(): string;
   connectEvents(
     onChange: () => void,
@@ -4503,8 +5022,16 @@ export interface ApiClient {
 // the decide-tier calls and to answer gates; the agent token reaches
 // everything else. Omitting it falls back to the token the daemon injected
 // into the page it served, which is how the browser UI gets one at all.
-export function createApiClient(baseUrl: string, token?: string): ApiClient {
-  const target: ApiTarget = { baseUrl, token: token ?? injectedDaemonToken() };
+export function createApiClient(
+  baseUrl: string,
+  token?: string,
+  options: ApiClientOptions = {}
+): ApiClient {
+  const target: ApiTarget = {
+    baseUrl,
+    token: token ?? injectedDaemonToken(),
+    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+  };
   return {
     baseUrl,
     fetchHealth: () => request(target, '/api/health'),
@@ -4631,6 +5158,23 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody({ provider, apiKey }),
       }),
+    fetchAccounts: () => request(target, '/api/setup/accounts'),
+    saveAccount: (executor, label, token) =>
+      request(target, '/api/setup/accounts', {
+        method: 'POST',
+        ...jsonBody({ executor, label, token }),
+      }),
+    removeAccount: (executor, label) =>
+      request(
+        target,
+        `/api/setup/accounts/${encodeURIComponent(executor)}/${encodeURIComponent(label)}`,
+        { method: 'DELETE' }
+      ),
+    setAccountFailover: (executor, enabled) =>
+      request(target, '/api/setup/accounts/failover', {
+        method: 'POST',
+        ...jsonBody({ executor, enabled }),
+      }),
     refreshSetup: () =>
       request(target, '/api/setup/refresh', {
         method: 'POST',
@@ -4667,10 +5211,29 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       });
     },
     fetchTeamAddress: () => request(target, '/api/team/address'),
+    offerPairing: (input) =>
+      request(target, '/api/pair/offer', {
+        method: 'POST',
+        ...jsonBody(input ?? {}),
+      }),
+    fetchDevices: async () =>
+      (await request<{ devices: PairedDevice[] }>(target, '/api/devices'))
+        .devices,
+    revokeDevice: async (id) => {
+      await request(target, `/api/devices/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+    },
     fetchBoardSyncStatus: () => request(target, '/api/board-sync'),
     syncBoardNow: () =>
       request(target, '/api/board-sync/now', { method: 'POST' }),
     fetchLicense: () => request(target, '/api/license'),
+    getWebAccess: () => request(target, '/api/machine/web-access'),
+    setWebAccess: (enabled) =>
+      request(target, '/api/machine/web-access', {
+        method: 'PUT',
+        body: JSON.stringify({ enabled }),
+      }),
     installLicense: (key) =>
       request(target, '/api/license', {
         method: 'PUT',
@@ -4775,6 +5338,24 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         ...jsonBody({ confirmFork: input?.confirmFork === true }),
       }),
     fetchPrFindings: (number) => request(target, `/api/prs/${number}/findings`),
+    fetchAllocationRuns: () => request(target, '/api/planning/allocation-runs'),
+    fetchAppliedAllocationRuns: (since) =>
+      request(
+        target,
+        `/api/planning/allocation-runs?appliedSince=${encodeURIComponent(since)}`
+      ),
+    fetchAllocationRun: (id) =>
+      request(
+        target,
+        `/api/planning/allocation-runs/${encodeURIComponent(id)}`
+      ),
+    recordAllocationRun: (input) =>
+      request(target, '/api/planning/allocation-runs', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    fetchPlanningDigests: () => request(target, '/api/planning/digests'),
+    fetchPlanningAudit: () => request(target, '/api/planning/audit'),
     fetchInbox: () => request(target, '/api/inbox'),
     addInbox: (input) =>
       request(target, '/api/inbox', {
@@ -4843,6 +5424,26 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       }),
     disconnectLinear: () =>
       request(target, '/api/linear/disconnect', { method: 'POST' }),
+    fetchLinearAccount: () => request(target, '/api/linear/account'),
+    startLinearSignIn: (opts) =>
+      request(target, '/api/linear/sign-in', {
+        method: 'POST',
+        ...jsonBody(
+          opts?.anotherWorkspace === true ? { anotherWorkspace: true } : {}
+        ),
+      }),
+    cancelLinearSignIn: async () => {
+      await send(target, '/api/linear/sign-in', { method: 'DELETE' });
+    },
+    signOutOfLinear: (opts) =>
+      request(target, '/api/linear/sign-out', {
+        method: 'POST',
+        ...jsonBody(
+          opts?.workspaceId === undefined
+            ? {}
+            : { workspaceId: opts.workspaceId }
+        ),
+      }),
     fetchLinearTeams: () => request(target, '/api/linear/teams'),
     fetchLinearStates: (teamId) =>
       request(
@@ -4954,6 +5555,16 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       );
       return body.attachments;
     },
+    uploadRunAttachments: async (runId, files) => {
+      const form = new FormData();
+      for (const file of files) form.append('files', file, file.name);
+      const body = await request<{ attachments: RunAttachment[] }>(
+        target,
+        `/api/runs/${encodeURIComponent(runId)}/attachments`,
+        { method: 'POST', body: form }
+      );
+      return body.attachments;
+    },
     fetchOverseerAttachment: (attachment) => {
       // `.dispatch/attachments/overseer/<uploadId>/<name>`: the last two segments.
       const [uploadId, name] = attachment.path.split('/').slice(-2);
@@ -5043,21 +5654,12 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(target, '/api/merge-queue/ready', { method: 'POST' }),
     recheckMergeQueue: () =>
       request(target, '/api/merge-queue/recheck', { method: 'POST' }),
-    // Not routed through the shared `request()` helper: the server answers
-    // this one with 204 No Content (per the merge queue's REST contract), and
-    // `request()` always tries to parse a JSON body on success — which throws
-    // on an empty 204 body. This mirrors `request()`'s own error-handling
-    // shape otherwise (throw the server's `{ error }` message on non-2xx).
+    // Through `send()`, not `request()`: the server answers this one with
+    // 204 No Content (per the merge queue's REST contract), and `request()`
+    // always tries to parse a JSON body on success, which throws on an empty
+    // 204 body. `send()` still presents the token and throws on non-2xx.
     removeFromMergeQueue: async (runId) => {
-      const res = await fetch(`${baseUrl}/api/merge-queue/${runId}`, {
-        method: 'DELETE',
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as {
-          error?: string;
-        };
-        throw new Error(body.error ?? `request failed: ${res.status}`);
-      }
+      await send(target, `/api/merge-queue/${runId}`, { method: 'DELETE' });
     },
     fetchFindings: (filter = {}) => {
       const params = new URLSearchParams();
@@ -5580,6 +6182,26 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       }),
     workspaceFileUrl: (path, scope = {}) =>
       `${baseUrl}/api/files/raw?${workspaceQuery(path, scope)}`,
+    workspaceDownloadUrl: async (path, scope = {}) => {
+      const { ticket } = await request<{ ticket: string; expiresAt: string }>(
+        target,
+        '/api/files/download-ticket',
+        {
+          method: 'POST',
+          ...jsonBody({
+            path,
+            ...(scope.runId == null ? {} : { runId: scope.runId }),
+          }),
+        }
+      );
+      return `${baseUrl}/api/files/raw?${new URLSearchParams({ ticket }).toString()}`;
+    },
+    fetchWorkspaceBlob: (path, scope = {}) =>
+      requestBlob(
+        target,
+        `/api/files/raw?${workspaceQuery(path, scope)}`,
+        scope.signal === undefined ? undefined : { signal: scope.signal }
+      ),
     searchWorkspace: (query, scope = {}) => {
       const params = new URLSearchParams({ q: query });
       if (scope.runId != null) params.set('runId', scope.runId);

@@ -1,17 +1,37 @@
 import type { ContentE2eStatus, TeamStatus } from '@dispatch/client';
 import { ApiError } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { describe, expect, mock, test } from 'bun:test';
 
 import { accessFor, OPERATOR_ONLY, SettingsAccessProvider } from './access';
-import { dataWith } from './fixtures.test-helper';
+import { dataWith, visibleText } from './fixtures.test-helper';
 import {
   LEGACY_OPEN,
   NEEDS_UPDATE,
   NOT_ADMIN,
   TeamEncryptionGroup,
 } from './TeamEncryptionGroup';
+
+// Each action's test hook sits on its Button.
+const hookButton = (id: string) => screen.getByTestId(id);
+const findHookButton = (id: string) => screen.findByTestId(id);
+// The confirmation is a ConfirmDialog whose panel carries the hook; its
+// confirm button is the one named for the action (Cancel sits beside it).
+const confirmButton = () =>
+  within(screen.getByTestId('team-e2e-confirm')).getByRole('button', {
+    name: 'Encrypt team content',
+  });
+const findConfirmButton = async () =>
+  within(await screen.findByTestId('team-e2e-confirm')).getByRole('button', {
+    name: 'Encrypt team content',
+  });
 
 const TEAM: TeamStatus = {
   state: 'member',
@@ -88,7 +108,7 @@ function mount(
   );
 }
 
-const button = () => screen.getByTestId('team-e2e-on');
+const button = () => hookButton('team-e2e-on');
 
 describe('TeamEncryptionGroup', () => {
   test('off and ready: the admin confirms the limits, then it turns on', async () => {
@@ -100,7 +120,7 @@ describe('TeamEncryptionGroup', () => {
     expect(await screen.findByText(/no forward secrecy/)).toBeTruthy();
     expect(screen.getByText(/stays readable on the relay/)).toBeTruthy();
     expect(c.enableContentE2e).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByTestId('team-e2e-confirm'));
+    fireEvent.click(confirmButton());
     await waitFor(() => expect(c.enableContentE2e).toHaveBeenCalledTimes(1));
     expect((await screen.findByTestId('team-e2e-disclosure')).textContent).toBe(
       E2E_DISCLOSURE
@@ -145,7 +165,8 @@ describe('TeamEncryptionGroup', () => {
 
   test('below the operator tier the switch is locked with the reason', async () => {
     mount(client(READY), 'decide');
-    expect(await screen.findByText(OPERATOR_ONLY)).toBeTruthy();
+    // The lock's tooltip holds the same words, hidden until hovered.
+    await waitFor(() => expect(visibleText(OPERATOR_ONLY)).toHaveLength(1));
     expect(button().hasAttribute('disabled')).toBe(true);
   });
 
@@ -174,8 +195,8 @@ describe('TeamEncryptionGroup', () => {
       )
     );
     mount(c);
-    fireEvent.click(await screen.findByTestId('team-e2e-on'));
-    fireEvent.click(await screen.findByTestId('team-e2e-confirm'));
+    fireEvent.click(await findHookButton('team-e2e-on'));
+    fireEvent.click(await findConfirmButton());
     expect((await screen.findByRole('alert')).textContent).toBe(
       'close the legacy window first'
     );

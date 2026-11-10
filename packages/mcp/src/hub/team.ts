@@ -8,6 +8,7 @@ import {
 import type {
   AgentRecord,
   DeliveryEngine,
+  LinkHttpRequest,
   LinkMail,
   LinkState,
   SqliteMessageStore,
@@ -22,6 +23,8 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
+
+import type { HubWeb } from './web.js';
 
 // The machine hub's link to its team: once this machine is signed in
 // (`dispatch-mcp login`, saved in ~/.dispatch/hub/team.json) the hub keeps a
@@ -97,7 +100,11 @@ export interface RosterAgent {
 }
 
 type Frame =
-  | { id: number; kind: 'mail' | 'state' | 'agents'; body: unknown }
+  | {
+      id: number;
+      kind: 'mail' | 'state' | 'agents' | 'projects' | 'http';
+      body: unknown;
+    }
   | { re: number; ok: boolean; result?: unknown; error?: string };
 
 const RECONNECT_MIN_MS = 1000;
@@ -127,6 +134,8 @@ export class TeamLink {
       me: string;
       /** This hub's own agents (no mirrors), to push to the team. */
       ownRoster: () => RosterAgent[];
+      /** What the web may reach on this machine (hub/web.ts). */
+      web?: HubWeb;
     }
   ) {
     this.replica = teamReplica(file.team.id);
@@ -278,6 +287,11 @@ export class TeamLink {
       this.waiting.delete(frame.re);
       return;
     }
+    // The web's requests (hub/web.ts) need no loopback link of their own.
+    if (frame.kind === 'projects' || frame.kind === 'http') {
+      await this.webFrame(frame.id, frame.kind, frame.body);
+      return;
+    }
     const link = this.link;
     if (link === null) return;
     try {
@@ -316,9 +330,37 @@ export class TeamLink {
           frame.body as LinkState
         );
         this.reply(frame.id, true, { ok: true });
+      } else {
+        // A kind this hub does not know: say so rather than leave the team
+        // waiting out its timeout.
+        this.reply(frame.id, false, null, 'unknown frame kind');
       }
     } catch (err) {
       this.reply(frame.id, false, null, (err as Error).message);
+    }
+  }
+
+  // The web listing this machine's projects, or one request to one of them.
+  private async webFrame(
+    id: number,
+    kind: 'projects' | 'http',
+    body: unknown
+  ): Promise<void> {
+    const web = this.deps.web;
+    if (web === undefined || !web.enabled()) {
+      this.reply(id, false, null, 'web access is off on this machine');
+      return;
+    }
+    try {
+      if (kind === 'projects') {
+        this.reply(id, true, { projects: web.projects() });
+        return;
+      }
+      const answer = await web.forward(body as LinkHttpRequest);
+      if (answer === null) this.reply(id, false, null, 'no such project');
+      else this.reply(id, true, answer);
+    } catch (err) {
+      this.reply(id, false, null, (err as Error).message);
     }
   }
 

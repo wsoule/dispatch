@@ -1,10 +1,17 @@
 import type { TeamTokenHolder } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { describe, expect, mock, test } from 'bun:test';
 
 import { NEEDS_DECIDE, OPERATOR_ONLY } from './access';
 import { dataWith } from './fixtures.test-helper';
+import { SettingsSearchProvider } from './search';
 import { grantableTiers, holderDates, TeamSection } from './TeamSection';
 
 function holder(over: Partial<TeamTokenHolder> = {}): TeamTokenHolder {
@@ -42,15 +49,29 @@ function teamClient(holders: TeamTokenHolder[], origins: string[] = []) {
   };
 }
 
-function mount(overrides: Parameters<typeof dataWith>[0]) {
+function mount(overrides: Parameters<typeof dataWith>[0], query = '') {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <TeamSection data={dataWith({ presence: [], ...overrides })} />
+      <SettingsSearchProvider query={query}>
+        <TeamSection data={dataWith({ presence: [], ...overrides })} />
+      </SettingsSearchProvider>
     </QueryClientProvider>
   );
+}
+
+// The fold's trigger: the one button directly under its Disclosure root.
+function foldTrigger(fold: HTMLElement): HTMLElement {
+  const trigger = fold.querySelector<HTMLElement>(':scope > button');
+  if (trigger === null) throw new Error('no fold trigger');
+  return trigger;
+}
+
+// Opens the browser-access fold, where the token form and people list live.
+function openBrowserAccess(): void {
+  fireEvent.click(foldTrigger(screen.getByTestId('team-browser-access')));
 }
 
 describe('grantableTiers', () => {
@@ -83,13 +104,39 @@ describe('TeamSection', () => {
     const machines = screen.getByTestId('team-machines');
     const browser = screen.getByTestId('team-browser-access');
     for (const section of [machines, browser]) {
-      expect(section.tagName).toBe('DETAILS');
-      expect(section.hasAttribute('open')).toBe(false);
+      const trigger = foldTrigger(section);
+      expect(trigger.getAttribute('aria-expanded')).toBe('false');
+      const panel = document.getElementById(
+        trigger.getAttribute('aria-controls') ?? ''
+      );
+      expect(panel?.hidden).toBe(true);
     }
+    // Closed folds keep their rows mounted, so Settings search still counts them.
     expect(browser.textContent).toContain('Give someone browser access');
     // Points a teammate who runs Dispatch back to the real team invite.
     expect(browser.textContent).toContain('use Invite teammate above');
     expect(machines.textContent).not.toContain('browser access');
+  });
+
+  test('a fold opens on its trigger and shows its rows', () => {
+    mount({ myTier: 'operator', client: teamClient([]) as never });
+    const browser = screen.getByTestId('team-browser-access');
+    expect(
+      within(browser).queryByRole('button', { name: /Create token/ })
+    ).toBeNull();
+    openBrowserAccess();
+    expect(foldTrigger(browser).getAttribute('aria-expanded')).toBe('true');
+    expect(
+      within(browser).getByRole('button', { name: /Create token/ })
+    ).toBeTruthy();
+  });
+
+  test('both folds open while a settings search is on', () => {
+    mount({ myTier: 'operator', client: teamClient([]) as never }, 'token');
+    for (const id of ['team-machines', 'team-browser-access']) {
+      const trigger = foldTrigger(screen.getByTestId(id));
+      expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    }
   });
 
   test('below decide, it says who to ask instead of offering controls', () => {
@@ -135,6 +182,7 @@ describe('TeamSection', () => {
   test('a decide lead cannot remove an operator, and is told why', async () => {
     const client = teamClient([holder({ handle: 'linus', tier: 'operator' })]);
     mount({ myTier: 'decide', client: client as never });
+    openBrowserAccess();
     const remove = await screen.findByRole('button', { name: 'Remove linus' });
     expect((remove as HTMLButtonElement).disabled).toBe(true);
     expect(remove.getAttribute('title')).toContain('above yours');
@@ -143,6 +191,7 @@ describe('TeamSection', () => {
   test('creating a token shows it once, beside the address and how to use it', async () => {
     const client = teamClient([], ['http://192.168.1.5:4771']);
     mount({ myTier: 'operator', client: client as never });
+    openBrowserAccess();
 
     fireEvent.change(screen.getByLabelText('Email or handle'), {
       target: { value: 'grace@example.com' },
@@ -155,6 +204,8 @@ describe('TeamSection', () => {
       )
     );
     expect(screen.getByText('http://192.168.1.5:4771')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Copy address' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Copy token' })).toBeTruthy();
     expect(
       screen.getByText(/paste the token on the sign-in screen/)
     ).toBeTruthy();
@@ -168,6 +219,7 @@ describe('TeamSection', () => {
   test('on a loopback-only daemon, it explains how teammates get in', async () => {
     const client = teamClient([]);
     mount({ myTier: 'operator', client: client as never });
+    openBrowserAccess();
     fireEvent.change(screen.getByLabelText('Email or handle'), {
       target: { value: 'grace@example.com' },
     });
@@ -182,6 +234,7 @@ describe('TeamSection', () => {
   test('removing someone revokes their token', async () => {
     const client = teamClient([holder({ handle: 'ada' })]);
     mount({ myTier: 'decide', client: client as never });
+    openBrowserAccess();
     fireEvent.click(await screen.findByRole('button', { name: 'Remove ada' }));
     await waitFor(() =>
       expect(client.revokeTeamToken).toHaveBeenCalledWith('ada')

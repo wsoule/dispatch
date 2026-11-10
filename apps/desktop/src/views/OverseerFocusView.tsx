@@ -1,18 +1,23 @@
+import { Button, Kbd, Tooltip } from '@dispatch/ui';
 import { X } from 'lucide-react';
 import { useState } from 'react';
 
 import { ConversationTimeline } from '../components/conversation/ConversationTimeline';
 import { RoomHome } from '../components/conversation/Homes';
-import { TaskPage } from '../components/tasks/page/TaskPage';
+import { TaskPageView } from '../components/tasks/page/TaskPageView';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { TaskTab } from '../lib/appNav';
 import type { RefAction } from '../lib/threadSources';
-import type { OverseerFocus } from './TwoViewOverseer';
-import { IconButton } from '@/ui/ai/icon-button';
-import { Kbd } from '@/ui/kbd';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
+import styles from './OverseerFocusView.module.css';
+import type { OverseerFocus } from './OverseerView';
 
-/** A task in the middle; a message about it opens on its conversation. */
+/**
+ * A task in the middle: the same task page as Tasks (TaskPageView), embedded at heading
+ * level 2 under the Overseer's own heading, with Close back to the talk and Expand out
+ * to Tasks. TaskDetail's page layout stacks the property rail under the content while
+ * the column is narrower than 760px, so the column needs no layout of its own. A message
+ * about the task opens on its conversation.
+ */
 function FocusedTask({
   taskId,
   conversation,
@@ -28,12 +33,13 @@ function FocusedTask({
 }) {
   const [mode, setMode] = useState<TaskTab>(conversation ? 'thread' : 'auto');
   return (
-    <TaskPage
-      layout="split"
+    <TaskPageView
+      embedded
+      headingLevel={2}
       taskId={taskId}
       mode={mode}
       onModeChange={setMode}
-      onClose={onClose}
+      onBack={onClose}
       onExpand={onExpand}
       conversationCount={conversationCount}
     />
@@ -92,21 +98,23 @@ export function OverseerFocusView({
       composerLabel={name(address)}
       onOpenRef={onOpenRef}
       header={
-        <div className="flex items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
-            {name(address)}
-          </span>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <IconButton label="Close" onClick={onClose}>
-                  <X />
-                </IconButton>
-              }
+        <div className={styles.header}>
+          <span className={styles.name}>{name(address)}</span>
+          <Tooltip
+            side="bottom"
+            content={
+              <>
+                Close · <Kbd>Esc</Kbd>
+              </>
+            }
+          >
+            <Button
+              variant="quiet"
+              size="sm"
+              aria-label="Close"
+              icon={<X size={14} strokeWidth={1.8} aria-hidden />}
+              onClick={onClose}
             />
-            <TooltipContent side="bottom">
-              Close <Kbd>Esc</Kbd>
-            </TooltipContent>
           </Tooltip>
         </div>
       }

@@ -4,19 +4,17 @@ import {
   isUnstartedStatus,
   statusModelOf,
 } from '@dispatch-foo/core/browser';
-import type { MilestoneProgressChild } from '@dispatch/client';
+import type { TaskListItem } from '@dispatch-foo/core/browser';
 import {
-  type KeyboardEvent,
-  useCallback,
-  useDeferredValue,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+  Button,
+  ConfirmDialog,
+  type RowWindowGroup,
+  SkeletonRows,
+  useRowWindows,
+} from '@dispatch/ui';
+import { Zap } from 'lucide-react';
+import { type ReactNode, useCallback, useMemo, useRef, useState } from 'react';
 
-import { runPace } from '../components/flightplan/criticalPath';
-import { flightNodeDomId } from '../components/flightplan/FlightNodeCard';
 import type { FlightNode } from '../components/flightplan/flightPlan';
 import {
   tasksWithRunBranch,
@@ -24,7 +22,6 @@ import {
 } from '../components/flightplan/flightPlan';
 import { canDispatch } from '../components/flightplan/FlightPlanView';
 import { childrenByParent } from '../components/flightplan/flightScope';
-import type { NodeViewContext } from '../components/flightplan/flightViews';
 import {
   LiveBand,
   type LiveBandActions,
@@ -44,62 +41,50 @@ import {
   selectLiveBands,
 } from '../components/live/liveGraph';
 import { LiveHeader } from '../components/live/LiveHeader';
-import {
-  type LiveCursor,
-  moveLiveCursor,
-  resolveLiveKey,
-  settleLiveCursor,
-} from '../components/live/liveKeys';
 import { LiveReady } from '../components/live/LiveReady';
 import { usePeople } from '../components/people/PeopleContext';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
+import { PageHead, RUNS_BACK } from '../components/shell/PageHead';
 import { DispatchDialog } from '../components/tasks/DispatchDialog';
-import { TaskPane } from '../components/tasks/TaskPane';
-import {
-  VirtualRows,
-  type VirtualRowsHandle,
-} from '../components/virtual/VirtualRows';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import { isTypingTarget } from '../hooks/useGlobalKeyboard';
 import { useOptimisticDispatch } from '../hooks/useOptimisticDispatch';
 import type { TaskTab } from '../lib/appNav';
 import { liveClaimsFrom } from '../lib/dispatchPreview';
+import { ISSUES_DISPLAY } from '../lib/issuesPrefs';
 import { landingStateByTaskId } from '../lib/landingBadge';
 import { resolveLinearLink } from '../lib/linearSettings';
+import { groupTasks } from '../lib/listGrouping';
 import { liveCeilingsOf, spendToday } from '../lib/liveSpend';
-import type { WorkMilestoneOptions } from '../lib/milestoneSession';
+import {
+  unlimitedFanoutOptions,
+  type WorkMilestoneOptions,
+} from '../lib/milestoneSession';
 import { pendingStarts } from '../lib/optimisticDispatch';
 import { tasksWithFinishedRun } from '../lib/runState';
-import { assigneeRef } from '../lib/taskDisplay';
-import { PageHeader } from '@/ui/ai/page-header';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/ui/alert-dialog';
-import { Spinner } from '@/ui/spinner';
+import { LIVE_PAGE_TITLE } from '../lib/shellRoutes';
+import type { TaskBucket } from '../lib/taskStatus';
+import styles from './LiveView.module.css';
 
-/** How long the cursor rests on a node before an open side pane follows it. */
-const PANE_FOLLOW_MS = 120;
 /** How many ready containers the empty state offers. */
 const READY_LIMIT = 6;
 
-const bandKey = (band: LiveBandModel) => band.spec.key;
-
-// A clock for estimates that age: a running node's remaining time shrinks with it.
-function useNow(intervalMs: number): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
-  return now;
-}
+/** The band list's one window group: every band is a row of it. */
+const BAND_GROUP = 'live';
+/** A band's height before the first measurement: a title row over its chart.
+ * Every band's height is known exactly (`liveBandHeight`), so this only sizes the
+ * overscan until a band has been measured. */
+const BAND_ESTIMATE = 320;
+/** Bands kept mounted past each edge of the viewport, in band heights. */
+const BAND_OVERSCAN = 1;
+/** Bands the first render draws before anything is measured. */
+const INITIAL_BANDS = 4;
+/** Nothing is ever dragged in the band list: one shared empty set, so a render never
+ * hands the row windows a new one (which would measure again). */
+const NO_DRAG: ReadonlySet<string> = new Set();
+/** The band list has no sticky header over it. */
+const NO_HEAD: { readonly current: HTMLElement | null } = { current: null };
+/** A band's chart groups its tasks under their milestones, subtasks included. */
+const BAND_DISPLAY = { ...ISSUES_DISPLAY, showSubtasks: true };
 
 // The fan-out dialog, open for one container: `start` sends a fresh session, `raise`
 // edits a paused one's ceilings.
@@ -110,40 +95,45 @@ interface FanoutDialogState {
 
 export interface LiveViewProps {
   data: DispatchProjectData;
-  projectName: string | null;
+  /** An open task's one bucket (App's `itemBucket`), for the charts' state words. */
+  bucketOf: (task: TaskListItem) => TaskBucket | null;
+  /** Open asks per task. */
+  asksByTask: ReadonlyMap<string, number>;
+  /** The project's path: keys each band's remembered chart choices. */
+  projectKey: string;
   /** Dispatches without leaving the view, rejecting on failure so `d` can roll back. */
   dispatchTask: (taskId: string) => Promise<void>;
   /** A dispatch or fan-out verb the daemon refused — App toasts it. */
   onDispatchFailed: (taskId: string, message: string) => void;
-  /** The full task page (`o`, the pane's expand, a band's Flight Plan). */
+  /** The full task page (a band's Flight Plan). */
   onOpenTask: (taskId: string, tab?: TaskTab, runId?: string) => void;
-  /** The peek dialog (Space). */
+  /** The quick-look slide-over (a card's double click, the inspector's Open task). */
   onPeekTask: (taskId: string) => void;
-  /** False drops the page header, for a host that draws its own (Tasks' Graph mode). */
-  showHeader?: boolean;
+  /** Hosted by App, the page leads with the Runs back chip, which calls this
+   * to return to the Runs page (Live reads as Runs › Live). */
+  onBack?: () => void;
 }
 
 /**
  * Everything in motion across the project, on one screen: a band per container with work
  * moving (a live or paused fan-out, or a child running, landing or waiting on a review),
  * running first, then queued, then paused, and a Loose work band for agents outside every
- * container. Each band is that container's Flight Plan (waves, live node states, blocked
- * sentences, the critical path) with finished waves folded to a count. Only bands near
- * the viewport mount, and each draws only the cards near it; everything derives from the
- * cached task list, runs and fan-out progress.
- *
- * Keyboard: j/k walk every node in reading order, J/K jump a band, h/l cross columns,
- * Enter opens the task beside the bands, `o` its page, Space peeks, `d` dispatches (never
- * a teammate's), Escape closes the pane.
+ * container. Each band is that container's dependency chart (the Graph page's chart,
+ * embedded), landed work hidden until asked for, under a title row with its fan-out verbs.
+ * Only bands near the viewport mount; everything derives from the cached task list, runs
+ * and fan-out progress. Escape is the shell's (it closes the drawer, then goes back one
+ * place with the Runs page open).
  */
 export function LiveView({
   data,
-  projectName,
+  bucketOf,
+  asksByTask,
+  projectKey,
   dispatchTask,
   onDispatchFailed,
   onOpenTask,
   onPeekTask,
-  showHeader = true,
+  onBack,
 }: LiveViewProps) {
   const directory = usePeople();
   const me = directory.me;
@@ -205,6 +195,7 @@ export function LiveView({
     () => new Map(sessions.map((p) => [p.milestoneId, p])),
     [sessions]
   );
+  const startDependents = data.config?.orchestrator.startDependents;
   const withRunBranch = useMemo(
     () => tasksWithRunBranch(data.runs),
     [data.runs]
@@ -243,6 +234,7 @@ export function LiveView({
       sessions: sessionById,
       withRunBranch,
       withFinishedRun,
+      startDependents,
       landing,
     }),
     [
@@ -255,44 +247,28 @@ export function LiveView({
       sessionById,
       withRunBranch,
       withFinishedRun,
+      startDependents,
       landing,
     ]
   );
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(
-    () => new Set()
-  );
-  // Waves and layouts per band, kept while a band's structure holds.
+  // Waves per band, kept while a band's structure holds.
   const geometry = useRef<LiveGeometryCache>(new Map());
   const bands = useMemo(() => {
     const cache = geometry.current;
-    const built = specs.map((spec) =>
-      buildLiveBand(spec, shared, {
-        expanded: expanded.has(spec.key),
-        cache,
-      })
-    );
+    const built = specs.map((spec) => buildLiveBand(spec, shared, { cache }));
     const keep = new Set(specs.map((s) => s.key));
     for (const key of cache.keys()) if (!keep.has(key)) cache.delete(key);
     return orderLiveBands(built);
-  }, [specs, shared, expanded]);
+  }, [specs, shared]);
 
-  // Every drawn node's band and plan node, for the keyboard and clicks.
+  // Every band's plan node by task id, for Send agent.
   const located = useMemo(() => {
-    const out = new Map<string, { band: string; node: FlightNode }>();
+    const out = new Map<string, FlightNode>();
     for (const band of bands) {
-      const drawn = new Set(band.order);
-      for (const node of band.plan.nodes) {
-        if (drawn.has(node.task.meta.id)) {
-          out.set(node.task.meta.id, { band: band.spec.key, node });
-        }
-      }
+      for (const node of band.plan.nodes) out.set(node.task.meta.id, node);
     }
     return out;
   }, [bands]);
-  const navBands = useMemo(
-    () => bands.map((b) => ({ key: b.spec.key, order: b.order, nav: b.nav })),
-    [bands]
-  );
 
   const totals = useMemo(() => liveTotals(bands, sessions), [bands, sessions]);
   const today = useMemo(() => spendToday(data.runs), [data.runs]);
@@ -327,139 +303,77 @@ export function LiveView({
       )?.identifier ?? id,
     [taskById, data.linearLinks]
   );
-  const phases = useMemo(() => {
-    const out = new Map<string, MilestoneProgressChild>();
-    for (const progress of sessions) {
-      for (const child of progress.children) out.set(child.id, child);
-    }
-    return out;
-  }, [sessions]);
   const liveClaims = useMemo(() => liveClaimsFrom(data.runs), [data.runs]);
-  const viewCtx = useMemo<NodeViewContext>(
-    () => ({
-      model,
-      refFor,
-      latestRunByTaskId: data.latestRunByTaskId,
-      live: liveTaskIds,
-      pending,
-      sessionActive: (owner) =>
-        sessionById.get(owner)?.session?.state === 'active',
-      phaseOf: (id) => phases.get(id),
-      liveClaims,
-      landingByTaskId: landing,
-      personName: (assignee) =>
-        directory.personFor(assignee)?.name ??
-        assigneeRef(assignee)?.handle ??
-        null,
-    }),
-    [
-      model,
-      refFor,
-      data.latestRunByTaskId,
-      liveTaskIds,
-      pending,
-      sessionById,
-      phases,
-      liveClaims,
-      landing,
-      directory,
-    ]
+  // What every band's chart reads: its groups, state words and Send agent.
+  const { dispatch } = optimistic;
+  const taskActions = useCallback(
+    (id: string): ReactNode =>
+      canDispatch(located.get(id), model, holderOf) ? (
+        <Button
+          size="sm"
+          variant="secondary"
+          icon={<Zap size={14} strokeWidth={1.8} aria-hidden />}
+          onClick={() => void dispatch(id)}
+        >
+          Send agent
+        </Button>
+      ) : null,
+    [located, model, holderOf, dispatch]
   );
-  const pace = useMemo(() => runPace(data.runs), [data.runs]);
-  const now = useNow(30_000);
+  const { config, milestones } = data;
   const bandCtx = useMemo<LiveBandContext>(
     () => ({
-      view: viewCtx,
-      paceMs: pace.medianMs,
-      now,
-      startedAt: (id) => {
-        const sent = pending.get(id);
-        if (sent !== undefined) return sent;
-        const run = data.latestRunByTaskId.get(id);
-        return run === undefined ? undefined : Date.parse(run.createdAt);
-      },
+      groupsOf: (list) =>
+        groupTasks(list, BAND_DISPLAY, {
+          statuses: config?.statuses ?? [],
+          milestones,
+          model,
+        }),
+      bucketOf,
+      asksByTask,
+      projectKey,
+      refFor,
+      taskActions,
     }),
-    [viewCtx, pace, now, pending, data.latestRunByTaskId]
+    [
+      config,
+      milestones,
+      model,
+      bucketOf,
+      asksByTask,
+      projectKey,
+      refFor,
+      taskActions,
+    ]
   );
 
-  // The cursor, the side pane, and the dialogs.
-  const [cursor, setCursor] = useState<LiveCursor | null>(null);
-  const [hasFocus, setHasFocus] = useState(false);
-  const [paneTaskId, setPaneTaskId] = useState<string | null>(null);
-  const deferredPaneTaskId = useDeferredValue(paneTaskId);
+  // The dialogs.
   const [dialog, setDialog] = useState<FanoutDialogState | null>(null);
   const [confirmPause, setConfirmPause] = useState(false);
   const [busy, setBusy] = useState(false);
-  const gArmedAt = useRef<number | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
-  const rows = useRef<VirtualRowsHandle>(null);
-  // The band list scrolls itself and holds the keyboard; the rows window against it.
+  // The band list scrolls itself; the bands window against it.
   const attachGrid = useCallback((el: HTMLDivElement | null) => {
     gridRef.current = el;
     setScroller(el);
   }, []);
 
-  const settled = useMemo(
-    () => settleLiveCursor(navBands, cursor),
-    [navBands, cursor]
-  );
-  const focused = cursor !== null || hasFocus ? settled : null;
-  const focusedBand = focused?.band ?? null;
-  const focusedId = focused?.id ?? null;
-
-  // Where a key last moved the cursor: the open pane follows it once it rests. A node
-  // leaving the view (its run finished, its wave folded) settles the cursor elsewhere but
-  // never swaps the task being read.
-  const [movedTo, setMovedTo] = useState<string | null>(null);
-  const showInPane = useCallback((taskId: string | null) => {
-    setMovedTo(null);
-    setPaneTaskId(taskId);
-  }, []);
-  useEffect(() => {
-    if (paneTaskId === null || movedTo === null || movedTo === paneTaskId) {
-      return;
-    }
-    const timer = setTimeout(() => setPaneTaskId(movedTo), PANE_FOLLOW_MS);
-    return () => clearTimeout(timer);
-  }, [movedTo, paneTaskId]);
-
   const daemonReady =
     !data.portLoading && !data.portError && data.client !== null;
   const hasBands = bands.length > 0;
-  useEffect(() => {
-    if (daemonReady && hasBands) {
-      gridRef.current?.focus({ preventScroll: true });
-    }
-  }, [daemonReady, hasBands]);
-
-  // A card's click, read through a ref so its identity never changes: every card takes it,
-  // and a new one would re-render them all on each event.
-  const locatedRef = useRef(located);
-  useEffect(() => {
-    locatedRef.current = located;
-  }, [located]);
-  const activate = useCallback(
-    (taskId: string) => {
-      const where = locatedRef.current.get(taskId);
-      if (where === undefined) return;
-      setCursor({ band: where.band, id: taskId });
-      showInPane(taskId);
-      gridRef.current?.focus({ preventScroll: true });
-    },
-    [showInPane]
-  );
   const openPlan = useCallback(
     (containerId: string) => onOpenTask(containerId, 'plan'),
     [onOpenTask]
   );
-  const toggleFold = useCallback((key: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (!next.delete(key)) next.add(key);
-      return next;
-    });
-  }, []);
+  // A card's open from a chart: a tab opens the page, anything else quick-looks it.
+  const openFromChart = useCallback(
+    (id: string, tab?: TaskTab) => {
+      if (tab !== undefined) onOpenTask(id, tab);
+      else onPeekTask(id);
+    },
+    [onOpenTask, onPeekTask]
+  );
   const {
     milestoneProgressById,
     handlePauseMilestone,
@@ -468,70 +382,123 @@ export function LiveView({
     handleLandMilestone,
     handleWorkMilestone,
   } = data;
+  const unlimitedSpend = data.config?.orchestrator.unlimitedSpend === true;
+  const milestoneConcurrency =
+    data.config?.orchestrator.milestoneConcurrency ?? 3;
+  // Send agents… opens the fan-out dialog, unless the project has turned on unlimited
+  // spend: then there is no ceiling to choose, so the session starts at the default
+  // concurrency straight away and a refusal is toasted. Raise ceiling… is hidden then,
+  // and a paused session's Resume ignores its old ceilings daemon-side.
+  const sendAgents = useCallback(
+    (id: string) => {
+      if (!unlimitedSpend) {
+        setDialog({ milestoneId: id, mode: 'start' });
+        return;
+      }
+      handleWorkMilestone(
+        id,
+        unlimitedFanoutOptions(milestoneConcurrency)
+      ).catch((err: unknown) =>
+        onDispatchFailed(
+          id,
+          err instanceof Error ? err.message : 'The daemon refused the fan-out.'
+        )
+      );
+    },
+    [
+      unlimitedSpend,
+      milestoneConcurrency,
+      handleWorkMilestone,
+      onDispatchFailed,
+    ]
+  );
   const actions = useMemo<LiveBandActions>(
     () => ({
       model,
       progressOf: (id) => milestoneProgressById.get(id),
-      onSendAgents: (id) => setDialog({ milestoneId: id, mode: 'start' }),
-      onRaiseCeiling: (id) => setDialog({ milestoneId: id, mode: 'raise' }),
+      onSendAgents: sendAgents,
+      onRaiseCeiling: unlimitedSpend
+        ? undefined
+        : (id) => setDialog({ milestoneId: id, mode: 'raise' }),
       onPause: handlePauseMilestone,
       onResume: handleResumeMilestone,
       onStop: handleStopMilestone,
       onLand: handleLandMilestone,
       onOpenPlan: openPlan,
-      onToggleFold: toggleFold,
-      onActivate: activate,
+      onOpenTask: openFromChart,
     }),
     [
       model,
       milestoneProgressById,
+      sendAgents,
+      unlimitedSpend,
       handlePauseMilestone,
       handleResumeMilestone,
       handleStopMilestone,
       handleLandMilestone,
       openPlan,
-      toggleFold,
-      activate,
+      openFromChart,
     ]
   );
 
-  // Every band's top in the scroller: bands are exactly their computed height.
-  const tops = useMemo(() => {
-    const out = new Map<string, number>();
-    let y = 0;
-    for (const band of bands) {
-      out.set(band.spec.key, y);
-      y += liveBandHeight(band);
-    }
-    return out;
-  }, [bands]);
-  const pinnedKeys = useMemo(
-    () => (focusedBand === null ? [] : [focusedBand]),
-    [focusedBand]
-  );
-  const renderBand = useCallback(
-    (band: LiveBandModel) => {
-      const key = band.spec.key;
-      return (
-        <LiveBand
-          band={band}
-          ctx={bandCtx}
-          actions={actions}
-          focusedId={focusedBand === key ? focusedId : null}
-          expanded={expanded.has(key)}
-          scroller={scroller}
-          top={tops.get(key) ?? 0}
-        />
-      );
-    },
-    [bandCtx, actions, focusedBand, focusedId, expanded, scroller, tops]
+  // Every band's exact height: bands are exactly their computed height, so none needs a
+  // measurement. A new `heights` (a band appeared or emptied) hands the row windows a new
+  // `rowHeight`, which re-windows before paint.
+  const heights = useMemo(
+    () => new Map(bands.map((band) => [band.spec.key, liveBandHeight(band)])),
+    [bands]
   );
 
-  // A band jump brings the band's title to the top; the band scrolls its own card into
-  // view (the cursor's band stays mounted, so it is there to find).
-  const revealBand = useCallback((band: string) => {
-    rows.current?.scrollToKey(band, 'start');
-  }, []);
+  // The band list windows with the library's row windows: one group whose rows are the
+  // bands, each its known height, a scroll's new bands rendered inside the scroll event
+  // (they are tall and few, as a board's cards are).
+  const windowGroups = useMemo<RowWindowGroup[]>(
+    () => [{ id: BAND_GROUP, rowIds: bands.map((band) => band.spec.key) }],
+    [bands]
+  );
+  // A new function once the scroller mounts (after the loading or empty state), so the
+  // row windows attach to it then rather than only on the view's first render.
+  const scrollParent = useCallback(
+    () => scroller ?? gridRef.current,
+    [scroller]
+  );
+  const rowHeight = useCallback((key: string) => heights.get(key), [heights]);
+  const rowWindows = useRowWindows({
+    rootRef: gridRef,
+    headRef: NO_HEAD,
+    enabled: true,
+    scrollParent,
+    groups: windowGroups,
+    dragging: NO_DRAG,
+    estimate: BAND_ESTIMATE,
+    rowHeight,
+    initialRows: INITIAL_BANDS,
+    overscan: BAND_OVERSCAN,
+    flushOnScroll: true,
+  });
+  const { registerList } = rowWindows;
+  const registerBands = useCallback(
+    (el: HTMLUListElement | null) => registerList(BAND_GROUP, el),
+    [registerList]
+  );
+
+  // One band in its `<li data-row-id>`, the element the row windows measure. The list is
+  // presentation only (each band is a labelled section, and a windowed list would
+  // announce only the bands that happen to be mounted).
+  const drawBand = (band: LiveBandModel) => {
+    const key = band.spec.key;
+    return (
+      <li
+        key={key}
+        role="presentation"
+        data-row-id={key}
+        className={styles.bandItem}
+      >
+        <LiveBand band={band} ctx={bandCtx} actions={actions} />
+      </li>
+    );
+  };
+  const segments = rowWindows.segmentsOf(BAND_GROUP);
 
   const pauseAll = useCallback(async () => {
     setBusy(true);
@@ -572,80 +539,6 @@ export function LiveView({
     setBusy(false);
   }, [fleet.resumable, handleResumeMilestone, onDispatchFailed]);
 
-  function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    if (isTypingTarget(e.target)) return;
-    // Enter or Space on a control inside a band (its fan-out verbs) belongs to it.
-    if (
-      e.target !== e.currentTarget &&
-      (e.target as HTMLElement).closest(
-        'button, a, input, select, textarea'
-      ) !== null &&
-      (e.key === 'Enter' || e.key === ' ')
-    ) {
-      return;
-    }
-    const { command, gArmedAt: armed } = resolveLiveKey(
-      {
-        key: e.key,
-        metaKey: e.metaKey,
-        ctrlKey: e.ctrlKey,
-        altKey: e.altKey,
-        at: Date.now(),
-      },
-      gArmedAt.current
-    );
-    gArmedAt.current = armed;
-    if (command === null) return;
-    switch (command) {
-      case 'next':
-      case 'prev':
-      case 'next-band':
-      case 'prev-band':
-      case 'left':
-      case 'right': {
-        e.preventDefault();
-        const next = moveLiveCursor(navBands, focused, command);
-        if (next === null) return;
-        setCursor(next);
-        setMovedTo(next.id);
-        if (command === 'next-band' || command === 'prev-band') {
-          revealBand(next.band);
-        }
-        return;
-      }
-      case 'open':
-        if (focused === null) return;
-        e.preventDefault();
-        showInPane(focused.id);
-        return;
-      case 'open-full':
-        if (focused === null) return;
-        e.preventDefault();
-        onOpenTask(focused.id);
-        return;
-      case 'peek':
-        if (focused === null) return;
-        e.preventDefault();
-        onPeekTask(focused.id);
-        return;
-      case 'dispatch': {
-        if (focused === null) return;
-        const node = located.get(focused.id)?.node;
-        if (!canDispatch(node, model, holderOf)) return;
-        e.preventDefault();
-        void optimistic.dispatch(focused.id);
-        return;
-      }
-      case 'close':
-        if (paneTaskId === null) return;
-        // The shell's Escape would also navigate back.
-        e.preventDefault();
-        e.stopPropagation();
-        showInPane(null);
-        return;
-    }
-  }
-
   // The empty state's offer: containers a fan-out would start work in right now.
   const ready = useMemo(
     () =>
@@ -678,12 +571,17 @@ export function LiveView({
     dialog?.mode === 'raise'
       ? (milestoneProgressById.get(dialog.milestoneId)?.session ?? null)
       : null;
-  const split = deferredPaneTaskId !== null;
-  const crumb = [...(projectName === null ? [] : [projectName]), 'Live'];
-
   return (
-    <div data-slot="live-view" className="flex h-full min-h-0 flex-col">
-      {showHeader && <PageHeader crumb={crumb} />}
+    <div data-slot="live-view" className={styles.view}>
+      <div className={styles.head}>
+        {/* Runs › Live: the Runs back chip (when hosted) and the h1. No
+            in-page trail: the topbar's already reads project / Runs / Live
+            (currentShellPageTitle). */}
+        <PageHead
+          title={LIVE_PAGE_TITLE}
+          back={onBack === undefined ? undefined : { ...RUNS_BACK, onBack }}
+        />
+      </div>
       <LiveHeader
         totals={totals}
         spendToday={today}
@@ -696,98 +594,62 @@ export function LiveView({
         onResumeAll={() => void resumeAll()}
       />
       {!data.tasksReady ? (
-        <div className="flex min-h-0 flex-1 items-center justify-center">
-          <Spinner className="text-muted-foreground size-4" />
+        <div className={styles.loading}>
+          <SkeletonRows rows={4} label="Loading the work in flight" />
         </div>
       ) : !hasBands ? (
         <LiveReady
           containers={ready}
           refFor={refFor}
-          onSendAgents={(id) => setDialog({ milestoneId: id, mode: 'start' })}
+          onSendAgents={sendAgents}
           onOpenPlan={openPlan}
         />
       ) : (
-        <div className="flex min-h-0 flex-1">
-          <div
-            ref={attachGrid}
-            role="group"
-            aria-label="Live work"
-            aria-activedescendant={
-              focusedId === null ? undefined : flightNodeDomId(focusedId)
-            }
-            tabIndex={0}
-            onKeyDown={handleKeyDown}
-            onFocus={() => setHasFocus(true)}
-            onBlur={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget)) {
-                setHasFocus(false);
-              }
-            }}
-            // The focused node carries the ring, so the scroller's own would only frame it.
-            style={{ outline: 'none' }}
-            className="relative min-h-0 min-w-0 flex-1 overflow-y-auto pt-2"
-          >
-            <VirtualRows
-              rows={bands}
-              rowKey={bandKey}
-              estimateSize={liveBandHeight}
-              renderRow={renderBand}
-              scrollElement={scroller}
-              overscan={1}
-              pinnedKeys={pinnedKeys}
-              handleRef={rows}
-            />
-          </div>
-          {split && (
-            <div className="shadow-hairline-left w-[min(520px,45%)] min-w-0 shrink-0">
-              <TaskPane
-                taskId={deferredPaneTaskId}
-                onClose={() => {
-                  showInPane(null);
-                  gridRef.current?.focus({ preventScroll: true });
-                }}
-                onExpand={() => onOpenTask(deferredPaneTaskId)}
-              />
-            </div>
-          )}
+        <div
+          ref={attachGrid}
+          role="group"
+          aria-label="Live work"
+          className={styles.scroller}
+        >
+          <ul ref={registerBands} role="presentation" className={styles.bands}>
+            {segments === null
+              ? bands.map(drawBand)
+              : segments.flatMap((segment) =>
+                  segment.kind === 'gap'
+                    ? [
+                        // The bands not mounted: their exact height, so the scroll
+                        // range and every mounted band's place are as if they were.
+                        <li
+                          key={`gap-${segment.start}`}
+                          role="presentation"
+                          aria-hidden="true"
+                          className={styles.gap}
+                          style={{ height: segment.px }}
+                        />,
+                      ]
+                    : bands.slice(segment.start, segment.end).map(drawBand)
+                )}
+          </ul>
         </div>
       )}
-      {confirmPause && (
-        <AlertDialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setConfirmPause(false);
-          }}
-        >
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>
-                Pause{' '}
-                {fleet.active.length === 1
-                  ? 'the fan-out'
-                  : `all ${fleet.active.length} fan-outs`}
-                ?
-              </AlertDialogTitle>
-              <AlertDialogDescription>
-                Nothing new starts in them until you resume. Agents already
-                running finish what they are on.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel variant="ghost">Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                data-slot="live-pause-all-confirm"
-                onClick={() => {
-                  setConfirmPause(false);
-                  void pauseAll();
-                }}
-              >
-                Pause all
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      )}
+      <ConfirmDialog
+        data-slot="live-pause-all-confirm"
+        open={confirmPause}
+        title={
+          fleet.active.length === 1
+            ? 'Pause the fan-out?'
+            : `Pause all ${fleet.active.length} fan-outs?`
+        }
+        confirmLabel="Pause all"
+        onCancel={() => setConfirmPause(false)}
+        onConfirm={() => {
+          setConfirmPause(false);
+          void pauseAll();
+        }}
+      >
+        Nothing new starts in them until you resume. Agents already running
+        finish what they are on.
+      </ConfirmDialog>
       {dialog !== null && dialogMilestone !== undefined && (
         <DispatchDialog
           title={`${dialog.mode === 'raise' ? 'Raise ceiling' : 'Send agents'} · ${dialogMilestone.meta.title}`}
@@ -795,15 +657,9 @@ export function LiveView({
             dialog.milestoneId,
             (id) => children.get(id) ?? []
           ).filter((t) => !containerIds.has(t.meta.id))}
-          // A teammate's task never starts in a fan-out, so the dialog never says it will.
-          readyIds={
-            new Set(
-              [...data.readyIds].filter((id) => {
-                const task = taskById.get(id);
-                return task !== undefined && holderOf(task) === null;
-              })
-            )
-          }
+          readyIds={data.readyIds}
+          // A teammate's task never starts in a fan-out: the dialog marks it Teammate.
+          holderOf={holderOf}
           runningNow={data.liveRunStateByTaskId.size}
           liveClaims={liveClaims}
           defaultConcurrency={

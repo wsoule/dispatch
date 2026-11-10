@@ -85,6 +85,9 @@ export interface NeedsYou {
   taskIds: ReadonlySet<string>;
   /** Restored lessons shown as one row (its first item) that counts as one. */
   restored: DecisionItem[];
+  /** Asks of mine a human dismissed: hidden and never counted, listed only so
+   *  the dismissal can be undone. Oldest first. */
+  dismissed: DecisionItem[];
 }
 
 export interface NeedsYouOptions {
@@ -155,10 +158,15 @@ export function needsYou(
   const seen = new Set<string>();
   const byGroup = new Map<AskGroup, DecisionItem[]>();
   const teammates: DecisionItem[] = [];
+  const dismissed: DecisionItem[] = [];
   for (const item of [...decisions, ...fromMail]) {
     if (item.state !== 'open' || item.disposition !== 'blocking') continue;
     const group = askGroup(item);
     if (group === null) continue;
+    if (item.dismissedAt !== undefined) {
+      if (isMine(item, me)) dismissed.push(item);
+      continue;
+    }
     const key = item.messageId ?? item.id;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -203,5 +211,26 @@ export function needsYou(
     byTask,
     taskIds: new Set(byTask.keys()),
     restored,
+    dismissed: dismissed.sort((a, b) => a.since.localeCompare(b.since)),
   };
+}
+
+/**
+ * The overseer actions one turn queued, by batch, for rows answered on one
+ * card: each batch with two or more open asks, in the order they appear. A
+ * lone action, or one from a daemon that sends no batch, keeps its own row.
+ */
+export function overseerActionBatches(
+  items: readonly DecisionItem[]
+): Map<string, DecisionItem[]> {
+  const byBatch = new Map<string, DecisionItem[]>();
+  for (const item of items) {
+    if (item.kind !== 'approval' || item.reason !== 'overseer-action') continue;
+    if (item.batch === undefined) continue;
+    byBatch.set(item.batch, [...(byBatch.get(item.batch) ?? []), item]);
+  }
+  for (const [batch, rows] of byBatch) {
+    if (rows.length < 2) byBatch.delete(batch);
+  }
+  return byBatch;
 }

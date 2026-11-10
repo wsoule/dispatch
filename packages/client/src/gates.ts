@@ -299,6 +299,24 @@ export function gateNotification(
   };
 }
 
+/** The notification for a `decision.reminder` (see the daemon's
+ *  decisionReminders.ts): the gate's own notification, retitled as a
+ *  reminder. Null when this window does not hold the gate (answered, or not
+ *  addressed to it) or the gate would not notify at all. */
+export function gateReminderNotification(
+  openGates: readonly Message[],
+  messageId: string | undefined,
+  titleOfRun: (runId: string) => string | undefined,
+  me: string | null = null
+): { title: string; body: string; kind: NotificationKind } | null {
+  const gate = openGates.find((message) => message.id === messageId);
+  if (gate === undefined) return null;
+  const note = gateNotification(gate, titleOfRun, me);
+  return note === null
+    ? null
+    : { ...note, title: `Still waiting: ${note.title}` };
+}
+
 /** The open gates once `message` lands (an answer closes its gate, a blocking
  *  message to a human joins); `open` itself when nothing changes. */
 export function openGatesAfter(open: Message[], message: Message): Message[] {

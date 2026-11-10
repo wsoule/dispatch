@@ -1,0 +1,144 @@
+/* The branch graph (components/graph/BranchGraph.tsx): 28px lines of real
+   DOM beside an SVG gutter of commit dots and edges. The per-line height
+   and gutter padding are inline (they come from the layout); colours come
+   from tokens, and a dot's colour from its status tone (data-tone, the
+   neutral mark for done). */
+
+.graph {
+  position: relative;
+}
+
+.gutter {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.line {
+  display: flex;
+  box-sizing: border-box;
+  width: 100%;
+  align-items: center;
+  gap: var(--s-2);
+  padding-right: var(--s-3);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs);
+  line-height: 16px;
+  text-align: left;
+}
+
+.line[data-path] {
+  color: var(--text);
+}
+
+.interactive {
+  cursor: pointer;
+}
+
+.interactive:hover {
+  background: var(--surface-2);
+}
+
+/* The roving cursor's line and a keyboard-focused one take the neutral
+   pressed surface, never the accent; the ring sits inside the row. */
+.line[data-focused],
+.interactive:focus-visible {
+  background: var(--surface-3);
+}
+
+.interactive:focus-visible {
+  outline-offset: -2px;
+}
+
+.id {
+  flex: none;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The trailing pills keep a 6px gap, between --s-1 and --s-2: the
+   pills' own rhythm, as on a board card. */
+.trailing {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.empty {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--s-3);
+  color: var(--text-3);
+  font-size: var(--fs);
+}
+
+/* A dot and a live dot's halo, in the status tone (the neutral --text-2
+   for done, which has none). An open dot is a ring on the surface. */
+.dot,
+.halo {
+  --dot: var(--text-2);
+}
+
+.dot[data-tone],
+.halo[data-tone] {
+  --dot: var(--tone);
+}
+
+.dot {
+  fill: var(--dot);
+  stroke: var(--dot);
+}
+
+.dot[data-dot='open'] {
+  fill: var(--surface);
+}
+
+.dotClickable {
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.halo {
+  fill: none;
+  stroke: var(--dot);
+  stroke-opacity: 0.45;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .line {
+    transition: background-color var(--dur) var(--ease);
+  }
+}
+
+/* Forced colours: dots and the halo in CanvasText, an open dot hollow on
+   the canvas, so done, open and live keep their shapes. */
+@media (forced-colors: active) {
+  .dot,
+  .halo,
+  .dot[data-tone],
+  .halo[data-tone] {
+    --dot: CanvasText;
+  }
+
+  .dot[data-dot='open'] {
+    fill: Canvas;
+  }
+}

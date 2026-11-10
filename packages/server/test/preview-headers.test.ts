@@ -4,6 +4,7 @@ import {
   previewRequestHeaders,
   previewResponseHeaders,
   previewUpstreamUrl,
+  sandboxPreview,
 } from '../src/previewHeaders.js';
 
 describe('previewRequestHeaders', () => {
@@ -71,5 +72,21 @@ describe('previewUpstreamUrl', () => {
       expect(target?.host).toBe('127.0.0.1:5173');
       expect(target?.search).toBe('?y=1');
     }
+  });
+});
+
+describe('sandboxPreview', () => {
+  test('adds an opaque-origin sandbox and keeps the dev server’s own policy', () => {
+    const res = sandboxPreview(
+      new Response('', {
+        headers: { 'content-security-policy': "default-src 'self'" },
+      })
+    );
+    const policies = res.headers.get('content-security-policy')?.split(/,\s*/);
+    expect(policies).toEqual([
+      "default-src 'self'",
+      'sandbox allow-scripts allow-forms allow-popups',
+    ]);
+    expect(policies?.some((p) => p.includes('allow-same-origin'))).toBe(false);
   });
 });

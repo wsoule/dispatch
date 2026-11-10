@@ -150,8 +150,45 @@ describe('Activity attribution', () => {
       actor: 'none',
     });
 
+    // 'none' never reaches the line as an actor: it reads as an automatic
+    // dispatch rather than `— none`, which names no one.
+    const body = store.get(task.meta.id)!.body;
+    expect(body).toContain(`dispatched (fake, branch ${meta.branch}) — auto\n`);
+    expect(body).not.toContain('— none');
+  });
+
+  it("(c again) an automatic dispatch's trigger is named in place of the actor", async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ steps: [], finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'Unblocked' });
+
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake', {
+      actor: 'none',
+      trigger: 'milestone e-1 auto-fill, unblocked by t-2',
+    });
+
     expect(store.get(task.meta.id)!.body).toContain(
-      `dispatched (fake, branch ${meta.branch}) — none`
+      `dispatched (fake, branch ${meta.branch}) — auto: milestone e-1 auto-fill, unblocked by t-2\n`
+    );
+  });
+
+  it('(b again) a trigger never replaces a real actor', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ steps: [], finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'By hand' });
+
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake', {
+      trigger: 'ignored',
+    });
+
+    expect(store.get(task.meta.id)!.body).toContain(
+      `dispatched (fake, branch ${meta.branch}) — human:test`
     );
   });
 });

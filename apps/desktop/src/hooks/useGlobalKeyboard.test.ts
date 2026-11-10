@@ -1,10 +1,16 @@
-import { renderHook } from '@testing-library/react';
+import { render, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, test } from 'bun:test';
+import { Activity, type ComponentProps, createElement } from 'react';
 
 import type { GlobalKeyCommand } from '../lib/keyboard';
-import { useGlobalKeyboard } from './useGlobalKeyboard';
+import {
+  isAnyModalOpen,
+  isShown,
+  isTypingTarget,
+  useGlobalKeyboard,
+} from './useGlobalKeyboard';
 
-// Fires a real `keydown` on `window`, optionally pre-cancelled the way a Base UI popup
+// Fires a real `keydown` on `window`, optionally pre-cancelled the way an overlay
 // cancels Escape when it dismisses itself — before this listener ever sees the event, not as
 // a side effect of it.
 function dispatchKeydown(key: string, { defaultPrevented = false } = {}) {
@@ -27,12 +33,12 @@ function mount(prefixTimeoutMs?: number) {
   return { commands, rerender };
 }
 
-// Stands in for an open Base UI `Dialog.Popup`: `@/ui/dialog` stamps `data-slot`, Base UI
-// stamps the bare `data-open` while it is open.
-function mountOpenDialog(slot = 'dialog-content') {
+// Stands in for an open @dispatch/ui ConfirmDialog (FirstTaskGuide's "Close the guide?"): an
+// alertdialog marked aria-modal while open, removed from the DOM on close.
+function mountOpenDialog() {
   const el = document.createElement('div');
-  el.setAttribute('data-slot', slot);
-  el.setAttribute('data-open', '');
+  el.setAttribute('role', 'alertdialog');
+  el.setAttribute('aria-modal', 'true');
   document.body.appendChild(el);
   return el;
 }
@@ -48,7 +54,7 @@ describe('useGlobalKeyboard', () => {
     expect(commands).toEqual(['escape']);
   });
 
-  test('an Escape a Base UI popup already defaultPrevented never reaches onCommand', () => {
+  test('an Escape an overlay already defaultPrevented never reaches onCommand', () => {
     const { commands } = mount();
     dispatchKeydown('Escape', { defaultPrevented: true });
     expect(commands).toEqual([]);
@@ -129,7 +135,7 @@ describe('useGlobalKeyboard', () => {
     expect(second).toEqual(['new-task']);
   });
 
-  test('an open Base UI dialog swallows the bare-key shortcuts', () => {
+  test('an open confirm dialog swallows the bare-key shortcuts', () => {
     const { commands } = mount();
     mountOpenDialog();
     for (const key of ['c', '[', '?']) {
@@ -143,19 +149,239 @@ describe('useGlobalKeyboard', () => {
     expect(commands).toEqual([]);
   });
 
-  test('an open alert dialog swallows the shortcuts the same way', () => {
-    const { commands } = mount();
-    mountOpenDialog('alert-dialog-content');
-    dispatchKeydown('c');
-    expect(commands).toEqual([]);
-  });
-
-  test('a dialog mid exit-animation (data-closed) no longer counts as open', () => {
+  test('a closed dialog (removed from the DOM) no longer counts as open', () => {
     const { commands } = mount();
     const el = mountOpenDialog();
-    el.removeAttribute('data-open');
-    el.setAttribute('data-closed', '');
+    dispatchKeydown('c');
+    expect(commands).toEqual([]);
+    el.remove();
     dispatchKeydown('c');
     expect(commands).toEqual(['new-task']);
+  });
+
+  // The @dispatch/ui slide-over, command palette and phone drawer mark their panel
+  // `aria-modal="true"` while open and unmount on close, as the dialogs do.
+  test('an open aria-modal surface swallows the shortcuts like a dialog', () => {
+    const { commands } = mount();
+    const el = document.createElement('div');
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-modal', 'true');
+    document.body.appendChild(el);
+    for (const key of ['c', 'Escape']) {
+      const event = dispatchKeydown(key);
+      expect(event.defaultPrevented).toBe(false);
+    }
+    dispatchKeydown('g');
+    dispatchKeydown('s');
+    expect(commands).toEqual([]);
+    // Unmounted on close, so the shortcuts come straight back.
+    el.remove();
+    dispatchKeydown('c');
+    expect(commands).toEqual(['new-task']);
+  });
+
+  // ⌘P over a modal (the quick open itself, the palette, any Dialog) does
+  // nothing, but the key is still claimed: a browser would open its print
+  // dialog in its place.
+  test('⌘P over an aria-modal surface is claimed without opening anything', () => {
+    const { commands } = mount();
+    const el = mountOpenDialog();
+    const press = () => {
+      const event = new KeyboardEvent('keydown', {
+        key: 'p',
+        metaKey: true,
+        cancelable: true,
+        bubbles: true,
+      });
+      window.dispatchEvent(event);
+      return event;
+    };
+    expect(press().defaultPrevented).toBe(true);
+    expect(commands).toEqual(['quick-open-blocked']);
+    el.remove();
+    expect(press().defaultPrevented).toBe(true);
+    expect(commands).toEqual(['quick-open-blocked', 'quick-open']);
+  });
+
+  // Owner decision 2026-11-03: on macOS only ⌘P is quick open; Ctrl+P there
+  // stays with the focused text field (Cocoa's "previous line").
+  test('on macOS Ctrl+P is left alone and ⌘P opens quick open', () => {
+    const commands: GlobalKeyCommand[] = [];
+    renderHook(() =>
+      useGlobalKeyboard({
+        onCommand: (c) => commands.push(c),
+        applePlatform: true,
+      })
+    );
+    const field = document.createElement('textarea');
+    document.body.appendChild(field);
+    const press = (mods: { metaKey?: boolean; ctrlKey?: boolean }) => {
+      const event = new KeyboardEvent('keydown', {
+        key: 'p',
+        cancelable: true,
+        bubbles: true,
+        ...mods,
+      });
+      field.dispatchEvent(event);
+      return event;
+    };
+    expect(press({ ctrlKey: true }).defaultPrevented).toBe(false);
+    expect(commands).toEqual([]);
+    expect(press({ metaKey: true }).defaultPrevented).toBe(true);
+    expect(commands).toEqual(['quick-open']);
+  });
+
+  test('off macOS Ctrl+P opens quick open, from a text field too', () => {
+    const commands: GlobalKeyCommand[] = [];
+    renderHook(() =>
+      useGlobalKeyboard({
+        onCommand: (c) => commands.push(c),
+        applePlatform: false,
+      })
+    );
+    const field = document.createElement('input');
+    document.body.appendChild(field);
+    const event = new KeyboardEvent('keydown', {
+      key: 'p',
+      ctrlKey: true,
+      cancelable: true,
+      bubbles: true,
+    });
+    field.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(commands).toEqual(['quick-open']);
+  });
+
+  // Settings hides the views under <Activity mode="hidden">, which keeps a dialog
+  // open in one in the DOM (aria-modal and all) behind display: none.
+  test('a modal surface inside a hidden Activity does not count as open', () => {
+    // ActivityProps types children as a prop; they go in as createElement's
+    // third argument, as JSX would put them.
+    const surface = (mode: 'hidden' | 'visible') =>
+      createElement(
+        Activity,
+        { mode } as ComponentProps<typeof Activity>,
+        createElement('div', { role: 'dialog', 'aria-modal': 'true' }, 'kept')
+      );
+    const { getByRole, rerender } = render(surface('hidden'));
+    const dialog = getByRole('dialog', { hidden: true });
+    expect(isShown(dialog)).toBe(false);
+    expect(isAnyModalOpen()).toBe(false);
+    const { commands } = mount();
+    dispatchKeydown('Escape');
+    expect(commands).toEqual(['escape']);
+    // Its view back, the dialog owns the keyboard again.
+    rerender(surface('visible'));
+    expect(isShown(dialog)).toBe(true);
+    expect(isAnyModalOpen()).toBe(true);
+    dispatchKeydown('Escape');
+    expect(commands).toEqual(['escape']);
+  });
+});
+
+describe('isTypingTarget', () => {
+  // A picker's list is not a text field, but its typeahead owns the letters
+  // typed into it, matched or not; a submenu is only role="menu".
+  test('focus inside an open picker or menu counts as typing', () => {
+    const popup = document.createElement('div');
+    popup.setAttribute('data-picker-popup', '');
+    const list = document.createElement('ul');
+    list.setAttribute('role', 'listbox');
+    list.tabIndex = -1;
+    popup.appendChild(list);
+    const submenu = document.createElement('div');
+    submenu.setAttribute('role', 'menu');
+    const item = document.createElement('button');
+    submenu.appendChild(item);
+    const plain = document.createElement('button');
+    document.body.append(popup, submenu, plain);
+    expect(isTypingTarget(list)).toBe(true);
+    expect(isTypingTarget(item)).toBe(true);
+    expect(isTypingTarget(plain)).toBe(false);
+    // A letter typed in the open list never reaches a shortcut.
+    const { commands } = mount();
+    list.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'c',
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    plain.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'c',
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    expect(commands).toEqual(['new-task']);
+  });
+
+  // A ticked review criterion keeps focus on its checkbox, which takes no letters: the
+  // app's bare keys still work from it, while a text input keeps them.
+  test('a checkbox or button input is not typing; a text input is', () => {
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    const press = document.createElement('input');
+    press.type = 'button';
+    const text = document.createElement('input');
+    text.type = 'text';
+    document.body.append(box, press, text);
+    expect(isTypingTarget(box)).toBe(false);
+    expect(isTypingTarget(press)).toBe(false);
+    expect(isTypingTarget(text)).toBe(true);
+    const { commands } = mount();
+    for (const target of [box, text]) {
+      target.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'c',
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+    }
+    expect(commands).toEqual(['new-task']);
+    box.remove();
+    press.remove();
+    text.remove();
+  });
+});
+
+// The platform test itself is `@dispatch/ui`'s `isApplePlatform` (tested there); this checks
+// the hook reads it when no test override is given, so the key the app answers to follows the
+// platform the labels do.
+describe('the platform check', () => {
+  const original = Object.getOwnPropertyDescriptor(navigator, 'platform');
+  afterEach(() => {
+    if (original) Object.defineProperty(navigator, 'platform', original);
+    else Reflect.deleteProperty(navigator, 'platform');
+  });
+
+  function stubPlatform(platform: string) {
+    Object.defineProperty(navigator, 'platform', {
+      configurable: true,
+      get: () => platform,
+    });
+  }
+
+  test.each([
+    ['MacIntel', []],
+    ['Win32', ['quick-open']],
+  ] as const)('on %p Ctrl+P resolves to %p', (platform, expected) => {
+    stubPlatform(platform);
+    const commands: GlobalKeyCommand[] = [];
+    const { unmount } = renderHook(() =>
+      useGlobalKeyboard({ onCommand: (c) => commands.push(c) })
+    );
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'p',
+        ctrlKey: true,
+        cancelable: true,
+        bubbles: true,
+      })
+    );
+    expect(commands).toEqual([...expected]);
+    unmount();
   });
 });

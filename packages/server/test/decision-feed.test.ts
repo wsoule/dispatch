@@ -1,6 +1,8 @@
+import { DEFAULT_STATUS_ROLES } from '@dispatch-foo/core';
 import type { JsonValue, Message } from '@dispatch-foo/protocol';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
+import type { DecisionAck } from '../src/decisionAcks.js';
 import type { DecisionItem, DecisionPolicy } from '../src/decisionFeed.js';
 import { DecisionFeed } from '../src/decisionFeed.js';
 import { EventBus } from '../src/events.js';
@@ -97,8 +99,13 @@ interface Harness {
   gates: Message[];
   pending: Map<string, { requestId: string; input: unknown }>;
   runs: RunMeta[];
+  /** What `unpublishedMerges()` returns: merged runs not yet on origin. */
+  unpublished: RunMeta[];
   loops: FixLoopState[];
   titles: Map<string, string>;
+  statuses: Map<string, string>;
+  /** The in-memory ack store dismissals land in. */
+  acks: Map<string, DecisionAck>;
   setNow(ms: number): void;
 }
 
@@ -107,12 +114,16 @@ function harness(policy?: DecisionPolicy): Harness {
   const gates: Message[] = [];
   const pending: Harness['pending'] = new Map();
   const runs: RunMeta[] = [];
+  const unpublished: RunMeta[] = [];
   const loops: FixLoopState[] = [];
   const titles = new Map<string, string>();
+  const statuses = new Map<string, string>();
+  const acks = new Map<string, DecisionAck>();
   let now = T0;
   const feed = new DecisionFeed({
     orchestrator: {
       list: () => runs,
+      unpublishedMerges: () => unpublished,
       pendingApprovalFor: (runId, requestId) => {
         const parked = pending.get(runId);
         return parked?.requestId === requestId ? parked : undefined;
@@ -123,11 +134,18 @@ function harness(policy?: DecisionPolicy): Harness {
     cache: {
       get: (id) => {
         const title = titles.get(id);
-        return title === undefined ? null : { meta: { title } };
+        const status = statuses.get(id);
+        if (title === undefined && status === undefined) return null;
+        return { meta: { title: title ?? id, status } };
       },
     },
     events,
     policy,
+    acks: {
+      get: (id) => acks.get(id),
+      set: (id, ack) => void acks.set(id, ack),
+      delete: (id) => acks.delete(id),
+    },
     now: () => now,
   });
   return {
@@ -136,8 +154,11 @@ function harness(policy?: DecisionPolicy): Harness {
     gates,
     pending,
     runs,
+    unpublished,
     loops,
     titles,
+    statuses,
+    acks,
     setNow: (ms) => {
       now = ms;
     },
@@ -1040,8 +1061,237 @@ describe('DecisionFeed gate context', () => {
     ]);
   });
 
+  it('carries the queuing turn as the batch of an overseer-action gate', () => {
+    const action = (id: string, actionId: string) =>
+      gate(id, {
+        data: {
+          type: 'overseer-action',
+          conversation: 'c-1',
+          actionId,
+          summary: `do ${actionId}`,
+        },
+      });
+    const batches: Record<string, string> = { 'a-1': 'tb-1', 'a-2': 'tb-1' };
+    const feed = new DecisionFeed({
+      orchestrator: { list: () => [], pendingApprovalFor: () => undefined },
+      openGates: () => [
+        action('m-1', 'a-1'),
+        action('m-2', 'a-2'),
+        action('m-3', 'a-3'),
+      ],
+      fixLoopStore: { list: () => [] },
+      cache: { get: () => null },
+      events: new EventBus(),
+      overseerActionBatch: (conversation, actionId) =>
+        conversation === 'c-1' ? batches[actionId] : undefined,
+    });
+    expect(feed.list().map((i) => [i.messageId, i.batch])).toEqual([
+      ['m-1', 'tb-1'],
+      ['m-2', 'tb-1'],
+      ['m-3', undefined],
+    ]);
+  });
+
   it('names no gate message on an item that has none', () => {
     h.loops.push(cappedLoop('t-1'));
     expect(h.feed.list()[0]?.messageId).toBeUndefined();
+  });
+});
+
+describe('DecisionFeed landed tasks', () => {
+  // The run that carried a task's work onto the base, merged at `mergedAt`.
+  function mergedRun(id: string, taskId: string, mergedAt: string): RunMeta {
+    return runMeta(id, {
+      taskId,
+      state: 'finished',
+      reviewedAt: mergedAt,
+      reviewAction: 'merge',
+      mergeCommit: 'deadbeef',
+    });
+  }
+
+  it('drops a capped fix loop once the task status is landed', () => {
+    h.loops.push(cappedLoop('t-f6ab79'));
+    expect(byKind(h.feed.list(), 'fix-loop-capped')).toHaveLength(1);
+
+    h.statuses.set('t-f6ab79', 'landed');
+    expect(byKind(h.feed.list(), 'fix-loop-capped')).toEqual([]);
+    // It resolves rather than silently vanishing.
+    const resolved = h.feed
+      .list({ includeResolved: true })
+      .find((item) => item.id === 'fix-loop-capped:t-f6ab79');
+    expect(resolved?.state).toBe('resolved');
+  });
+
+  it('drops a capped fix loop when a run merged after it capped', () => {
+    h.loops.push(cappedLoop('t-f6ab79', { updatedAt: ago(30_000) }));
+    h.runs.push(mergedRun('r-merged', 't-f6ab79', ago(10_000)));
+    expect(byKind(h.feed.list(), 'fix-loop-capped')).toEqual([]);
+  });
+
+  it('keeps a loop that capped after the last merge (task reopened)', () => {
+    h.runs.push(mergedRun('r-merged', 't-reopen', ago(60_000)));
+    h.loops.push(cappedLoop('t-reopen', { updatedAt: ago(5_000) }));
+    expect(byKind(h.feed.list(), 'fix-loop-capped')).toHaveLength(1);
+  });
+
+  it('drops stalled runs of a task whose work landed through another run', () => {
+    h.runs.push(
+      runMeta('r-gone', {
+        taskId: 't-4b72c5',
+        state: 'cancelled',
+        baseDiscarded: true,
+        createdAt: ago(120_000),
+      }),
+      runMeta('r-failed', {
+        taskId: 't-4b72c5',
+        state: 'failed',
+        baseDiscarded: true,
+        createdAt: ago(90_000),
+      }),
+      mergedRun('r-merged', 't-4b72c5', ago(10_000))
+    );
+    expect(byKind(h.feed.list(), 'run-stalled')).toEqual([]);
+  });
+
+  it('drops stalled runs once the task status is landed', () => {
+    h.runs.push(runMeta('r-failed', { taskId: 't-done', state: 'failed' }));
+    expect(byKind(h.feed.list(), 'run-stalled')).toHaveLength(1);
+    h.statuses.set('t-done', 'landed');
+    expect(byKind(h.feed.list(), 'run-stalled')).toEqual([]);
+  });
+
+  it('still surfaces a run that failed after the task last merged', () => {
+    h.runs.push(
+      mergedRun('r-merged', 't-reopen', ago(60_000)),
+      runMeta('r-new', {
+        taskId: 't-reopen',
+        state: 'failed',
+        createdAt: ago(30_000),
+      })
+    );
+    expect(
+      byKind(h.feed.list(), 'run-stalled').map((item) => item.runId)
+    ).toEqual(['r-new']);
+  });
+
+  it('honours a custom completed status from the project model', () => {
+    const events = new EventBus();
+    const feed = new DecisionFeed({
+      orchestrator: { list: () => [], pendingApprovalFor: () => undefined },
+      openGates: () => [],
+      fixLoopStore: { list: () => [cappedLoop('t-x')] },
+      cache: { get: () => ({ meta: { title: 'X', status: 'shipped' } }) },
+      events,
+      statusModel: () => ({
+        definitions: [{ name: 'shipped', type: 'completed', color: null }],
+        roles: DEFAULT_STATUS_ROLES,
+      }),
+      now: () => T0,
+    });
+    expect(byKind(feed.list(), 'fix-loop-capped')).toEqual([]);
+  });
+});
+
+describe('DecisionFeed dismissals', () => {
+  it('keeps a dismissed stalled run hidden across recomputes', () => {
+    h.runs.push(runMeta('r-dirty', { state: 'interrupted-dirty' }));
+    const result = h.feed.dismiss('run-stalled:r-dirty');
+    expect(result.ok).toBe(true);
+    expect(h.feed.list()).toEqual([]);
+    expect(h.feed.list()).toEqual([]);
+    // Not reported as resolved either: the condition still holds.
+    expect(h.feed.list({ includeResolved: true })).toEqual([]);
+    const shown = h.feed.list({ includeDismissed: true });
+    expect(shown.map((item) => [item.id, item.dismissedAt])).toEqual([
+      ['run-stalled:r-dirty', new Date(T0).toISOString()],
+    ]);
+  });
+
+  it('brings a dismissed item back once its condition changes', () => {
+    const run = runMeta('r-1', { state: 'failed' });
+    h.runs.push(run);
+    expect(h.feed.dismiss('run-stalled:r-1').ok).toBe(true);
+    expect(h.feed.list()).toEqual([]);
+    // The orphaned agent kept committing: same id, new condition.
+    run.survey = {
+      runId: 'r-1',
+      branch: 'dispatch/r-1',
+      staged: [],
+      unstaged: [],
+      untracked: [],
+      lastCommit: null,
+      cleanTree: true,
+      postFailCommits: [
+        { sha: 'bbb', subject: 'late', date: '2026-08-22T11:00:00Z' },
+      ],
+    };
+    expect(h.feed.list().map((item) => item.reason)).toEqual([
+      'orphan-commits',
+    ]);
+    // The stale ack is gone, so the earlier condition cannot hide a recurrence.
+    expect(h.acks.has('run-stalled:r-1')).toBe(false);
+  });
+
+  it('brings an unpushed merge back when its merge commit moves', () => {
+    const run = runMeta('r-m', { state: 'finished', mergeCommit: 'aaa' });
+    h.unpublished.push(run);
+    expect(h.feed.dismiss('run-stalled:r-m').ok).toBe(true);
+    expect(h.feed.list()).toEqual([]);
+    run.mergeCommit = 'bbb';
+    expect(h.feed.list().map((item) => item.id)).toEqual(['run-stalled:r-m']);
+  });
+
+  it('shows the item again on undo', () => {
+    h.runs.push(runMeta('r-dirty', { state: 'interrupted-dirty' }));
+    h.feed.dismiss('run-stalled:r-dirty');
+    expect(h.feed.restore('run-stalled:r-dirty')).toBe(true);
+    expect(h.feed.list().map((item) => item.id)).toEqual([
+      'run-stalled:r-dirty',
+    ]);
+    expect(h.feed.restore('run-stalled:r-dirty')).toBe(false);
+  });
+
+  it('refuses to dismiss gates and floor holds', () => {
+    h.gates.push(
+      runQuestion('m-q', 'r-live', 'which way?'),
+      approvalGate('m-a', 'r-live', 'req-1', { command: 'pnpm install' })
+    );
+    h.runs.push(
+      runMeta('r-live'),
+      runMeta('r-cap', { state: 'failed', error: 'run hit its cost budget' })
+    );
+    h.loops.push(cappedLoop('t-loop'));
+    const ids = h.feed.list().map((item) => item.id);
+    expect(ids).toHaveLength(4);
+    for (const id of ids) {
+      expect(h.feed.dismiss(id)).toEqual({
+        ok: false,
+        error: 'not-dismissible',
+      });
+    }
+    expect(h.feed.list()).toHaveLength(4);
+    expect(h.acks.size).toBe(0);
+  });
+
+  it('reports an id with no open item as not found', () => {
+    expect(h.feed.dismiss('run-stalled:r-none')).toEqual({
+      ok: false,
+      error: 'not-found',
+    });
+  });
+
+  it('broadcasts decisions.changed on dismiss and on undo', () => {
+    h.runs.push(runMeta('r-dirty', { state: 'interrupted-dirty' }));
+    const seen: ServerEvent[] = [];
+    h.events.subscribe((event) => {
+      if (event.type === 'decisions.changed') seen.push(event);
+    });
+    const stop = h.feed.start();
+    h.feed.dismiss('run-stalled:r-dirty');
+    expect(seen).toHaveLength(1);
+    h.feed.restore('run-stalled:r-dirty');
+    expect(seen).toHaveLength(2);
+    stop();
   });
 });

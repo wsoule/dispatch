@@ -2,10 +2,15 @@ import {
   clearProjectCredential,
   DEFAULT_LINEAR,
   fieldHash,
+  hasLinearAccounts,
+  hasTeammateLinearAccounts,
   isDoneStatus,
   isOutstanding,
+  listLinearAccounts,
+  listTeammateLinearAccounts,
   loadConfig,
   parseLinearExternal,
+  readLinearAccount,
   resolveLinearApiKey,
   statusModelOf,
   statusType,
@@ -16,6 +21,7 @@ import type {
   CommentStorePort,
   CredentialSource,
   DispatchConfig,
+  LinearAccountRecord,
   LinearComment,
   LinearConfig,
   LinearInitiative,
@@ -30,7 +36,7 @@ import type {
   TaskMeta,
   TaskStorePort,
 } from '@dispatch-foo/core';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 import type { TaskCache } from '../cache.js';
 import { DocsError } from '../docs/errors.js';
@@ -41,12 +47,15 @@ import type {
 } from '../docs/linear.js';
 import type { DocsActor } from '../docs/service.js';
 import type { EventBus } from '../events.js';
+import type { LinearAccounts } from './accounts.js';
 import { TaskChangeBatch } from './batch.js';
 import type {
+  LinearAuth,
   LinearCapacity,
   LinearClient,
   LinearErrorKind,
   LinearFailure,
+  LinearIdentity,
   LinearIssuePage,
   LinearIssueRef,
   LinearPage,
@@ -55,6 +64,7 @@ import type {
   LinearWorkspace,
 } from './client.js';
 import { FREE_PLAN_ISSUE_LIMIT, HttpLinearClient } from './client.js';
+import type { LinearPersonWriter } from './comments.js';
 import { CommentSync } from './comments.js';
 import type {
   LinearCoverage,
@@ -67,6 +77,7 @@ import {
   exportPreview,
   linearCoverage,
 } from './coverage.js';
+import type { LinearPersonEdits } from './personEdits.js';
 import type {
   CreateRemoteResult,
   LinearSyncSummary,
@@ -74,6 +85,7 @@ import type {
   RemoteRecord,
 } from './reconcile.js';
 import { emptySummary, LinearPass } from './reconcile.js';
+import { resolveLinearSignInConfig } from './signIn.js';
 import type {
   ConflictRecord,
   LinearBulkOutcome,
@@ -182,6 +194,16 @@ export interface WebhookReply {
   body: Record<string, unknown>;
 }
 
+// A LinearAuth for one fixed access token (no refresh), to ask Linear who a
+// grant belongs to before keeping it.
+function staticBearer(token: string): LinearAuth {
+  return {
+    header: () => Promise.resolve({ ok: true, value: `Bearer ${token}` }),
+    secrets: () => [token],
+    renew: () => Promise.resolve(false),
+  };
+}
+
 export interface LinearSyncDeps {
   rootDir: string;
   store: TaskStorePort;
@@ -191,12 +213,32 @@ export interface LinearSyncDeps {
   comments?: CommentStorePort;
   /** A ready-made client, bypassing credential lookup entirely. Tests inject a fake here. */
   client?: LinearClient;
-  /** Overridden in tests that need a real client against a stub endpoint. */
-  createClient?: (apiKey: string) => LinearClient;
+  /** Builds a client for a credential: an API key string (the project
+   *  connection) or a person's LinearAuth. Overridden in tests that need a
+   *  real client against a stub endpoint. */
+  createClient?: (credential: string | LinearAuth) => LinearClient;
+  /** Where the default client sends GraphQL; Linear's own URL unless the
+   *  fakes gate points it at a fake (DISPATCH_LINEAR_FAKE_ORIGIN). */
+  graphqlUrl?: string;
+  /** The default client's fetch; global fetch unless a test stands in. */
+  fetchImpl?: typeof fetch;
+  /** The person's Linear sign-ins; absent, every write uses the project
+   *  connection. */
+  accounts?: LinearAccounts;
+  /** Which task parts the owner last set (linear/personEdits.ts); with
+   *  `accounts`, the owner's own edits go out with their token. */
+  personEdits?: LinearPersonEdits;
   /** Debounce for the push triggered by a local task change. */
   pushDebounceMs?: number;
   /** The local human's person ref; the API key's Linear user maps to it. */
   localHumanRef?: string;
+  /** A hosted planner's project connection is its workspace install: the
+   *  one Linear account in its home, sent as Bearer, when no API key is set.
+   *  Off for every other daemon, where a sign-in is only its owner's. */
+  connectionFromSignIn?: boolean;
+  /** Whether `handle` holds a live teammate token here; a teammate's grant
+   *  is used only while it does. Absent: no teammate grant is ever used. */
+  teammateActive?: (handle: string) => boolean;
   /** Where Linear can deliver webhooks (a public HTTPS URL), or null to poll. */
   webhookUrl?: string | null;
   /** Delay before a webhook's changes are fetched, coalescing a burst. */
@@ -755,7 +797,7 @@ export class LinearSync {
     const config = this.safeConfig();
     const linear = config?.linear ?? DEFAULT_LINEAR;
     const state = readLinearState(this.deps.rootDir);
-    const { source } = resolveLinearApiKey(this.deps.rootDir);
+    const source = this.projectCredential()?.source ?? null;
     const enabled = config !== null && linear.enabled;
     // The pause's message outlives the pass that hit the limit: paused passes
     // never call Linear, so they record no error of their own.
@@ -825,17 +867,208 @@ export class LinearSync {
   /** Builds a client for ad-hoc reads (the team/state pickers), or null when no key is available. */
   client(): LinearClient | null {
     if (this.deps.client !== undefined) return this.deps.client;
-    const { apiKey } = resolveLinearApiKey(this.deps.rootDir);
-    if (apiKey === null) return null;
-    const make =
-      this.deps.createClient ?? ((key: string) => new HttpLinearClient(key));
-    return make(apiKey);
+    const project = this.projectCredential();
+    return project === null ? null : this.clientFor(project.credential);
+  }
+
+  // The project connection's credential. A hosted planner's is its workspace
+  // install and nothing else: no API key (a member could otherwise swap in
+  // their own, or the host's environment could leak one into every
+  // workspace), and only when its home holds exactly one account, so it never
+  // runs on another workspace's grant. Any other daemon uses an API key
+  // (project, env, then the machine-wide one) and never a sign-in.
+  // `key` identifies the credential for the connection cache.
+  private projectCredential(): {
+    credential: string | LinearAuth;
+    key: string;
+    source: Exclude<CredentialSource, null>;
+  } | null {
+    if (this.deps.connectionFromSignIn === true) {
+      const accounts = this.deps.accounts;
+      const installs = listLinearAccounts();
+      const install = installs[0];
+      if (
+        accounts === undefined ||
+        installs.length !== 1 ||
+        install === undefined
+      )
+        return null;
+      return {
+        credential: accounts.authFor(install.organization.id),
+        key: `install:${install.organization.id}`,
+        source: 'project',
+      };
+    }
+    const { apiKey, source } = resolveLinearApiKey(this.deps.rootDir);
+    if (apiKey === null || source === null) return null;
+    return {
+      credential: apiKey,
+      key: createHash('sha256').update(apiKey).digest('hex'),
+      source,
+    };
+  }
+
+  /** A client for one credential: an API key (sent bare, as always) or a
+   *  person's sign-in (sent as `Bearer`). */
+  clientFor(credential: string | LinearAuth): LinearClient {
+    if (this.deps.createClient !== undefined)
+      return this.deps.createClient(credential);
+    const { graphqlUrl, fetchImpl } = this.deps;
+    return new HttpLinearClient(credential, {
+      ...(graphqlUrl === undefined ? {} : { url: graphqlUrl }),
+      ...(fetchImpl === undefined ? {} : { fetchImpl }),
+    });
+  }
+
+  // The project connection's identity, by a digest of the key it was read
+  // with (an injected client is one fixed key). Only successes are kept.
+  private connectionCache: { key: string; identity: LinearIdentity } | null =
+    null;
+
+  /**
+   * Who the project connection acts as, and its Linear workspace: null when
+   * no key resolves, a failure when Linear could not say. Cached per key, so
+   * only the first call after a connect reaches Linear.
+   */
+  async connection(): Promise<LinearResult<LinearIdentity> | null> {
+    let key: string;
+    let client: LinearClient | null;
+    if (this.deps.client !== undefined) {
+      key = 'injected';
+      client = this.deps.client;
+    } else {
+      const project = this.projectCredential();
+      if (project === null) return null;
+      key = project.key;
+      client = this.clientFor(project.credential);
+    }
+    const cached = this.connectionCache;
+    if (cached !== null && cached.key === key)
+      return { ok: true, data: cached.identity };
+    const identity = await client.identity();
+    if (identity.ok) this.connectionCache = { key, identity: identity.data };
+    return identity;
+  }
+
+  /**
+   * The identity the project connection last had in this daemon, even when
+   * Linear cannot say now (the key was rotated outside Settings, or Linear
+   * is down), so the person can still see and end their sign-in for that
+   * workspace. Null after a connect or disconnect, and before the first
+   * successful lookup. Never used to choose a writer.
+   */
+  lastConnection(): LinearIdentity | null {
+    return this.connectionCache?.identity ?? null;
+  }
+
+  /**
+   * Everyone this daemon writes to Linear as, for their own edits: the
+   * owner's sign-in, and on a shared host each teammate's grant
+   * (teammateGrantKey), each with `write` for the project connection's
+   * workspace. A teammate's ref is `human:<handle>`, the ref their own
+   * credential writes as. Empty when nobody has one.
+   */
+  private async personWriters(): Promise<LinearPersonWriter[]> {
+    const accounts = this.deps.accounts;
+    // Nobody signed in: never ask Linear who the connection is.
+    const anyOwner = hasLinearAccounts();
+    if (accounts === undefined || (!anyOwner && !hasTeammateLinearAccounts()))
+      return [];
+    const connection = await this.connection();
+    if (connection === null || !connection.ok) return [];
+    const orgId = connection.data.organization.id;
+    const writers: LinearPersonWriter[] = [];
+    const owner = anyOwner ? readLinearAccount(orgId) : null;
+    if (owner !== null && owner.scope.includes('write'))
+      writers.push({
+        client: this.clientFor(accounts.authFor(orgId)),
+        userId: owner.user.id,
+        ref: this.deps.localHumanRef ?? 'human:me',
+      });
+    for (const teammate of listTeammateLinearAccounts(orgId)) {
+      if (!teammate.record.scope.includes('write')) continue;
+      // A grant outliving its teammate's token is never used.
+      if (this.deps.teammateActive?.(teammate.handle) !== true) continue;
+      writers.push({
+        client: this.clientFor(accounts.authFor(teammate.key)),
+        userId: teammate.record.user.id,
+        ref: `human:${teammate.handle}`,
+      });
+    }
+    return writers;
+  }
+
+  /**
+   * Holds a teammate's Linear grant on this shared host, so their own edits
+   * reach Linear as them. Refused unless the grant is for the project
+   * connection's workspace (a grant for any other would never be used, and
+   * must not be kept) and carries `write`.
+   */
+  async saveTeammateGrant(
+    handle: string,
+    record: LinearAccountRecord
+  ): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+    const accounts = this.deps.accounts;
+    if (accounts === undefined)
+      return { ok: false, status: 409, error: 'Linear sign-ins are off here.' };
+    const connection = await this.connection();
+    if (connection === null || !connection.ok)
+      return { ok: false, status: 409, error: 'Linear is not connected.' };
+    if (record.organization.id !== connection.data.organization.id)
+      return {
+        ok: false,
+        status: 409,
+        error: 'That grant is for another Linear workspace.',
+      };
+    if (!record.scope.includes('write'))
+      return { ok: false, status: 400, error: 'The grant has no write scope.' };
+    // Refreshed with this daemon's own app: a grant another app issued would
+    // fail its first refresh and quietly stop carrying their edits.
+    const app = resolveLinearSignInConfig(this.safeConfig()?.linear ?? null);
+    if (record.clientId !== app.clientId)
+      return {
+        ok: false,
+        status: 400,
+        error:
+          "That grant was issued by another Linear app than this daemon's.",
+      };
+    // Who the grant really is, asked of Linear with its own token: the record
+    // names a user and a workspace, but only Linear's answer is trusted.
+    const probe = await this.clientFor(
+      staticBearer(record.accessToken)
+    ).identity();
+    if (
+      !probe.ok ||
+      probe.data.viewer.id !== record.user.id ||
+      probe.data.organization.id !== connection.data.organization.id
+    )
+      return {
+        ok: false,
+        status: 409,
+        error: 'Linear does not confirm that grant for this workspace.',
+      };
+    await accounts.saveTeammate(handle, record);
+    return { ok: true };
+  }
+
+  /** Forgets and revokes every grant a teammate holds; needs no Linear
+   *  connection, so revoking their access never waits on Linear. */
+  async removeTeammateGrant(handle: string): Promise<number> {
+    return (await this.deps.accounts?.removeTeammate(handle)) ?? 0;
+  }
+
+  /** The owner's own writer, for the actions only the owner takes as
+   *  themselves (sharing a doc). */
+  private async ownerWriter(): Promise<LinearPersonWriter | null> {
+    const ref = this.deps.localHumanRef ?? 'human:me';
+    return (await this.personWriters()).find((w) => w.ref === ref) ?? null;
   }
 
   /** Stores an API key for this project only — the daemon's own `rootDir` is the credential's
    *  key. The machine-wide key is never written, staying a read-only fallback. */
   connect(apiKey: string): void {
     this.workspaceCache = null;
+    this.connectionCache = null;
     this.resetCapacity();
     writeProjectCredential(this.deps.rootDir, 'linear', { apiKey });
   }
@@ -854,6 +1087,7 @@ export class LinearSync {
       writeLinearState(this.deps.rootDir, state);
     }
     this.workspaceCache = null;
+    this.connectionCache = null;
     this.resetCapacity();
     clearProjectCredential(this.deps.rootDir, 'linear');
   }
@@ -1073,11 +1307,18 @@ export class LinearSync {
    * under the project or issue its task mirrors. The docs side refuses before
    * any Linear call; nothing but this action sends a doc to Linear.
    */
-  async shareDocument(actor: DocsActor, ref: string): Promise<string> {
+  async shareDocument(
+    actor: DocsActor,
+    ref: string,
+    opts: { asOwner?: boolean } = {}
+  ): Promise<string> {
     const binding = this.deps.documents;
     if (binding === undefined)
       throw new DocsError('unavailable', 'Linear documents are off');
-    let client: LinearClient | null = null;
+    // The owner sharing on their own credential shares as themselves when
+    // signed in; anyone else shares through the project connection.
+    const person = opts.asOwner === true ? await this.ownerWriter() : null;
+    let client: LinearClient | null = person?.client ?? null;
     const adapter = binding.adapter({
       port: this.documentsPort(
         () => {
@@ -1795,6 +2036,14 @@ export class LinearSync {
       localRef,
       session.teams.map((t) => ({ id: t.team.id, states: t.states }))
     );
+    // The owner's own edits go out as them when they are signed in for this
+    // workspace: an issue push sends the fields the ledger says are theirs
+    // with their client and the rest with the project connection.
+    const edits = this.deps.personEdits;
+    const persons =
+      mayPush && !archiving && edits !== undefined
+        ? await this.personWriters()
+        : [];
     const pass = new LinearPass({
       store,
       client: session.client,
@@ -1809,6 +2058,25 @@ export class LinearSync {
       note: (failure) => this.note(failure),
       onLabel: (label) => this.cacheLabel(session, label),
       blockedLabels: this.blockedLabels,
+      ...(edits === undefined
+        ? {}
+        : {
+            persons: persons.map((person) => ({
+              client: person.client,
+              owned: (doc: TaskDoc, fields: readonly string[]) =>
+                edits.owned(doc, fields, person.ref),
+            })),
+          }),
+      ...(edits === undefined
+        ? {}
+        : {
+            onSettled: (
+              taskId: string,
+              landed: readonly string[],
+              pending: readonly string[]
+            ) => edits.settled(taskId, landed, pending),
+            onLocalWrite: (doc: TaskDoc) => edits.observe(doc.meta.id, doc),
+          }),
     });
     // A color write that did not land keeps its old base, so it retries.
     for (const id of await pass.pushLabelColors(labels.push)) {
@@ -1831,6 +2099,17 @@ export class LinearSync {
           : new CommentSync({
               comments: this.deps.comments,
               client: session.client,
+              persons:
+                edits === undefined
+                  ? []
+                  : persons.map((person) => ({
+                      ...person,
+                      wrote: (id: string, body: string) =>
+                        edits.wroteComment(id, body, person.ref),
+                      deleted: (id: string) =>
+                        edits.deletedComment(id, person.ref),
+                    })),
+              onSettled: (id: string) => edits?.commentSettled(id),
               state,
               ctx,
               pass,

@@ -84,8 +84,8 @@ Everything goes through one message bus. Addresses are \`human:<handle>\`,
   handle in your own address (\`agent:<handle>/<name>\` → \`human:<handle>\`).
 - **Ask for scope** (inside a dispatch run): \`msg_send(kind: "question",
   blocking: true, choices: ["grant", "deny"], data: { type: "scope", paths,
-  reason })\`. Edit outside your fence only on \`grant\`. No decision in time
-  means denied.
+  reason })\`. Edit outside your fence only on \`grant\`. It never expires:
+  it waits up to 24 hours for a decision, with your run paused.
 - **Tell someone**: \`kind: "notice"\` (FYI) or \`"message"\`, no blocking.
 - **Hear back**: messages arrive in your session. Answer with \`msg_reply\`,
   catch up with \`inbox_read\`, and read a whole conversation with \`thread_read\`.

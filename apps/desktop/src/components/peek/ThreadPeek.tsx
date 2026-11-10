@@ -1,3 +1,4 @@
+import { Button, EmptyState, SkeletonText } from '@dispatch/ui';
 import { useEffect, useMemo } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
@@ -13,10 +14,8 @@ import { subjectOf } from '../../lib/conversationScope';
 import type { RefAction } from '../../lib/threadSources';
 import { replyRoute } from '../../lib/threadSources';
 import { ThreadPane } from '../threads/ThreadPane';
-import { PeekDrawer } from './PeekDrawer';
-import { Button } from '@/ui/button';
-import { EmptyState } from '@/ui/chrome';
-import { Spinner } from '@/ui/spinner';
+import { PeekSlideOver } from './PeekSlideOver';
+import styles from './ThreadPeek.module.css';
 
 export interface ThreadPeekProps {
   data: DispatchProjectData;
@@ -29,7 +28,7 @@ export interface ThreadPeekProps {
   onClose: () => void;
 }
 
-/** One thread in a drawer above the composer; it never changes the view underneath. */
+/** One thread in the shell's slide-over; it never changes the view underneath. */
 export function ThreadPeek({
   data,
   overseer,
@@ -57,17 +56,17 @@ export function ThreadPeek({
   const root = open.messages[0];
   const home = root === undefined || me === null ? null : subjectOf(root, me);
   return (
-    <PeekDrawer
-      label="Thread"
+    <PeekSlideOver
       testId="thread-peek"
+      contentKey={messageId}
       title="Thread"
       subtitle={home ?? undefined}
       onClose={onClose}
       actions={
         home !== null && (
           <Button
-            size="xs"
-            variant="link"
+            size="sm"
+            variant="quiet"
             onClick={() => {
               onClose();
               onOpenHome(home);
@@ -78,13 +77,13 @@ export function ThreadPeek({
         )
       }
     >
-      <div className="min-h-0 flex-1">
+      <div className={styles.body}>
         {!access.canMessage ? (
-          <EmptyState
-            className="h-full"
-            heading="Threads are not available in this window."
-            description={access.explanation}
-          />
+          <div className={styles.centred}>
+            <EmptyState label="Threads are not available in this window.">
+              {access.explanation}
+            </EmptyState>
+          </div>
         ) : ready && me !== null ? (
           <ThreadPane
             key={open.thread}
@@ -118,13 +117,15 @@ export function ThreadPeek({
             overseerVoice="agent"
           />
         ) : open.error !== null ? (
-          <EmptyState className="h-full" heading={open.error.message} />
+          <div className={styles.centred}>
+            <EmptyState>{open.error.message}</EmptyState>
+          </div>
         ) : (
-          <div className="flex h-full items-center justify-center">
-            <Spinner className="text-muted-foreground size-4" />
+          <div className={styles.loading}>
+            <SkeletonText lines={4} label="Loading the thread" />
           </div>
         )}
       </div>
-    </PeekDrawer>
+    </PeekSlideOver>
   );
 }

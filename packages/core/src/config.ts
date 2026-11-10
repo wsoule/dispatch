@@ -24,6 +24,9 @@ import type {
   OrchestratorConfig,
   OverseerConfig,
   OverseerStreamMode,
+  PlanningConfig,
+  PlanningProjectStatus,
+  PlanningTuningNumber,
   PreviewConfig,
   QueueConfig,
   ReceiptsConfig,
@@ -62,18 +65,31 @@ import {
   MAX_CONCURRENCY_HARD_CAP,
   MODEL_ROLES,
   NOTIFICATION_KINDS,
+  OVERSEER_AUTONOMY_LEVELS,
   OVERSEER_STREAM_MODES,
+  PLANNING_PROJECT_STATUSES,
+  PLANNING_TUNING_NUMBERS,
   RETIRED_MODEL_ROLES,
   RUN_STREAM_MODES,
 } from './configTypes.js';
 import { describeValue } from './describe.js';
+import { DEPENDENT_START_MODES } from './graph.js';
+import type { DependentStart } from './graph.js';
 import { labelDefinitionError, labelRef } from './labels.js';
 import type { LabelDefinition } from './labels.js';
 import { personError } from './people.js';
 import type { Person } from './people.js';
-import type { PolicyConfig, PolicyGate, PolicyGateMode } from './policy.js';
+import type {
+  DifficultyPolicy,
+  DifficultyThreshold,
+  PolicyConfig,
+  PolicyGate,
+  PolicyGateMode,
+} from './policy.js';
 import {
+  DEFAULT_DIFFICULTY_POLICY,
   DEFAULT_POLICY,
+  DIFFICULTY_THRESHOLDS,
   isFloorCheck,
   MAX_POLICY_RUNG,
   MIN_POLICY_RUNG,
@@ -128,6 +144,8 @@ const DEFAULT_ORCHESTRATOR: OrchestratorConfig = {
   verifyTimeoutSec: 600,
   maxConcurrency: 16,
   runCostEstimateUsd: 10,
+  unlimitedSpend: false,
+  startDependents: 'landed',
 };
 
 // `escalation` holds objects, so a shallow spread would share rows between the
@@ -163,6 +181,7 @@ const DEFAULTS: DispatchConfig = {
   messaging: { ...DEFAULT_MESSAGING },
   receipts: { ...DEFAULT_RECEIPTS },
   policy: { ...DEFAULT_POLICY, gates: {} },
+  overseer: { ...DEFAULT_OVERSEER },
   // No `queue` here: it is the one optional block, so a DEFAULTS entry could
   // only be read through a fallback anyway. Both readers call defaultQueue().
 };
@@ -555,6 +574,13 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
     );
   }
 
+  const { unlimitedSpend } = obj;
+  if (unlimitedSpend !== undefined && typeof unlimitedSpend !== 'boolean') {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: orchestrator.unlimitedSpend must be a boolean'
+    );
+  }
+
   const { permissionMode } = obj;
   if (
     permissionMode !== undefined &&
@@ -627,9 +653,21 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
     );
   }
 
+  const { startDependents } = obj;
+  if (
+    startDependents !== undefined &&
+    !DEPENDENT_START_MODES.includes(startDependents as DependentStart)
+  ) {
+    throw new ConfigError(
+      `invalid .dispatch/config.yml: orchestrator.startDependents must be one of ${DEPENDENT_START_MODES.join('|')}`
+    );
+  }
+
   return {
     maxTurns: maxTurns ?? DEFAULT_ORCHESTRATOR.maxTurns,
-    maxBudgetUsd,
+    // Dropped here rather than at each consumer, so no executor can miss it.
+    maxBudgetUsd: unlimitedSpend === true ? undefined : maxBudgetUsd,
+    unlimitedSpend: unlimitedSpend ?? DEFAULT_ORCHESTRATOR.unlimitedSpend,
     permissionMode: permissionMode ?? DEFAULT_ORCHESTRATOR.permissionMode,
     milestoneConcurrency: resolvedMilestoneConcurrency,
     verifyTimeoutSec: verifyTimeoutSec ?? DEFAULT_ORCHESTRATOR.verifyTimeoutSec,
@@ -637,6 +675,9 @@ function parseOrchestratorConfig(raw: unknown): OrchestratorConfig {
     runCostEstimateUsd:
       runCostEstimateUsd ?? DEFAULT_ORCHESTRATOR.runCostEstimateUsd,
     executor: executor?.trim() ?? DEFAULT_ORCHESTRATOR.executor,
+    startDependents:
+      (startDependents as DependentStart | undefined) ??
+      DEFAULT_ORCHESTRATOR.startDependents,
   };
 }
 
@@ -865,6 +906,111 @@ function parseExecutorsConfig(raw: unknown): Record<string, ExecutorConfig> {
     };
   }
   return result;
+}
+
+// The longest planning window or lead time, in days.
+const PLANNING_MAX_DAYS = 365;
+
+// Validates the optional `planning:` block: each tuning number a whole number
+// of days (overdueRepeatDays at least 1, the rest at least 0), the active
+// statuses a non-empty list of known project statuses, the watchers a list of
+// `human:<handle>` refs. Undefined (no block) stays undefined.
+function parsePlanningConfig(raw: unknown): PlanningConfig | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  const where = 'invalid .dispatch/config.yml: planning';
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new ConfigError(`${where} must be an object`);
+  }
+  const obj = raw as Record<string, unknown>;
+  const tuningRaw = obj.tuning ?? {};
+  if (
+    typeof tuningRaw !== 'object' ||
+    tuningRaw === null ||
+    Array.isArray(tuningRaw)
+  ) {
+    throw new ConfigError(`${where}.tuning must be an object`);
+  }
+  const tuningObj = tuningRaw as Record<string, unknown>;
+  const tuning: PlanningConfig['tuning'] = {};
+  for (const [key, value] of Object.entries(tuningObj)) {
+    if (key === 'activeProjectStatuses') {
+      if (
+        !Array.isArray(value) ||
+        value.length === 0 ||
+        !value.every((s) =>
+          (PLANNING_PROJECT_STATUSES as readonly unknown[]).includes(s)
+        )
+      ) {
+        throw new ConfigError(
+          `${where}.tuning.activeProjectStatuses must list some of ${PLANNING_PROJECT_STATUSES.join('|')}`
+        );
+      }
+      tuning.activeProjectStatuses = [
+        ...new Set(value as PlanningProjectStatus[]),
+      ];
+      continue;
+    }
+    if (!(PLANNING_TUNING_NUMBERS as readonly string[]).includes(key)) {
+      throw new ConfigError(`${where}.tuning has an unknown field: ${key}`);
+    }
+    const least = key === 'overdueRepeatDays' ? 1 : 0;
+    if (
+      typeof value !== 'number' ||
+      !Number.isInteger(value) ||
+      value < least ||
+      value > PLANNING_MAX_DAYS
+    ) {
+      throw new ConfigError(
+        `${where}.tuning.${key} must be a whole number of days from ${least} to ${PLANNING_MAX_DAYS}`
+      );
+    }
+    tuning[key as PlanningTuningNumber] = value;
+  }
+  const watchers = obj.watchers ?? [];
+  if (
+    !Array.isArray(watchers) ||
+    !watchers.every((w) => typeof w === 'string' && w.startsWith('human:'))
+  ) {
+    throw new ConfigError(
+      `${where}.watchers must be a list of human:<handle> refs`
+    );
+  }
+  const weightsRaw = obj.weights ?? {};
+  if (
+    typeof weightsRaw !== 'object' ||
+    weightsRaw === null ||
+    Array.isArray(weightsRaw)
+  ) {
+    throw new ConfigError(`${where}.weights must map milestone ids to numbers`);
+  }
+  const weights: Record<string, number> = {};
+  for (const [id, weight] of Object.entries(weightsRaw)) {
+    if (
+      typeof weight !== 'number' ||
+      !Number.isInteger(weight) ||
+      Math.abs(weight) > 1000
+    ) {
+      throw new ConfigError(
+        `${where}.weights.${id} must be a whole number from -1000 to 1000`
+      );
+    }
+    weights[id] = weight;
+  }
+  const allocation = obj.allocation ?? 'manual';
+  if (allocation !== 'manual' && allocation !== 'daily') {
+    throw new ConfigError(`${where}.allocation must be manual or daily`);
+  }
+  const warnings = obj.warnings ?? 'off';
+  if (warnings !== 'off' && warnings !== 'notify') {
+    throw new ConfigError(`${where}.warnings must be off or notify`);
+  }
+  return {
+    tuning,
+    watchers: [...new Set(watchers as string[])],
+    weights,
+    allocation,
+    warnings,
+  };
 }
 
 // Validates the optional `repoDigest:` block, same contract as
@@ -1170,7 +1316,80 @@ function parsePolicyConfig(raw: unknown): PolicyConfig {
     }
   }
 
-  return { rung: rung ?? DEFAULT_POLICY.rung, gates: parsedGates };
+  const difficulty =
+    obj.difficulty === undefined
+      ? undefined
+      : parseDifficultyPolicy(obj.difficulty, DEFAULT_DIFFICULTY_POLICY);
+  return {
+    rung: rung ?? DEFAULT_POLICY.rung,
+    gates: parsedGates,
+    ...(difficulty === undefined ? {} : { difficulty }),
+  };
+}
+
+const DIFFICULTY_FIELDS: readonly (keyof DifficultyPolicy)[] = [
+  'autoLand',
+  'autoDispatch',
+  'threshold',
+  'maxFiles',
+  'maxLines',
+  'maxConcurrent',
+];
+
+/**
+ * Validates a `policy.difficulty` block (or a patch to one) field by field
+ * over `base`, so a partial block keeps the defaults for what it omits. An
+ * unknown field is a ConfigError: a typo like `autoland: true` must not
+ * leave the lift silently off — or, worse, a misspelled ceiling unenforced.
+ */
+function parseDifficultyPolicy(
+  raw: unknown,
+  base: DifficultyPolicy,
+  where = '.dispatch/config.yml policy.difficulty'
+): DifficultyPolicy {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(`invalid ${where}: must be an object`);
+  }
+  const out: DifficultyPolicy = { ...base };
+  for (const [field, value] of Object.entries(raw)) {
+    if (value === undefined) continue;
+    switch (field) {
+      case 'autoLand':
+      case 'autoDispatch':
+        if (typeof value !== 'boolean') {
+          throw new ConfigError(`invalid ${where}.${field}: must be a boolean`);
+        }
+        out[field] = value;
+        break;
+      case 'threshold':
+        if (!DIFFICULTY_THRESHOLDS.includes(value as DifficultyThreshold)) {
+          throw new ConfigError(
+            `invalid ${where}.threshold: must be one of ${DIFFICULTY_THRESHOLDS.join('|')}`
+          );
+        }
+        out.threshold = value as DifficultyThreshold;
+        break;
+      case 'maxFiles':
+      case 'maxLines':
+      case 'maxConcurrent':
+        if (
+          typeof value !== 'number' ||
+          !Number.isInteger(value) ||
+          value < 1
+        ) {
+          throw new ConfigError(
+            `invalid ${where}.${field}: must be a positive integer`
+          );
+        }
+        out[field] = value;
+        break;
+      default:
+        throw new ConfigError(
+          `invalid ${where}: unknown field ${field} (expected ${DIFFICULTY_FIELDS.join('|')})`
+        );
+    }
+  }
+  return out;
 }
 
 // Validates the optional `models:` block, same contract as parseOrchestratorConfig.
@@ -1358,6 +1577,24 @@ function parseLinearConfig(raw: unknown): LinearConfig {
     );
   }
 
+  const { oauthClientId } = obj;
+  if (
+    oauthClientId !== undefined &&
+    oauthClientId !== null &&
+    !isOAuthClientId(oauthClientId)
+  ) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: linear.oauthClientId must be a client ID (no spaces, at most 200 characters) or null'
+    );
+  }
+
+  const { oauthCallbackPort } = obj;
+  if (oauthCallbackPort !== undefined && !isCallbackPort(oauthCallbackPort)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: linear.oauthCallbackPort must be a whole number from 1024 to 65535'
+    );
+  }
+
   const { statusMap } = obj;
   const mergedStatusMap = { ...defaults.statusMap };
   if (statusMap !== undefined) {
@@ -1390,7 +1627,30 @@ function parseLinearConfig(raw: unknown): LinearConfig {
     includeAcceptanceCriteria:
       includeAcceptanceCriteria ?? defaults.includeAcceptanceCriteria,
     archiveFinished: archiveFinished ?? defaults.archiveFinished,
+    oauthClientId:
+      typeof oauthClientId === 'string' ? oauthClientId.trim() : null,
+    oauthCallbackPort: isCallbackPort(oauthCallbackPort)
+      ? oauthCallbackPort
+      : defaults.oauthCallbackPort,
   };
+}
+
+// A Linear OAuth client ID as config may hold it: printable, no whitespace
+// inside, at most 200 characters. It is not a secret, only an app's name.
+function isOAuthClientId(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  return trimmed !== '' && trimmed.length <= 200 && !/\s/.test(trimmed);
+}
+
+// The sign-in callback listener's port: an unprivileged TCP port.
+function isCallbackPort(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= 1024 &&
+    value <= 65535
+  );
 }
 
 // Validates one escalation row. `label` names it in the error so a bad row in
@@ -1503,19 +1763,36 @@ function parseOverseerConfig(raw: unknown): OverseerConfig {
       'invalid .dispatch/config.yml: overseer must be a mapping'
     );
   }
-  const stream = (raw as Record<string, unknown>).stream;
-  if (stream === undefined) return { ...DEFAULT_OVERSEER };
-  const normalized =
-    stream === true ? 'live' : stream === false ? 'off' : stream;
-  if (
-    typeof normalized !== 'string' ||
-    !OVERSEER_STREAM_MODES.includes(normalized as OverseerStreamMode)
-  ) {
-    throw new ConfigError(
-      `invalid .dispatch/config.yml: overseer.stream must be one of: ${OVERSEER_STREAM_MODES.join(', ')}`
-    );
+  const { stream, autonomy } = raw as Record<string, unknown>;
+  const result = { ...DEFAULT_OVERSEER };
+  if (stream !== undefined) {
+    const normalized =
+      stream === true ? 'live' : stream === false ? 'off' : stream;
+    if (
+      typeof normalized !== 'string' ||
+      !OVERSEER_STREAM_MODES.includes(normalized as OverseerStreamMode)
+    ) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: overseer.stream must be one of: ${OVERSEER_STREAM_MODES.join(', ')}`
+      );
+    }
+    result.stream = normalized as OverseerStreamMode;
   }
-  return { stream: normalized as OverseerStreamMode };
+  // An unknown autonomy is an error, not a silent fallback: a typo would
+  // otherwise leave the overseer asking (or not asking) while the file reads
+  // as the opposite.
+  if (autonomy !== undefined) {
+    if (
+      typeof autonomy !== 'string' ||
+      !(OVERSEER_AUTONOMY_LEVELS as readonly string[]).includes(autonomy)
+    ) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: overseer.autonomy must be one of ${OVERSEER_AUTONOMY_LEVELS.join('|')}`
+      );
+    }
+    result.autonomy = autonomy as OverseerConfig['autonomy'];
+  }
+  return result;
 }
 
 // Validates the optional `runs:` block, the way parseOverseerConfig does the
@@ -1916,6 +2193,7 @@ function parseConfig(parsed: unknown): DispatchConfig {
     verify: parseVerifyConfig(raw.verify),
     carto: parseCarto(raw.carto),
     repoDigest: parseRepoDigestConfig(raw.repoDigest),
+    ...planningField(parsePlanningConfig(raw.planning)),
     notifications: parseNotificationsConfig(raw.notifications),
     messaging: parseMessagingConfig(raw.messaging),
     memory: parseMemoryConfig(raw.memory).config,
@@ -2049,6 +2327,26 @@ function applyLinearPatch(
       );
     }
     setIn(doc, ['linear', 'archiveFinished'], patch.archiveFinished);
+  }
+  if (patch.oauthClientId !== undefined) {
+    if (patch.oauthClientId !== null && !isOAuthClientId(patch.oauthClientId)) {
+      throw new ConfigError(
+        'invalid linear.oauthClientId: must be a client ID (no spaces, at most 200 characters) or null'
+      );
+    }
+    setIn(
+      doc,
+      ['linear', 'oauthClientId'],
+      patch.oauthClientId === null ? null : patch.oauthClientId.trim()
+    );
+  }
+  if (patch.oauthCallbackPort !== undefined) {
+    if (!isCallbackPort(patch.oauthCallbackPort)) {
+      throw new ConfigError(
+        'invalid linear.oauthCallbackPort: must be a whole number from 1024 to 65535'
+      );
+    }
+    setIn(doc, ['linear', 'oauthCallbackPort'], patch.oauthCallbackPort);
   }
   if (patch.statusMap !== undefined) {
     if (
@@ -2191,6 +2489,7 @@ function applyBlockPatches(doc: YAML.Document, patch: ConfigPatch): void {
     ['receipts', patch.receipts],
     ['sync', patch.sync],
     ['preview', patch.preview],
+    ['overseer', patch.overseer],
     ['memory', patch.memory],
   ] as const;
   for (const [block, fields] of blocks) {
@@ -2200,30 +2499,91 @@ function applyBlockPatches(doc: YAML.Document, patch: ConfigPatch): void {
     }
   }
   setOrDelete(doc, ['prWorktreeDir'], patch.prWorktreeDir);
+  applyPlanningPatch(doc, patch.planning);
 }
 
-// Writes the chat streaming switches, `overseer.stream` and `runs.stream`,
-// each checked before the write: `stream` is the only key either block has,
-// so any other would sit on disk unread, and a mode the block does not know
-// would make every later loadConfig throw. `null` removes the key, and the
-// block too once nothing is left in it, as effort does.
+// The `planning` key only when the file has the block, so a config without
+// one reads exactly as before.
+function planningField(planning: PlanningConfig | undefined): {
+  planning?: PlanningConfig;
+} {
+  return planning === undefined ? {} : { planning };
+}
+
+// Writes the planning block field by field; null clears a field (and the
+// block once nothing is left). Validation is the loader's, run after.
+function applyPlanningPatch(
+  doc: YAML.Document,
+  patch: ConfigPatch['planning']
+): void {
+  if (patch === undefined) return;
+  for (const [field, value] of Object.entries(patch.tuning ?? {})) {
+    const cleared =
+      value === null || (Array.isArray(value) && value.length === 0);
+    setOrDelete(doc, ['planning', 'tuning', field], cleared ? null : value);
+  }
+  if (patch.watchers !== undefined) {
+    const cleared = patch.watchers === null || patch.watchers.length === 0;
+    setOrDelete(doc, ['planning', 'watchers'], cleared ? null : patch.watchers);
+  }
+  for (const [id, weight] of Object.entries(patch.weights ?? {})) {
+    setOrDelete(doc, ['planning', 'weights', id], weight);
+  }
+  if (patch.allocation !== undefined) {
+    setOrDelete(
+      doc,
+      ['planning', 'allocation'],
+      patch.allocation === 'manual' ? null : patch.allocation
+    );
+  }
+  if (patch.warnings !== undefined) {
+    setOrDelete(
+      doc,
+      ['planning', 'warnings'],
+      patch.warnings === 'off' ? null : patch.warnings
+    );
+  }
+  for (const path of [
+    ['planning', 'tuning'],
+    ['planning', 'weights'],
+    ['planning'],
+  ]) {
+    const left = doc.getIn(path);
+    if (YAML.isMap(left) && left.items.length === 0) doc.deleteIn(path);
+  }
+}
+
+// Writes the chat-behaviour switches, `overseer.stream`, `overseer.autonomy`
+// and `runs.stream`, each checked before the write: a field a block does not
+// have would sit on disk unread, and a value it does not know would make
+// every later loadConfig throw. `null` removes the key, and the block too
+// once nothing is left in it, as effort does.
 function applyStreamPatches(doc: YAML.Document, patch: ConfigPatch): void {
-  const blocks = [
-    ['overseer', patch.overseer, OVERSEER_STREAM_MODES],
-    ['runs', patch.runs, RUN_STREAM_MODES],
-  ] as const;
-  for (const [block, fields, modes] of blocks) {
+  const blocks: [
+    string,
+    object | undefined,
+    Record<string, readonly string[]>,
+  ][] = [
+    [
+      'overseer',
+      patch.overseer,
+      { stream: OVERSEER_STREAM_MODES, autonomy: OVERSEER_AUTONOMY_LEVELS },
+    ],
+    ['runs', patch.runs, { stream: RUN_STREAM_MODES }],
+  ];
+  for (const [block, fields, allowed] of blocks) {
     if (fields === undefined) continue;
     for (const [field, value] of Object.entries(fields)) {
-      if (field !== 'stream') {
+      const modes = allowed[field];
+      if (modes === undefined) {
         throw new ConfigError(
-          `invalid ${block} field: ${field} (expected stream)`
+          `invalid ${block} field: ${field} (expected ${Object.keys(allowed).join('|')})`
         );
       }
       if (value === undefined) continue;
       if (value !== null && !(modes as readonly unknown[]).includes(value)) {
         throw new ConfigError(
-          `invalid ${block}.stream: must be one of ${modes.join('|')}`
+          `invalid ${block}.${field}: must be one of ${modes.join('|')}`
         );
       }
       setOrDelete(doc, [block, field], value);
@@ -2312,6 +2672,13 @@ export function updateConfig(
       );
     }
     setIn(doc, ['orchestrator', 'runCostEstimateUsd'], value);
+  }
+
+  if (patch.unlimitedSpend !== undefined) {
+    if (typeof patch.unlimitedSpend !== 'boolean') {
+      throw new ConfigError('invalid unlimitedSpend: must be a boolean');
+    }
+    doc.setIn(['orchestrator', 'unlimitedSpend'], patch.unlimitedSpend);
   }
 
   // Positive *numbers*, not integers: a budget is money and a turn cap is
@@ -2482,6 +2849,20 @@ export function updateConfig(
           );
         }
         setIn(doc, ['policy', 'gates', gate], mode);
+      }
+    }
+    if (patch.policy.difficulty !== undefined) {
+      // Validated against the defaults before any field is written, so a bad
+      // value never reaches disk; then written key-by-key so the fields the
+      // patch omits keep whatever the file already says.
+      parseDifficultyPolicy(
+        patch.policy.difficulty,
+        DEFAULT_DIFFICULTY_POLICY,
+        'policy.difficulty'
+      );
+      for (const [field, value] of Object.entries(patch.policy.difficulty)) {
+        if (value === undefined) continue;
+        doc.setIn(['policy', 'difficulty', field], value);
       }
     }
   }

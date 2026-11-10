@@ -69,6 +69,9 @@ export type ServerEvent =
   | { type: 'review.changed'; runId: string }
   // .dispatch/config.yml changed through the Settings screen.
   | { type: 'config.changed' }
+  // A GET /api/health field settled after boot (the `pr` capability is probed
+  // once the daemon is already listening); refetch health.
+  | { type: 'health.changed' }
   // A terminal session produced output, or ended. Both carry only the id, on
   // the same "go refetch" contract as run.changed — a client holds a byte
   // cursor and pulls the increment from GET /api/terminals/:id/output, so it
@@ -181,6 +184,10 @@ export type ServerEvent =
   // carry, and one event covers a gate, a question, a capped loop or a stalled
   // run equally.
   | { type: 'decisions.changed' }
+  // A blocking item has waited long enough to ping a human again (see
+  // decisionReminders.ts). Sent once per item, not a refetch signal: a client
+  // notifies from the gate it already holds, found by `messageId`.
+  | { type: 'decision.reminder'; itemId: string; messageId?: string }
   // The PR poll's cached repo-PR set changed (a delta in number, head sha,
   // state, mergeable, review decision, checks, draft-ness, or updatedAt) —
   // refetch GET /api/landing. No payload: the cache itself is the source of

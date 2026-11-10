@@ -1,8 +1,14 @@
+import type { ThemeChoice } from '@dispatch/ui';
 import { invoke } from '@tauri-apps/api/core';
 import { homeDir } from '@tauri-apps/api/path';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 
 import type { DaemonConnection } from './daemonAuth';
+import {
+  isRemoteRoot,
+  remoteConnectionFor,
+  remoteDaemonConnection,
+} from './remoteConnections';
 import { injectedSharedConfig, readTeamSession } from './teamLocal';
 import type {
   DashboardStats,
@@ -40,6 +46,18 @@ interface DemoConfig {
   appToken: string | null;
 }
 
+/** Set on app.dispatch.foo's hosted planner (apps/web injects `hosted` into
+ * the demo config): the Linear workspace shown, with no machine behind it. */
+export function hostedPlanner(): { workspace: string } | null {
+  const value = (globalThis as { __DISPATCH_DEMO__?: { hosted?: unknown } })
+    .__DISPATCH_DEMO__?.hosted;
+  return typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { workspace?: unknown }).workspace === 'string'
+    ? { workspace: (value as { workspace: string }).workspace }
+    : null;
+}
+
 function injectedDemoConfig(): DemoConfig | undefined {
   const value = (globalThis as { __DISPATCH_DEMO__?: unknown })
     .__DISPATCH_DEMO__;
@@ -60,7 +78,7 @@ function injectedDemoConfig(): DemoConfig | undefined {
 export function listProjects(): Promise<ProjectSummary[]> {
   // Project enumeration is backed by Tauri IPC; in the browser dev
   // harness there's no backend, so degrade to an empty list rather than
-  // throwing (the switcher dropdown simply shows only the active project).
+  // throwing.
   if (!isTauri()) return Promise.resolve<ProjectSummary[]>([]);
   return invoke<ProjectSummary[]>('list_projects');
 }
@@ -114,6 +132,24 @@ export function exportTranscript(sessionId: string): Promise<string> {
   return invoke('export_transcript', { sessionId });
 }
 
+/** Saves a workspace file into the user's Downloads folder natively and resolves to the
+ * absolute path it was saved at (a numbered copy, "name (1).ext", when the name is taken), for
+ * a "Saved to …" line with a "Reveal in Finder" action. `rawUrl` is the daemon's raw route for
+ * the file, as `client.workspaceFileUrl` builds it: it carries no credential, and the backend
+ * (`downloads::download_workspace_file`) attaches the verified daemon's own token itself and
+ * streams the bytes to disk, so the file never passes through the page. Tauri only: wry
+ * cancels an `<a download>` in the app, so the page cannot save a file there itself. */
+export function downloadWorkspaceFile(rawUrl: string): Promise<string> {
+  return invoke('download_workspace_file', { url: rawUrl });
+}
+
+/** Remembers the theme choice natively (`window_theme::remember_window_theme`), so the next
+ * launch opens its window in that appearance before the page can run. `localStorage` stays
+ * the page's own record of the choice; this copy only removes the launch flash. Tauri only. */
+export function rememberWindowTheme(choice: ThemeChoice): Promise<void> {
+  return invoke('remember_window_theme', { choice });
+}
+
 export function getFileDiffForSessionFile(
   sessionId: string,
   filePath: string
@@ -125,6 +161,8 @@ export function getFileDiffForSessionFile(
  * dispatch's own task/board/plan surfaces are offered for it at all. Pure filesystem check on
  * the backend, no daemon involved. */
 export function hasDispatch(root: string): Promise<boolean> {
+  // A paired remote daemon is a dispatch project by construction.
+  if (isRemoteRoot(root)) return Promise.resolve(true);
   // Browser-dev fallback: dispatch-enabled if the web demo injected a config,
   // or if a `port` param points at an already-running daemon.
   if (!isTauri()) {
@@ -150,6 +188,18 @@ export function hasDispatch(root: string): Promise<boolean> {
  * `appToken` comes back non-null only on the spawn path, where the backend reads it off the
  * daemon's stdout; attaching to a daemon someone else started yields request tier only. */
 export function ensureDispatchd(root: string): Promise<DaemonConnection> {
+  // A daemon on another machine: nothing to spawn or attach to here, only the
+  // URL and device token saved when this app paired with it.
+  if (isRemoteRoot(root)) {
+    const remote = remoteConnectionFor(root);
+    return remote === null
+      ? Promise.reject(
+          new Error(
+            'this remote dispatchd is no longer saved: connect to it again from Add project'
+          )
+        )
+      : Promise.resolve(remoteDaemonConnection(remote));
+  }
   if (!isTauri()) {
     // Hosted web demo: the session manager proxies a per-sandbox dispatchd
     // behind an absolute URL, not a loopback port.
@@ -203,6 +253,11 @@ export function ensureDispatchd(root: string): Promise<DaemonConnection> {
  * a run, merge, plan, terminal or browser in flight, and keeps its port when it can. Rejects
  * in browser-dev, which has no backend to spawn anything. */
 export function restartDispatchd(root: string): Promise<DaemonConnection> {
+  if (isRemoteRoot(root)) {
+    return Promise.reject(
+      new Error('restart a remote dispatchd on the machine it runs on')
+    );
+  }
   if (!isTauri()) {
     return Promise.reject(
       new Error('restarting dispatchd requires the desktop app')
@@ -245,9 +300,9 @@ export interface RegisteredProject {
   name: string;
 }
 
-/** Every project in the registry — the persistent half of the switcher's project list.
- * Browser-dev fallback: no backend, so an empty list (the switcher just shows the active
- * project), matching `listProjects`'s own degrade-to-empty behavior. */
+/** The registered projects whose folder still exists, most recently opened first — the
+ * switcher's project list. Browser-dev fallback: no backend, so an empty list (the switcher
+ * just shows the active project). */
 export function listRegisteredProjects(): Promise<RegisteredProject[]> {
   if (!isTauri()) return Promise.resolve<RegisteredProject[]>([]);
   return invoke<RegisteredProject[]>('list_registered_projects');
@@ -268,7 +323,8 @@ export function addProject(path: string): Promise<string> {
 /** Stamps `lastOpenedAt` for `path` in the registry (adding it if absent). Fire-and-forget on
  * every project switch; a no-op in browser-dev. */
 export function touchProjectOpened(path: string): Promise<void> {
-  if (!isTauri()) return Promise.resolve();
+  // The registry holds folders on this disk; remotes are kept apart.
+  if (!isTauri() || isRemoteRoot(path)) return Promise.resolve();
   return invoke('touch_project_opened', { path });
 }
 

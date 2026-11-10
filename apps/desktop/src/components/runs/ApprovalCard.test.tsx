@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, mock } from 'bun:test';
 
 import { ApprovalCard } from './ApprovalCard';
@@ -39,7 +39,7 @@ describe('ApprovalCard — composing a deny reason', () => {
   });
 
   // Cancelling the reason box re-enables the options — denying is not a one-way door.
-  it('re-enables the options once the reason box is cancelled', () => {
+  it('re-enables the options once the reason box is cancelled', async () => {
     const onDecide = mock(() => Promise.resolve());
     render(
       <ApprovalCard toolName="Bash" toolInput={undefined} onDecide={onDecide} />
@@ -53,7 +53,11 @@ describe('ApprovalCard — composing a deny reason', () => {
     const approveOnce = screen.getByRole('radio', { name: /approve once/i });
     expect(approveOnce.hasAttribute('disabled')).toBe(false);
 
-    fireEvent.click(approveOnce);
+    // The decision settles a microtask after the click: inside act.
+    await act(async () => {
+      fireEvent.click(approveOnce);
+      await Promise.resolve();
+    });
     expect(onDecide).toHaveBeenCalledWith(true, { scope: 'once' });
   });
 });
@@ -61,7 +65,7 @@ describe('ApprovalCard — composing a deny reason', () => {
 describe('ApprovalCard — an attached window that cannot decide', () => {
   // Same gate as the scope card: the daemon only takes an approval on the app token, so a
   // window that attached to a daemon it did not start must say so instead of 403ing.
-  it('disables every option, explains why, and offers the restart when it is safe', () => {
+  it('disables every option, explains why, and offers the restart when it is safe', async () => {
     const onDecide = mock(() => Promise.resolve());
     const onRestartDaemon = mock(() => Promise.resolve());
     render(
@@ -83,7 +87,11 @@ describe('ApprovalCard — an attached window that cannot decide', () => {
     expect(
       screen.getByText('Restart daemon to enable approvals')
     ).toBeDefined();
-    fireEvent.click(screen.getByRole('button', { name: /restart daemon/i }));
+    // The restart settles a microtask after the click: inside act.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /restart daemon/i }));
+      await Promise.resolve();
+    });
     expect(onRestartDaemon).toHaveBeenCalledTimes(1);
   });
 });

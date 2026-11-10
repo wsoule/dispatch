@@ -1,0 +1,42 @@
+/* A tool call's detail (ToolCard.tsx): an Edit's stacked removed-then-added block diff.
+   Payloads (a Write's contents, a JSON dump) are the library CodeBlock. Tokens only. */
+
+/* The diff's frame: capped and scrolling inside, so a large edit never blows out the
+   transcript's height. */
+.scroll {
+  max-height: 256px;
+  overflow: auto;
+  scrollbar-width: thin;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+
+.diff {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: var(--lh);
+}
+
+/* One line: deletions on the danger tint, insertions on the success tint (data-tone),
+   the words in the tone's ink so they hold 4.5:1 on it. */
+.line {
+  padding: 0 var(--s-2);
+  background: var(--tone-soft);
+  color: var(--tone-ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The +/- sign: part of the line's text (so the diff reads without colour) but never
+   picked up by a selection of the code. */
+.sign {
+  user-select: none;
+}
+
+/* Forced colours drop the tints; the frame keeps an edge and the signs keep the meaning. */
+@media (forced-colors: active) {
+  .scroll {
+    border-color: CanvasText;
+  }
+}

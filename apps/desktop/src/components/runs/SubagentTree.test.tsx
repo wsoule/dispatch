@@ -66,14 +66,51 @@ describe('SubagentTree', () => {
     expect(screen.getByText('1 of 3 running · 1 failed')).toBeDefined();
   });
 
-  it('collapses and reopens from its header', () => {
+  it('collapses and reopens from its header, the fold trigger naming its list', () => {
     render(<SubagentTree nodes={[node({ id: 'a', label: 'A' })]} />);
     const header = screen.getByRole('button', { name: /sub-agents/i });
-    expect(screen.queryByRole('tree')).not.toBeNull();
+    expect(header.getAttribute('aria-label')).toBe(
+      'Sub-agents: 1 of 1 running'
+    );
+    expect(header.getAttribute('aria-expanded')).toBe('true');
+    const tree = screen.getByRole('tree', { name: 'Sub-agents' });
+    expect(tree.closest('[id]')?.id).toBe(
+      header.getAttribute('aria-controls') ?? ''
+    );
     fireEvent.click(header);
+    expect(header.getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByRole('tree')).toBeNull();
     fireEvent.click(header);
+    expect(header.getAttribute('aria-expanded')).toBe('true');
     expect(screen.queryByRole('tree')).not.toBeNull();
+  });
+
+  it('keeps its test id and draws each status as a dot, pulsing only while running', () => {
+    render(
+      <SubagentTree
+        nodes={[
+          node({ id: 'a', label: 'A' }),
+          node({ id: 'b', label: 'B', status: 'failed' }),
+          node({ id: 'c', label: 'C', status: 'done' }),
+        ]}
+      />
+    );
+    expect(screen.getByTestId('subagent-tree')).toBeDefined();
+    const dots = screen
+      .getAllByRole('treeitem')
+      .map((row) => row.querySelector('[data-slot="state-dot"]'));
+    expect(dots.map((dot) => dot?.getAttribute('data-state'))).toEqual([
+      'working',
+      'failed',
+      'done',
+    ]);
+    expect(dots.map((dot) => dot?.getAttribute('data-pulse'))).toEqual([
+      'true',
+      null,
+      null,
+    ]);
+    // A failure's word is toned as well as named, so colour is never the only cue.
+    expect(screen.getByText('failed').getAttribute('data-tone')).toBe('danger');
   });
 });
 

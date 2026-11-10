@@ -1,11 +1,33 @@
 /* Styling for rendered agent markdown (see components/runs/Markdown.tsx). Scoped to
-   `.dispatch-md` so it never leaks into the rest of the app, and driven by the same semantic
-   CSS variables as everything else so it themes light/dark automatically. Kept as hand-written
-   CSS (rather than Tailwind classes on every element) because the elements are produced by
-   react-markdown, not written in JSX — there's nowhere to hang utility classes. */
+   `.dispatch-md` so it never leaks into the rest of the app, and drawn only with the Gr8r
+   tokens (tokens.css) so it themes light/dark automatically. Kept as one hand-written sheet
+   (rather than a module per element) because the elements are produced by react-markdown,
+   not written in JSX: there is nowhere to hang module classes. Code fences are the library
+   CodeBlock (data-slot="code-block"), which draws its own frame: this sheet only spaces it
+   and colours its Shiki runs, and the inline-code rule below skips anything inside a <pre>.
+   main v0.51.0's extras (Shiki fences, Mermaid diagrams through pele, KaTeX math, tables
+   that scroll in place) are drawn on the same tokens. */
 
 .dispatch-md {
   overflow-wrap: anywhere;
+}
+
+/* A fence's vertical rhythm. Declared before the first/last-child rules below so a fence
+   that opens or closes the message still sits flush with its edge. It also declares the
+   default of the Shiki colours read further down (a run in the theme's own default colour
+   carries neither variable and reads as --text). */
+.dispatch-md [data-slot='code-block'] {
+  --shiki-light: var(--text);
+  --shiki-dark: var(--text);
+
+  margin: var(--s-2) 0;
+}
+
+/* A wide table scrolls inside its own box instead of widening the message. */
+.dispatch-md-table {
+  max-width: 100%;
+  margin: 0.5em 0;
+  overflow-x: auto;
 }
 
 .dispatch-md > :first-child {
@@ -16,10 +38,18 @@
   margin-bottom: 0;
 }
 
-.dispatch-md p,
-.dispatch-md blockquote,
-.dispatch-md-table {
-  margin: 0.65em 0;
+.dispatch-md p {
+  margin: 0.4em 0;
+}
+
+/* Inline code: Geist Mono a little smaller than the line, on the quiet fill. Scoped away from
+   <pre> so it never reaches a fence's code. */
+.dispatch-md :not(pre) > code {
+  padding: 0.1em var(--s-1);
+  border-radius: var(--r-xs);
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
 }
 
 /* A live text drawn block by block (StreamingText's `blocks`) keeps the gap one Markdown
@@ -30,8 +60,8 @@
 
 .dispatch-md ul,
 .dispatch-md ol {
-  margin: 0.65em 0;
-  padding-left: 1.25em;
+  margin: 0.4em 0;
+  padding-left: 1.3em;
 }
 
 .dispatch-md ul {
@@ -47,15 +77,11 @@
 }
 
 .dispatch-md li::marker {
-  color: var(--muted-foreground);
+  color: var(--text-2);
 }
 
-.dispatch-md ol > li::marker {
-  font-variant-numeric: tabular-nums;
-}
-
-/* GFM task lists (`- [ ] …`): the bullet gives way to a 14px checkbox on the chip ring, the
-   same box Linear draws for a checklist in a description. */
+/* GFM task lists (`- [ ] …`): the bullet gives way to a 14px checkbox with the 3:1 control
+   edge, the same box Linear draws for a checklist in a description. */
 .dispatch-md ul.contains-task-list {
   padding-left: 0;
   list-style: none;
@@ -73,9 +99,9 @@
   width: 14px;
   height: 14px;
   margin: 0.35em 0 0;
-  border: 0.5px solid var(--border-chip);
-  border-radius: 4px;
-  background: var(--surface-quaternary);
+  border: 1px solid var(--control-border);
+  border-radius: var(--r-xs);
+  background: var(--surface);
 }
 
 .dispatch-md li.task-list-item > input[type='checkbox']:checked {
@@ -83,58 +109,52 @@
   background: var(--accent);
 }
 
+/* Forced colours would repaint the checked fill as Canvas, so a done item would look open:
+   keep the fill in the system highlight. */
+@media (forced-colors: active) {
+  .dispatch-md li.task-list-item > input[type='checkbox']:checked {
+    border-color: Highlight;
+    background: Highlight;
+    forced-color-adjust: none;
+  }
+}
+
 .dispatch-md h1,
 .dispatch-md h2,
 .dispatch-md h3,
 .dispatch-md h4 {
-  margin: 1.25em 0 0.5em;
+  margin: 0.7em 0 0.3em;
   font-weight: 600;
   line-height: 1.3;
-  color: var(--foreground);
 }
 
 .dispatch-md h1 {
-  font-size: 1.35em;
-}
-
-.dispatch-md h2 {
   font-size: 1.2em;
 }
 
+.dispatch-md h2 {
+  font-size: 1.12em;
+}
+
 .dispatch-md h3 {
-  font-size: 1.08em;
+  font-size: 1.04em;
 }
 
 .dispatch-md h4 {
   font-size: 1em;
 }
 
-/* Links (T3 Code): coloured, no underline at rest, a dotted underline on hover drawn as a
-   repeating dot so it sits lighter than a solid rule. */
 .dispatch-md a {
-  color: var(--blue);
-  text-decoration: none;
-  background-image: radial-gradient(
-    circle,
-    currentColor 0.75px,
-    transparent 1px
-  );
-  background-position: 0 100%;
-  background-repeat: repeat-x;
-  background-size: 4px 2px;
-  background-color: transparent;
-  padding-bottom: 1px;
-  transition: background-size 0.1s;
-}
-
-.dispatch-md a:not(:hover) {
-  background-size: 4px 0;
+  color: var(--accent-ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .dispatch-md blockquote {
+  margin: 0.4em 0;
   padding-left: 0.8em;
-  border-left: 2px solid color-mix(in srgb, currentColor 35%, transparent);
-  color: var(--muted-foreground);
+  border-left: 2px solid var(--border);
+  color: var(--text-2);
 }
 
 .dispatch-md hr {
@@ -143,101 +163,21 @@
   border-top: 0.5px solid var(--border);
 }
 
-/* Tables (T3 Code): row separators only, outer cells flush with the prose, cells top-aligned
-   and wrapping at word boundaries. */
 .dispatch-md table {
-  width: 100%;
   border-collapse: collapse;
   font-size: 0.95em;
-  overflow-wrap: normal;
 }
 
 .dispatch-md th,
 .dispatch-md td {
-  padding: 0.45em 0.75em;
-  border-bottom: 0.5px solid var(--border);
+  padding: 0.25em 0.55em;
+  border: 0.5px solid var(--border);
   text-align: left;
-  vertical-align: top;
-}
-
-.dispatch-md :is(th, td):first-child {
-  padding-left: 0;
-}
-
-.dispatch-md :is(th, td):last-child {
-  padding-right: 0;
 }
 
 .dispatch-md th {
-  font-weight: 600;
-}
-
-/* A wide table scrolls inside its own box instead of widening the message. */
-.dispatch-md-table {
-  max-width: 100%;
-  overflow-x: auto;
-}
-
-/* Fenced code (MarkdownCodeFence). Shiki emits both themes as `--shiki-light/-dark`
-   variables, so the color scheme switch recolors a fence without re-highlighting it. */
-.dispatch-md-code pre {
-  margin: 0;
-  white-space: pre;
-}
-
-.dispatch-md-code[data-wrap] pre {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.dispatch-md-code .shiki {
-  background: transparent;
-}
-
-.dispatch-md-code .shiki span {
-  color: var(--shiki-light);
-}
-
-@media (prefers-color-scheme: dark) {
-  .dispatch-md-code .shiki span {
-    color: var(--shiki-dark);
-  }
-}
-
-/* Mermaid diagrams (pele) read their colors from these, so they theme with the app. */
-.pele {
-  --pele-bg: transparent;
-  --pele-fg: var(--foreground);
-  --pele-muted: var(--muted-foreground);
-  --pele-line: var(--muted-foreground);
-  --pele-surface: var(--background);
-  --pele-surface-alt: var(--secondary);
-  --pele-border: color-mix(in srgb, var(--foreground) 28%, transparent);
-  --pele-accent: var(--primary);
-  --pele-critical: var(--destructive);
-}
-
-.pele svg {
-  max-width: 100%;
-  height: auto;
-}
-
-.dispatch-md-diagram-expanded svg {
-  width: 100%;
-  max-height: 80vh;
-}
-
-/* While a reply streams, each new block fades in once instead of popping. Gated on
-   `data-streaming` so a settled transcript never replays it. */
-@media (prefers-reduced-motion: no-preference) {
-  .dispatch-md[data-streaming] > *,
-  .dispatch-md[data-streaming] [data-slot='code-fence'] {
-    transition: opacity 600ms ease-out;
-
-    @starting-style {
-      opacity: 0;
-    }
-  }
+  background: var(--surface-2);
+  font-weight: 500;
 }
 
 /* The task page's long-form measure (Linear's description/comment body): 15px/450 on a
@@ -248,7 +188,7 @@
   font-size: 15px;
   font-weight: 450;
   line-height: 24px;
-  color: var(--foreground);
+  color: var(--text);
 }
 
 .dispatch-md-prose h1,
@@ -263,4 +203,58 @@
 .dispatch-md-prose ul,
 .dispatch-md-prose ol {
   margin: 0.5em 0;
+}
+
+/* A fence's syntax colour (MarkdownCodeFence, highlight.ts). Shiki hands each run both
+   themes as `--shiki-light` and `--shiki-dark` (GitHub's high-contrast pair, 4.5:1 or more
+   on the well in its own theme), and the theme picks one, so a switch recolours a fence
+   without highlighting it again. */
+.dispatch-md [data-code-token] {
+  color: var(--shiki-light);
+}
+
+:root[data-theme='dark'] .dispatch-md [data-code-token] {
+  color: var(--shiki-dark);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme='system'] .dispatch-md [data-code-token] {
+    color: var(--shiki-dark);
+  }
+}
+
+/* Forced colours: the runs take the system text colour like the rest of the code. */
+@media (forced-colors: active) {
+  .dispatch-md [data-code-token] {
+    color: CanvasText;
+  }
+}
+
+/* Mermaid diagrams (pele, MermaidDiagram) read their colours from these, so they theme with
+   the app: text in --text and --text-2, lines and node edges at the 3:1 control edge, node
+   fills on the card surfaces, the accent for highlights and red for a critical path. */
+.pele {
+  --pele-bg: transparent;
+  --pele-fg: var(--text);
+  --pele-muted: var(--text-2);
+  --pele-line: var(--text-2);
+  --pele-surface: var(--surface);
+  --pele-surface-alt: var(--surface-3);
+  --pele-border: var(--control-border);
+  --pele-accent: var(--accent);
+  --pele-critical: var(--red);
+  --pele-font: var(--font-sans);
+}
+
+/* While a reply streams, each new block fades in once instead of popping. Gated on
+   `data-streaming` so a settled transcript never replays it. */
+@media (prefers-reduced-motion: no-preference) {
+  .dispatch-md[data-streaming] > *,
+  .dispatch-md[data-streaming] [data-slot='code-block'] {
+    transition: opacity 600ms ease-out;
+
+    @starting-style {
+      opacity: 0;
+    }
+  }
 }

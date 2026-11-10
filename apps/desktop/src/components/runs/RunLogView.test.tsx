@@ -1,9 +1,19 @@
 import type { NormalizedEntry, RunMeta } from '@dispatch/client';
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import type { DecideAvailability } from '../../lib/daemonAuth';
 import { ATTACHED_DAEMON_EXPLANATION } from '../../lib/daemonAuth';
+import type { RunQuestion, RunScopeRequest } from '../../lib/gates';
 import type { PendingApproval } from '../../lib/pendingApprovals';
 import { CONTINUE_PROMPT } from '../../lib/runState';
 import { askAgentToFix } from '../failure/FailureNotice';
@@ -223,31 +233,35 @@ test('hides Continue on a run that finished normally', () => {
 
 // The point of one-click Continue: no typing required for a run that was
 // interrupted rather than wrong.
-test('Continue resumes with the canned prompt when nothing was typed', () => {
+test('Continue resumes with the canned prompt when nothing was typed', async () => {
   const sent: string[] = [];
   renderLog(meta({ state: 'failed', sessionId: 'sess-1' }), (text) => {
     sent.push(text);
     return Promise.resolve();
   });
 
-  act(() => {
+  // The send settles a microtask after the click (it clears the draft and
+  // `sending`), so the act waits for it.
+  await act(async () => {
     fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    await Promise.resolve();
   });
   expect(sent).toEqual([CONTINUE_PROMPT]);
 });
 
-test('Continue sends the draft instead when the human typed one', () => {
+test('Continue sends the draft instead when the human typed one', async () => {
   const sent: string[] = [];
   renderLog(meta({ state: 'failed', sessionId: 'sess-1' }), (text) => {
     sent.push(text);
     return Promise.resolve();
   });
 
-  act(() => {
+  await act(async () => {
     fireEvent.change(screen.getByRole('textbox'), {
       target: { value: 'finish the failing test' },
     });
     fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+    await Promise.resolve();
   });
   expect(sent).toEqual(['finish the failing test']);
 });
@@ -471,11 +485,14 @@ test("a teammate's line sits with the other senders, and only the viewer's own a
     null,
     'human:wyat'
   );
-  const bubble = (heading: string) =>
-    screen.getByText(heading).parentElement?.className ?? '';
-  expect(bubble('human:bob')).toContain('self-start');
-  expect(bubble('human:bob')).not.toContain('self-end');
-  expect(bubble('You')).toContain('self-end');
+  // The bubble's side, through its data-align hook (CSS-module class names are not stable).
+  const side = (heading: string) =>
+    screen
+      .getByText(heading)
+      .closest('[data-align]')
+      ?.getAttribute('data-align');
+  expect(side('human:bob')).toBe('start');
+  expect(side('You')).toBe('end');
 });
 
 // A window below decide can read a thread only if it took part, and all a run
@@ -685,9 +702,7 @@ function chipState(target: string): 'running' | 'done' | 'failed' {
   const chip = screen.getByText(target).closest('[data-slot="tool-chip"]');
   if (chip === null) throw new Error(`no chip shows ${target}`);
   if (chip.getAttribute('data-state') === 'failed') return 'failed';
-  return chip.querySelector('[class*="shimmer-text"]') === null
-    ? 'done'
-    : 'running';
+  return chip.querySelector('[data-shimmer]') === null ? 'done' : 'running';
 }
 
 function call(
@@ -912,4 +927,303 @@ test("a live CLI agent's output is drawn block by block", () => {
     />
   );
   expect(drawn()).toHaveLength(1);
+  // The settled code block highlights itself a few microtasks after this
+  // returns once Shiki is warm, before the shared setup unmounts it: unmount
+  // first, so that late update finds nothing mounted.
+  cleanup();
+});
+
+// Work an orphaned agent landed after the failure is a pointer to the branch,
+// not a success: it sits right under the red failure notice, so it is info
+// (blue), never a green box beside a red one.
+test('work landed after a failure is an info notice under the failure', () => {
+  const { container } = renderLog(
+    meta({
+      state: 'failed',
+      error: 'Not logged in',
+      survey: {
+        postFailCommits: [
+          { sha: 'abc1234', subject: 'fix the parser', date: '2026-08-04' },
+        ],
+      },
+    } as Partial<RunMeta>)
+  );
+  const notice = container.querySelector('[data-slot="orphan-work"]');
+  expect(notice?.getAttribute('data-tone')).toBe('info');
+  expect(notice?.textContent).toContain('fix the parser');
+  const failure = container.querySelector('[data-slot="failure-notice"]');
+  expect(failure?.getAttribute('data-tone')).toBe('danger');
+});
+
+// A question and a scope request open together used to pin both cards at full height above
+// the composer, leaving the transcript (and the approval card in it) no height at all in a
+// short window. They now share one capped region that scrolls within itself.
+test('open asks share one capped region above the composer, outside the log', () => {
+  const question: RunQuestion = {
+    id: 'q-1',
+    runId: 'r-abc123',
+    question: 'Which branch should this land on?',
+    options: ['main', 'release'],
+    askedAt: '2026-08-04T00:00:00.000Z',
+    answer: null,
+    answeredAt: null,
+  };
+  const scope: RunScopeRequest = {
+    id: 's-1',
+    runId: 'r-abc123',
+    paths: ['packages/server/src/routes.ts'],
+    reason: 'The route table lives there.',
+    requestedAt: '2026-08-04T00:00:00.000Z',
+    granted: null,
+    decisionReason: null,
+    decidedAt: null,
+    decidedBy: null,
+  };
+  render(
+    <RunLogView
+      meta={meta({ state: 'awaiting-approval' })}
+      entries={[]}
+      pendingApprovals={[]}
+      onApprove={noop}
+      onSendMessage={noop}
+      openQuestions={[question]}
+      onAnswerQuestion={noop}
+      pendingScopeRequest={scope}
+      onDecideScopeRequest={noop}
+      scopeDecide={CAN_DECIDE}
+      onRestartDaemon={noop}
+      onRequestChanges={noop}
+      onOpenMessage={null}
+      me={null}
+      readsAllThreads
+    />
+  );
+  // Named for both kinds of card it holds, not only the questions.
+  const asks = screen.getByRole('region', { name: 'Waiting on you' });
+  // Nothing hidden to scroll to (happy-dom lays nothing out): no extra Tab stop.
+  expect(asks.hasAttribute('tabindex')).toBe(false);
+  expect(asks.getAttribute('data-slot')).toBe('run-asks');
+  expect(
+    within(asks).getByText('Which branch should this land on?')
+  ).toBeDefined();
+  expect(
+    within(asks).getByText('The agent wants to edit outside its scope')
+  ).toBeDefined();
+  // Pinned outside the transcript, so it never scrolls away, and above the composer.
+  const log = screen.getByRole('region', { name: 'Run log' });
+  expect(log.contains(asks)).toBe(false);
+  const hint = screen.getByText(
+    'Talk to the agent. It reads this while it works.'
+  );
+  expect(
+    asks.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING
+  ).toBeTruthy();
+  // The cap: at most half of the body it shares with the log, scrolling within itself,
+  // with an inset focus ring.
+  const css = readFileSync(
+    join(import.meta.dir, 'RunLogView.module.css'),
+    'utf8'
+  ).replace(/\/\*[\s\S]*?\*\//g, '');
+  const rule = css.slice(
+    css.indexOf('\n.asks {'),
+    css.indexOf('}', css.indexOf('\n.asks {'))
+  );
+  expect(rule).toContain('max-block-size: calc((100% - var(--s-3)) / 2);');
+  expect(rule).toContain('overflow-y: auto;');
+  expect(css).toMatch(/\.asks:focus-visible \{[^}]*outline-offset: -2px;/);
+});
+
+test('no open ask, no pinned region', () => {
+  renderLog(meta({ state: 'running' }));
+  expect(screen.queryByRole('region', { name: 'Waiting on you' })).toBeNull();
+});
+
+// Where the cap bites, the cards overflow the region: then, and only then, a keyboard can
+// reach it to scroll the text between the cards' own controls.
+test('the asks region is a Tab stop only while it hides text to scroll to', () => {
+  const Original = globalThis.ResizeObserver;
+  const callbacks: ResizeObserverCallback[] = [];
+  class FakeResizeObserver {
+    constructor(callback: ResizeObserverCallback) {
+      callbacks.push(callback);
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  globalThis.ResizeObserver =
+    FakeResizeObserver as unknown as typeof ResizeObserver;
+  try {
+    render(
+      <RunLogView
+        meta={meta({ state: 'awaiting-approval' })}
+        entries={[]}
+        pendingApprovals={[]}
+        onApprove={noop}
+        onSendMessage={noop}
+        openQuestions={[
+          {
+            id: 'q-1',
+            runId: 'r-abc123',
+            question: 'Which branch should this land on?',
+            options: ['main', 'release'],
+            askedAt: '2026-08-04T00:00:00.000Z',
+            answer: null,
+            answeredAt: null,
+          },
+        ]}
+        onAnswerQuestion={noop}
+        pendingScopeRequest={null}
+        onDecideScopeRequest={noop}
+        scopeDecide={CAN_DECIDE}
+        onRestartDaemon={noop}
+        onRequestChanges={noop}
+        onOpenMessage={null}
+        me={null}
+        readsAllThreads
+      />
+    );
+    const asks = screen.getByRole('region', { name: 'Waiting on you' });
+    expect(asks.hasAttribute('tabindex')).toBe(false);
+    const resize = (scrollHeight: number) => {
+      Object.defineProperty(asks, 'scrollHeight', {
+        configurable: true,
+        value: scrollHeight,
+      });
+      Object.defineProperty(asks, 'clientHeight', {
+        configurable: true,
+        value: 200,
+      });
+      act(() => {
+        for (const callback of callbacks) {
+          callback([], {} as ResizeObserver);
+        }
+      });
+    };
+    resize(480);
+    expect(asks.tabIndex).toBe(0);
+    resize(200);
+    expect(asks.hasAttribute('tabindex')).toBe(false);
+  } finally {
+    globalThis.ResizeObserver = Original;
+  }
+});
+
+// Files dropped on a run's composer upload at once; the next message lists
+// where they landed, since a run message is plain text on the bus.
+function renderAttaching(
+  runMeta: RunMeta,
+  sent: { message: string[]; changes: string[] }
+) {
+  const upload = mock((files: File[]) =>
+    Promise.resolve(
+      files.map((file) => ({
+        name: file.name,
+        path: `/repo/.dispatch/attachments/runs/r-abc123/u1/${file.name}`,
+        size: file.size,
+        mimeType: file.type,
+      }))
+    )
+  );
+  render(
+    <RunLogView
+      meta={runMeta}
+      entries={[]}
+      pendingApprovals={[]}
+      onApprove={noop}
+      onSendMessage={(text) => {
+        sent.message.push(text);
+        return Promise.resolve();
+      }}
+      onUploadAttachments={upload}
+      openQuestions={[]}
+      onAnswerQuestion={noop}
+      pendingScopeRequest={null}
+      onDecideScopeRequest={noop}
+      scopeDecide={CAN_DECIDE}
+      onRestartDaemon={noop}
+      onRequestChanges={(text) => {
+        sent.changes.push(text);
+        return Promise.resolve();
+      }}
+      onOpenMessage={null}
+      me={null}
+      readsAllThreads
+    />
+  );
+  return upload;
+}
+
+// happy-dom's DragEvent carries no DataTransfer, so the drop is a plain event
+// with the fields the handler reads.
+function dropFiles(target: HTMLElement, files: File[]): void {
+  for (const type of ['dragover', 'drop']) {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', {
+      value: {
+        types: ['Files'],
+        items: files.map((file) => ({ kind: 'file', getAsFile: () => file })),
+        files,
+        dropEffect: 'none',
+      },
+    });
+    fireEvent(target, event);
+  }
+}
+
+test('a file dropped on a live run’s composer is named in the follow-up', async () => {
+  const sent = { message: [] as string[], changes: [] as string[] };
+  const upload = renderAttaching(meta({ state: 'running' }), sent);
+  const log = new File(['boom'], 'build.log', { type: 'text/plain' });
+  await act(async () => {
+    dropFiles(screen.getByLabelText('Prompt'), [log]);
+    await Promise.resolve();
+  });
+  expect(upload).toHaveBeenCalledTimes(1);
+  expect(screen.getByText('build.log')).not.toBeNull();
+
+  fireEvent.change(screen.getByLabelText('Prompt'), {
+    target: { value: 'why did this fail?' },
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await Promise.resolve();
+  });
+  expect(sent.message).toEqual([
+    [
+      'why did this fail?',
+      '',
+      'Attached files (saved on this machine; read them when they matter):',
+      '- build.log (text/plain): /repo/.dispatch/attachments/runs/r-abc123/u1/build.log',
+    ].join('\n'),
+  ]);
+  // Sent files leave the composer.
+  expect(screen.queryByText('build.log')).toBeNull();
+});
+
+test('a finished run’s composer takes a drop too, and a file alone requests changes', async () => {
+  const sent = { message: [] as string[], changes: [] as string[] };
+  renderAttaching(meta({ state: 'finished' }), sent);
+  const box = screen.getByPlaceholderText('Describe what should change…');
+  const shot = new File(['png'], 'shot.png', { type: 'image/png' });
+  await act(async () => {
+    dropFiles(box, [shot]);
+    await Promise.resolve();
+  });
+  expect(screen.getByRole('img', { name: 'shot.png' })).not.toBeNull();
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: /Request changes/ }));
+    await Promise.resolve();
+  });
+  expect(sent.changes).toEqual([
+    [
+      'Attached files (saved on this machine; read them when they matter):',
+      '- shot.png (image/png): /repo/.dispatch/attachments/runs/r-abc123/u1/shot.png',
+    ].join('\n'),
+  ]);
+});
+
+test('without an upload handler the composer offers no paperclip', () => {
+  renderLog(meta({ state: 'finished' }));
+  expect(screen.queryByRole('button', { name: 'Attach files' })).toBeNull();
 });

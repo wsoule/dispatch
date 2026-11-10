@@ -347,15 +347,16 @@ the defaults):
   On timeout the sending tool returns "no answer yet — it will arrive in your
   inbox" and the question stays open. The cap keeps the wait inside the in-run
   MCP tool timeout.
-- Blocking messages to humans wait up to 30 minutes in the MCP tool (the in-run
-  MCP tool timeout is 31). On expiry a plain question stays open and its answer
-  is pushed to the run later, or held for its task. The daemon denies an
-  undecided `scope` gate itself 29 minutes after it was sent, from a sweep every
-  30 s, so the agent hears the deny before the MCP's 30-minute wait ends. A
-  plain question or scope gate from an execute run stays open when the run ends
-  or dies with the daemon, and its answer reaches the task's next execute run.
-  One from a review or verify run closes with the run. `tool-approval` gates are
-  not MCP calls — they park the executor's `canUseTool` — and have no timeout.
+- Blocking messages to humans wait up to 30 minutes in the MCP tool. On expiry a
+  plain question stays open and its answer is pushed to the run later, or held
+  for its task. A `scope` gate never expires (changed 2026-10-26, task
+  t-5d3dfd8f, after timed denies left runs half-done): its wait lasts up to 24
+  hours with the run paused, the in-run MCP tool timeout sits just above that,
+  and the daemon reminds the human once after 30 minutes. A plain question or
+  scope gate from an execute run stays open when the run ends or dies with the
+  daemon, and its answer reaches the task's next execute run. One from a review
+  or verify run closes with the run. `tool-approval` gates are not MCP calls —
+  they park the executor's `canUseTool` — and have no timeout.
 
 **Rendering.** A pushed message is a header, then every body line quoted with
 `│` and a space so a body can never pass for a header, then any of

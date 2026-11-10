@@ -1,0 +1,78 @@
+/* The lazily expanded directory tree (FileTree.tsx): one button per row,
+   indented by its depth (`--depth`, set on the row's style), the open file
+   in the accent's soft tint (a selection, never a status). */
+
+.tree {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: var(--s-1);
+  overflow: auto;
+}
+
+.error {
+  margin: 0;
+  padding: var(--s-1) var(--s-2);
+  font-size: var(--fs-xs);
+}
+
+.row {
+  --depth: 0;
+
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-1);
+  width: 100%;
+  min-width: 0;
+  padding: 3px var(--s-2) 3px calc(var(--s-1) + var(--depth) * 12px);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-xs);
+  text-align: start;
+  cursor: pointer;
+}
+
+.row:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* Inset, so the ring stays inside the scrolling aside. */
+.row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.row[aria-current] {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.icon {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  color: var(--text-3);
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The selected row's tint is a background only, which forced colours drop:
+   a frame keeps it visible there. Not while the row has keyboard focus, so
+   the 2px focus ring above still shows on the open file's row. */
+@media (forced-colors: active) {
+  .row[aria-current]:not(:focus-visible) {
+    outline: 1px solid Highlight;
+    outline-offset: -1px;
+  }
+}

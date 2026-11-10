@@ -1,0 +1,9 @@
+/* Plan mode (PlanMode.tsx): the Flight Plan fills the mode's pane under a soft rule that
+   parts it from the page head. Tokens only. */
+.root {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--divider);
+}

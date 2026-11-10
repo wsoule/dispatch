@@ -3,7 +3,7 @@ import { expect, test } from 'bun:test';
 
 import { ChecksSection } from './ChecksSection';
 import { OPERATOR_ONLY } from './fields';
-import { testConfig as config } from './fixtures.test-helper';
+import { testConfig as config, visibleText } from './fixtures.test-helper';
 
 function recorder() {
   const saved: unknown[] = [];
@@ -75,7 +75,7 @@ test('below the operator tier the commands are locked and disabled', () => {
     screen.getByLabelText<HTMLInputElement>('Start command').disabled
   ).toBe(true);
   expect(screen.getAllByLabelText(OPERATOR_ONLY).length).toBeGreaterThan(1);
-  expect(screen.queryByText(OPERATOR_ONLY)).toBeNull();
+  expect(visibleText(OPERATOR_ONLY)).toEqual([]);
 });
 
 // config.verify is a separate field from verifyCommand (the merge-queue gate) —
@@ -176,7 +176,7 @@ test('the fix loop switch and round cap save', () => {
   ]);
 });
 
-test('the groups are 13px semibold sentence-case headings', () => {
+test('the groups are sentence-case level-2 headings', () => {
   render(
     <ChecksSection
       config={config}
@@ -188,10 +188,12 @@ test('the groups are 13px semibold sentence-case headings', () => {
   expect(headings.map((h) => h.textContent)).toEqual([
     'Before merging',
     'Trying the change',
+    'Previews',
     'Fix loop',
     'Escalation',
   ]);
   for (const heading of headings) {
-    expect(heading.className).toContain('text-[13px]');
+    const text = heading.textContent ?? '';
+    expect(text.slice(1)).toBe(text.slice(1).toLowerCase());
   }
 });

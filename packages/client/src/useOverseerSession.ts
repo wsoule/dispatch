@@ -1,3 +1,4 @@
+import { OVERSEER_GRANT_ANSWER } from '@dispatch-foo/core/browser';
 import type { EffortLevel } from '@dispatch-foo/core/browser';
 import {
   type QueryClient,
@@ -24,7 +25,6 @@ import { type LiveFrame, liveTextStore, overseerLiveKey } from './liveText';
 import {
   DEFAULT_EFFORT_ID,
   effortFromId,
-  readRoleModelOverride,
   resolveRoleModel,
   storeRoleModelOverride,
 } from './models';
@@ -232,10 +232,19 @@ export interface OverseerSession {
    *
    * Owns the whole decide cycle — the lock, the failure, and the re-entrancy
    * guard — for the same reason `submit` owns the send cycle. Never rejects:
-   * the outcome is readable on `decidingActionId` and `decideError`. A second
-   * call while one is in flight is a no-op rather than a second request.
+   * resolves false when the decision did not go through or the approved
+   * effect failed, so a caller deciding several in a row can stop. A second
+   * call while one is in flight is a no-op that resolves false.
+   *
+   * `scope: 'session'` on an approval also allows the action's tool for the
+   * rest of the conversation; the daemon honours it only on a `grantable`
+   * action.
    */
-  confirmAction: (actionId: string, approve: boolean) => Promise<void>;
+  confirmAction: (
+    actionId: string,
+    approve: boolean,
+    scope?: 'once' | 'session'
+  ) => Promise<boolean>;
   /**
    * Decides one built-in tool call the running turn is parked on (see
    * `OverseerRecord.pendingApprovals`) by answering its `tool-approval` gate.
@@ -395,27 +404,24 @@ export function useOverseerSession(
   );
   const [decideError, setDecideError] = useState<string | null>(null);
 
-  // The human's own pick, if any; `null` defers to the project's config. Read
-  // once from device storage — later picks write through `setModel` below.
-  const [chosenModel, setChosenModel] = useState<string | null>(
-    () => readRoleModelOverride('overseer', storage) ?? null
+  // The human's own pick on this device, re-read each render so a Settings
+  // change (a new `configuredModel`) outranks a pick made before it.
+  // `pickCount` re-renders after `setModel` writes through to storage.
+  const [, setPickCount] = useState(0);
+  const model = resolveRoleModel(
+    'overseer',
+    {
+      models:
+        configuredModel !== undefined ? { overseer: configuredModel } : {},
+    },
+    storage
   );
-  const model =
-    chosenModel ??
-    resolveRoleModel(
-      'overseer',
-      {
-        models:
-          configuredModel !== undefined ? { overseer: configuredModel } : {},
-      },
-      storage
-    );
   const setModel = useCallback(
     (id: string) => {
-      setChosenModel(id);
-      storeRoleModelOverride('overseer', id, storage);
+      storeRoleModelOverride('overseer', id, storage, configuredModel);
+      setPickCount((n) => n + 1);
     },
-    [storage]
+    [storage, configuredModel]
   );
   const [effortId, setEffortId] = useState(DEFAULT_EFFORT_ID);
 
@@ -666,15 +672,19 @@ export function useOverseerSession(
   }, [client, port, queryClient]);
 
   const confirmAction = useCallback(
-    async (actionId: string, approve: boolean) => {
+    async (
+      actionId: string,
+      approve: boolean,
+      scope: 'once' | 'session' = 'once'
+    ) => {
       // The re-entrancy guard belongs here rather than on the cards: every
       // surface that renders one is unmounted by an ordinary tab flip, so a
       // component-local guard would come back open on remount and let a second
       // click 404 against an action the server already claimed.
-      if (decidingActionId !== null) return;
+      if (decidingActionId !== null) return false;
       if (client === null || conversationId === null) {
         setDecideError('no overseer conversation open');
-        return;
+        return false;
       }
       // Held for the whole call, including the reconciling refetch below, so
       // every card stays locked and the deciding one keeps its spinner even if
@@ -690,8 +700,10 @@ export function useOverseerSession(
         if (gate === null) {
           throw new Error('This action is no longer waiting for you.');
         }
+        // The grant rides on the confirm's body, so the gate keeps the
+        // protocol's two choices.
         await client.replyToMessage(gate.id, {
-          body: '',
+          body: approve && scope === 'session' ? OVERSEER_GRANT_ANSWER : '',
           choice: approve ? 'confirm' : 'cancel',
         });
         void queryClient.invalidateQueries({ queryKey: openGatesKey(port) });
@@ -700,10 +712,23 @@ export function useOverseerSession(
         await queryClient.invalidateQueries({
           queryKey: overseerKey(port, conversationId),
         });
+        // An approved-but-failed effect is a `failed` row in the transcript,
+        // not an error from the reply.
+        const record = queryClient.getQueryData<OverseerRecord>(
+          overseerKey(port, conversationId)
+        );
+        return !(
+          record?.messages.some(
+            (m) =>
+              m.role === 'action' &&
+              m.actionId === actionId &&
+              m.outcome === 'failed'
+          ) ?? false
+        );
       } catch (err) {
-        // An approved-but-failed effect shows as a failure row on the card, so
-        // this reports a gate that is gone or a transport-level failure.
+        // A gate that is gone or a transport-level failure.
         setDecideError(err instanceof Error ? err.message : String(err));
+        return false;
       } finally {
         setDecidingActionId(null);
       }

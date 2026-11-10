@@ -37,8 +37,9 @@ const MCP_ENV_PASSTHROUGH: readonly string[] = [
 ];
 
 // Per-call ceiling on dispatch's own MCP tools. Must stay above msg_send's
-// 30-minute blocking wait for a human, or it cuts that call off.
-export const DISPATCH_MCP_TOOL_TIMEOUT_MS = 31 * 60_000;
+// 24-hour wait on a scope request (the longest blocking wait), or it cuts that
+// call off and the run ends instead of staying paused on the gate.
+export const DISPATCH_MCP_TOOL_TIMEOUT_MS = 24 * 60 * 60_000 + 60_000;
 
 // Locates the dispatch MCP server's stdio entry point via module resolution
 // rather than a relative path (same pattern as the CLI's resolveDaemonBin).

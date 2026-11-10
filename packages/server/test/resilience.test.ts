@@ -327,6 +327,46 @@ describe('a daemon restart with a run in flight', () => {
     });
   }
 
+  // The quiet window for the two tests that race a live orphan. The sweep
+  // resumes on two identical worktree samples one window apart, so the window
+  // has to outlast both the orphan's commit cadence and the gap between boot
+  // and the orphan's first commit. At 60 ms a slow CI runner's gap alone
+  // outlasted the sweep's first comparison (two windows after the survey):
+  // the sweep resumed before the orphan wrote anything, and the test read a
+  // live successor instead of the orphan it meant to observe.
+  const ORPHAN_QUIET_MS = 400;
+
+  // The agent the restart orphaned, still landing a commit every ~20 ms in
+  // the run's old worktree. stop() waits out the commit in flight, and is
+  // safe to call twice, so a test can call it in `finally` and never leave
+  // the loop writing into the next test's home.
+  function startOrphan(worktreePath: string): {
+    landed: () => number;
+    stop: () => Promise<void>;
+  } {
+    let stillGoing = true;
+    let landed = 0;
+    const loop = (async () => {
+      while (stillGoing) {
+        writeFileSync(
+          join(worktreePath, `orphan-${landed}.txt`),
+          'still going\n'
+        );
+        runGitSync(worktreePath, ['add', '-A']);
+        runGitSync(worktreePath, ['commit', '-m', `orphan commit ${landed}`]);
+        landed++;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    })();
+    return {
+      landed: () => landed,
+      stop: async () => {
+        stillGoing = false;
+        await loop;
+      },
+    };
+  }
+
   it('picks the crashed run back up in its own worktree instead of losing it', async () => {
     initGitRepoAt(root);
     const store = TaskStore.init(root);
@@ -366,45 +406,37 @@ describe('a daemon restart with a run in flight', () => {
     const task = store.create({ title: 'Orphan outlives the daemon' });
 
     const before = new StallingExecutor();
-    const firstUrl = await boot(before, 60);
+    const firstUrl = await boot(before, ORPHAN_QUIET_MS);
     const lost = await dispatchAndCommit(firstUrl, task.meta.id);
 
     const after = new StallingExecutor();
-    const baseUrl = await boot(after, 60);
+    const baseUrl = await boot(after, ORPHAN_QUIET_MS);
 
     // The orphaned agent process survived the restart and is still landing
     // commits. Every commit moves the branch head, so each sample the recovery
     // sweep takes sees a worktree that changed since the one before it.
-    let stillGoing = true;
-    let landed = 0;
-    const orphan = (async () => {
-      while (stillGoing) {
-        writeFileSync(
-          join(lost.worktreePath, `orphan-${landed}.txt`),
-          'still going\n'
-        );
-        runGitSync(lost.worktreePath, ['add', '-A']);
-        runGitSync(lost.worktreePath, [
-          'commit',
-          '-m',
-          `orphan commit ${landed}`,
-        ]);
-        landed++;
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
-    })();
-
-    // Polled on the orphan's own progress rather than a wall-clock sleep: what
-    // has to be true before the assertion means anything is that the sweep had
-    // several quiet windows' worth of moving ground to look at.
-    await waitFor(() => Promise.resolve(landed > 4), 10_000);
-    // ...and it refused every one of them: resuming here would put a second
-    // agent in the orphan's checkout.
-    expect(await successorOf(baseUrl, lost.id)).toBeUndefined();
-    expect(after.started).toHaveLength(0);
-
-    stillGoing = false;
-    await orphan;
+    const orphan = startOrphan(lost.worktreePath);
+    const orphanStarted = Date.now();
+    try {
+      // Polled on the orphan's own progress, and on long enough for the sweep
+      // to have compared samples across moving ground at least twice: what has
+      // to be true before the assertion means anything is that the sweep had
+      // several quiet windows' worth of moving ground to look at.
+      await waitFor(
+        () =>
+          Promise.resolve(
+            orphan.landed() > 4 &&
+              Date.now() - orphanStarted > 3 * ORPHAN_QUIET_MS
+          ),
+        10_000
+      );
+      // ...and it refused every one of them: resuming here would put a second
+      // agent in the orphan's checkout.
+      expect(await successorOf(baseUrl, lost.id)).toBeUndefined();
+      expect(after.started).toHaveLength(0);
+    } finally {
+      await orphan.stop();
+    }
 
     // Deferred, not abandoned: the same sweep picks the run up once the branch
     // stops moving, and the orphan's own commits are still on it.
@@ -417,7 +449,7 @@ describe('a daemon restart with a run in flight', () => {
     );
     expect(
       runGitSync(lost.worktreePath, ['log', '-1', '--pretty=%s'])
-    ).toContain(`orphan commit ${landed - 1}`);
+    ).toContain(`orphan commit ${orphan.landed() - 1}`);
   });
 
   // A re-dispatch arriving while the sweep is still proving the orphan has
@@ -430,40 +462,24 @@ describe('a daemon restart with a run in flight', () => {
     const task = store.create({ title: 'Re-dispatched too early' });
 
     const before = new StallingExecutor();
-    const firstUrl = await boot(before, 60);
+    const firstUrl = await boot(before, ORPHAN_QUIET_MS);
     const lost = await dispatchAndCommit(firstUrl, task.meta.id);
 
     const after = new StallingExecutor();
-    const baseUrl = await boot(after, 60);
+    const baseUrl = await boot(after, ORPHAN_QUIET_MS);
     await waitForCrashRecorded(baseUrl, lost.id);
 
-    let stillGoing = true;
-    let landed = 0;
-    const orphan = (async () => {
-      while (stillGoing) {
-        writeFileSync(
-          join(lost.worktreePath, `orphan-${landed}.txt`),
-          'still going\n'
-        );
-        runGitSync(lost.worktreePath, ['add', '-A']);
-        runGitSync(lost.worktreePath, [
-          'commit',
-          '-m',
-          `orphan commit ${landed}`,
-        ]);
-        landed++;
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
-    })();
-    await waitFor(() => Promise.resolve(landed > 2), 10_000);
+    const orphan = startOrphan(lost.worktreePath);
+    try {
+      await waitFor(() => Promise.resolve(orphan.landed() > 2), 10_000);
 
-    const refused = await postRun(baseUrl, task.meta.id);
-    expect(refused.status).toBe(409);
-    expect((await json(refused)).error).toContain('daemon restart');
-    expect(after.started).toHaveLength(0);
-
-    stillGoing = false;
-    await orphan;
+      const refused = await postRun(baseUrl, task.meta.id);
+      expect(refused.status).toBe(409);
+      expect((await json(refused)).error).toContain('daemon restart');
+      expect(after.started).toHaveLength(0);
+    } finally {
+      await orphan.stop();
+    }
 
     // The refusal re-armed the sweep rather than washing its hands of the run,
     // so the work still comes back without anyone asking twice.

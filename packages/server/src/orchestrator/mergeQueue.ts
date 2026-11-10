@@ -124,6 +124,12 @@ export interface MergeQueueEntry {
    * `blocked-environment` (retryable, and the one the user has to act on).
    */
   reason?: string;
+  /**
+   * The files a failed rebase stopped on, from `git diff --diff-filter=U` —
+   * set only when the rebase itself conflicted. Its own field because git
+   * prints them on stdout, which `reason` (stderr) never carries.
+   */
+  conflicts?: string[];
   enqueuedAt: string;
   /**
    * When this entry last CHANGED state — distinct from `enqueuedAt`, which never
@@ -204,6 +210,9 @@ export interface MergeQueueOptions {
 }
 
 const HISTORY_LIMIT = 20;
+// Enough to name every file in an ordinary conflict while keeping a
+// pathological one (a vendored tree) from bloating every queue broadcast.
+const CONFLICT_FILES_LIMIT = 50;
 const DEFAULT_BLOCKED_RETRY_DELAY_MS = 15_000;
 
 // How many times an entry may be picked back up after a daemon died partway
@@ -408,8 +417,10 @@ export class MergeQueue {
         entry.reason = truncateReason(entry.reason);
       }
     }
-    this.history.push(...persisted.history);
-    this.history.length = Math.min(this.history.length, HISTORY_LIMIT);
+    // Newest first on disk, so the reverse walk leaves each run's latest row.
+    for (const entry of [...persisted.history].reverse()) {
+      this.fileToHistory(entry);
+    }
 
     const runsById = new Map(
       this.ctx.orchestrator.list().map((meta) => [meta.id, meta])
@@ -491,6 +502,14 @@ export class MergeQueue {
     this.setEntryState(entry, 'failed');
     entry.reason = reason;
     entry.finishedAt = new Date().toISOString();
+    this.fileToHistory(entry);
+  }
+
+  // Puts `entry` at the head of history, replacing any older row for the same
+  // run: a run re-enqueued after a failure shows its latest outcome once.
+  private fileToHistory(entry: MergeQueueEntry): void {
+    const previous = this.history.findIndex((e) => e.runId === entry.runId);
+    if (previous !== -1) this.history.splice(previous, 1);
     this.history.unshift(entry);
     this.history.length = Math.min(this.history.length, HISTORY_LIMIT);
   }
@@ -1131,6 +1150,7 @@ export class MergeQueue {
   // restackDependents moves each of them onto the new base.
   private async rebase(entry: MergeQueueEntry, meta: RunMeta): Promise<void> {
     this.setEntryState(entry, 'rebasing');
+    delete entry.conflicts;
     this.broadcast();
     const cwd = meta.worktreePath;
     // Say what is actually wrong. Spawning git with a cwd that no longer
@@ -1168,9 +1188,33 @@ export class MergeQueue {
     const target = ontoOrigin ? `origin/${meta.baseBranch}` : meta.baseBranch;
     const rebase = await this.run(cwd, ['git', 'rebase', target]);
     if (!rebase.ok) {
+      // Read before the abort, which resets the index the unmerged paths live in.
+      entry.conflicts = await this.conflictedFiles(cwd);
       await this.run(cwd, ['git', 'rebase', '--abort']);
       throw new Error(`git rebase failed: ${commandErrorText(rebase)}`);
     }
+  }
+
+  /**
+   * The paths a stopped rebase left unmerged, for the entry's `conflicts`.
+   *
+   * `git rebase` prints its `CONFLICT … in <path>` lines on stdout, and the
+   * failure reason keeps stderr, so without this the files never reach anyone.
+   * Empty when git can't say, which only costs the list, never the failure.
+   */
+  private async conflictedFiles(cwd: string): Promise<string[]> {
+    const result = await this.run(cwd, [
+      'git',
+      'diff',
+      '--name-only',
+      '--diff-filter=U',
+    ]);
+    if (!result.ok) return [];
+    return result.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line !== '')
+      .slice(0, CONFLICT_FILES_LIMIT);
   }
 
   // The fetch in front of a rebase onto `origin/<base>`. Unreachable origin
@@ -1277,7 +1321,7 @@ export class MergeQueue {
       if (record !== undefined) record.status = 'failed';
       // Naming the step is the whole point of configuring them: "verify failed" tells you to go
       // read a log, "typecheck failed" tells you what broke.
-      if (/timed out/i.test(result.stderr)) {
+      if (result.timedOut === true) {
         throw new Error(
           `${step.name} timed out after ${timeoutSec}s — raise orchestrator.verifyTimeoutSec or narrow the step`
         );
@@ -1794,8 +1838,7 @@ export class MergeQueue {
       );
     }
     entry.finishedAt = new Date().toISOString();
-    this.history.unshift(entry);
-    this.history.length = Math.min(this.history.length, HISTORY_LIMIT);
+    this.fileToHistory(entry);
     if (state === 'merged' && mergedBaseBranch !== undefined) {
       this.mergedSinceIdle += 1;
       this.lastMergeBase = mergedBaseBranch;

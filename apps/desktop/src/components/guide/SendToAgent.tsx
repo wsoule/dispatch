@@ -1,4 +1,5 @@
 import type { EffortLevel } from '@dispatch-foo/core/browser';
+import { Button, Field, Popover, Spinner, TextArea } from '@dispatch/ui';
 import { Send, SlidersHorizontal } from 'lucide-react';
 import { type ReactNode, useId, useRef, useState } from 'react';
 
@@ -10,12 +11,7 @@ import {
   MODELS,
 } from '../../lib/models';
 import { FailureNotice } from '../failure/FailureNotice';
-import { Button } from '@/ui/button';
-import { Field, FieldLabel } from '@/ui/field';
-import { NativeSelect, NativeSelectOption } from '@/ui/native-select';
-import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
-import { Spinner } from '@/ui/spinner';
-import { Textarea } from '@/ui/textarea';
+import styles from './guide.module.css';
 
 export interface SendChoice {
   model?: string;
@@ -56,6 +52,7 @@ export function SendToAgent({
   extra?: ReactNode;
 }) {
   const id = useId();
+  const [open, setOpen] = useState(false);
   const [model, setModel] = useState('');
   const [effortId, setEffortId] = useState(DEFAULT_EFFORT_ID);
   const [writes, setWrites] = useState('');
@@ -86,57 +83,69 @@ export function SendToAgent({
   }
 
   return (
-    <div className="flex flex-col items-end gap-2">
-      <div className="flex items-center gap-1.5">
-        <Popover>
-          <PopoverTrigger render={<Button variant="ghost" size="sm" />}>
-            <SlidersHorizontal />
-            More options
-          </PopoverTrigger>
-          <PopoverContent align="end" className="flex w-72 flex-col gap-3">
+    <div className={styles.send}>
+      <div className={styles.sendRow}>
+        <Popover
+          open={open}
+          onOpenChange={setOpen}
+          label="More options"
+          align="end"
+          width={288}
+          trigger={
+            <Button
+              variant="quiet"
+              size="sm"
+              icon={
+                <SlidersHorizontal size={14} strokeWidth={1.8} aria-hidden />
+              }
+            >
+              More options
+            </Button>
+          }
+        >
+          <div className={styles.options}>
+            {/* Native selects, not the library's picker Select: each choice
+                is a short plain list inside this popover, and a native
+                control keeps role combobox with every option in the DOM. */}
             {options.modelChoice && (
               <>
-                <Field>
-                  <FieldLabel htmlFor={`${id}-model`}>Model</FieldLabel>
-                  <NativeSelect
+                <Field label="Model" id={`${id}-model`}>
+                  <select
                     id={`${id}-model`}
+                    className="select"
                     value={model}
                     onChange={(e) => setModel(e.target.value)}
                   >
-                    <NativeSelectOption value="">
+                    <option value="">
                       {defaultName === undefined
                         ? 'Default'
                         : `Default (${defaultName})`}
-                    </NativeSelectOption>
+                    </option>
                     {MODELS.map((m) => (
-                      <NativeSelectOption key={m.id} value={m.id}>
+                      <option key={m.id} value={m.id}>
                         {m.label}
-                      </NativeSelectOption>
+                      </option>
                     ))}
-                  </NativeSelect>
+                  </select>
                 </Field>
-                <Field>
-                  <FieldLabel htmlFor={`${id}-effort`}>Effort</FieldLabel>
-                  <NativeSelect
+                <Field label="Effort" id={`${id}-effort`}>
+                  <select
                     id={`${id}-effort`}
+                    className="select"
                     value={effortId}
                     onChange={(e) => setEffortId(e.target.value)}
                   >
                     {effortOptions(options.defaultEffort).map((e) => (
-                      <NativeSelectOption key={e.id} value={e.id}>
+                      <option key={e.id} value={e.id}>
                         {e.label}
-                      </NativeSelectOption>
+                      </option>
                     ))}
-                  </NativeSelect>
+                  </select>
                 </Field>
               </>
             )}
-            <Field>
-              <FieldLabel htmlFor={`${id}-writes`}>
-                Files it may change
-              </FieldLabel>
-              <Textarea
-                id={`${id}-writes`}
+            <Field label="Files it may change">
+              <TextArea
                 rows={3}
                 value={writes}
                 onChange={(e) => setWrites(e.target.value)}
@@ -144,17 +153,29 @@ export function SendToAgent({
               />
             </Field>
             {extra}
-          </PopoverContent>
+          </div>
         </Popover>
         <Button
+          variant="primary"
           size="sm"
           disabled={disabled || sending}
+          icon={
+            sending ? (
+              <Spinner size="xs" label="" />
+            ) : (
+              <Send size={14} strokeWidth={1.8} aria-hidden />
+            )
+          }
           onClick={() => void send()}
         >
-          {sending ? <Spinner className="size-3.5" /> : <Send />}
           Send to agent
         </Button>
       </div>
+      {/* The button hides its Spinner from assistive tech and keeps its
+          words, so this always-mounted line says the send out loud. */}
+      <span role="status" className="srOnly">
+        {sending ? 'Sending to the agent…' : ''}
+      </span>
       {error !== null && <FailureNotice error={error} onRetry={send} />}
     </div>
   );

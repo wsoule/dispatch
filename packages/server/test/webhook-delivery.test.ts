@@ -273,3 +273,29 @@ describe('WebhookDelivery', () => {
     expect(h.posts).toHaveLength(0);
   });
 });
+
+describe('WebhookDelivery reminders', () => {
+  it('posts decision.reminder for a reminded item still open', async () => {
+    h.open.push(item('scope-request:m-1'));
+    h.delivery.start();
+    h.events.broadcast({
+      type: 'decision.reminder',
+      itemId: 'scope-request:m-1',
+      messageId: 'm-1',
+    });
+    await Bun.sleep(0);
+    expect(h.posts.map((p) => [p.payload.event, p.payload.item.id])).toEqual([
+      ['decision.reminder', 'scope-request:m-1'],
+    ]);
+  });
+
+  it('skips an item that resolved, is recorded, or whose kind is off', async () => {
+    h.open.push(item('scope-request:m-2', { disposition: 'recorded' }));
+    await h.delivery.deliverReminder('scope-request:m-gone');
+    await h.delivery.deliverReminder('scope-request:m-2');
+    h.open.push(item('scope-request:m-3'));
+    h.config.kinds = { ...h.config.kinds, 'scope-request': false };
+    await h.delivery.deliverReminder('scope-request:m-3');
+    expect(h.posts).toEqual([]);
+  });
+});

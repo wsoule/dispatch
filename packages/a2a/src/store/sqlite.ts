@@ -196,6 +196,33 @@ export interface HostRow {
   revokedAt: string | null;
 }
 
+// An owner-issued intake link: a form an outside person submits a request
+// through, as the A2A client it is bound to. The token is kept only as its
+// sha256.
+export interface IntakeLinkRow {
+  id: string;
+  client: Address;
+  label: string;
+  tokenHash: string;
+  createdBy: Address;
+  createdAt: string;
+  revokedAt: string | null;
+}
+
+// One request a person submitted through an intake link: the A2A task it
+// opened and the hash of the status token its receipt URL carries.
+export interface IntakeRequestRow {
+  id: string;
+  linkId: string;
+  taskId: string;
+  statusHash: string;
+  name: string;
+  contact: string | null;
+  // The last requester-visible step the webhook was told about.
+  notifiedStep: string | null;
+  createdAt: string;
+}
+
 // The bridge's own records: registered clients, the A2A tasks they opened,
 // the outbound peers and what was relayed to them, and push configs.
 export interface A2AStore {
@@ -292,6 +319,17 @@ export interface A2AStore {
   hostByTokenHash(hash: string): HostRow | null;
   // True when a live host was revoked.
   revokeHost(id: string, at: string): boolean;
+  putIntakeLink(row: IntakeLinkRow): void;
+  // Oldest first, revoked rows included.
+  intakeLinks(): IntakeLinkRow[];
+  intakeLink(id: string): IntakeLinkRow | null;
+  intakeLinkByTokenHash(hash: string): IntakeLinkRow | null;
+  // True when a live link was revoked.
+  revokeIntakeLink(id: string, at: string): boolean;
+  putIntakeRequest(row: IntakeRequestRow): void;
+  intakeRequestByStatusHash(hash: string): IntakeRequestRow | null;
+  intakeRequestForTask(taskId: string): IntakeRequestRow | null;
+  setIntakeNotified(id: string, step: string): void;
   // False when the row is absent or another row already holds this key.
   setClientKey(address: Address, pin: KeyPin): boolean;
   markSigPresented(address: Address): void;
@@ -394,6 +432,14 @@ CREATE TABLE IF NOT EXISTS seen_nonces (
   PRIMARY KEY (thumbprint, nonce)
 );
 CREATE INDEX IF NOT EXISTS seen_nonces_exp ON seen_nonces (expires_at);
+CREATE TABLE IF NOT EXISTS intake_links (
+  id TEXT PRIMARY KEY, client TEXT NOT NULL, label TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+  created_by TEXT NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT
+);
+CREATE TABLE IF NOT EXISTS intake_requests (
+  id TEXT PRIMARY KEY, link_id TEXT NOT NULL, task_id TEXT NOT NULL UNIQUE, status_hash TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL, contact TEXT, notified_step TEXT, created_at TEXT NOT NULL
+);
 `;
 
 // P5 key columns on two P1/P3 tables, added once (version stays 1).
@@ -730,6 +776,52 @@ interface HostDbRow {
   created_by: string;
   created_at: string;
   revoked_at: string | null;
+}
+
+interface IntakeLinkDbRow {
+  id: string;
+  client: string;
+  label: string;
+  token_hash: string;
+  created_by: string;
+  created_at: string;
+  revoked_at: string | null;
+}
+
+function toIntakeLink(r: IntakeLinkDbRow): IntakeLinkRow {
+  return {
+    id: r.id,
+    client: r.client,
+    label: r.label,
+    tokenHash: r.token_hash,
+    createdBy: r.created_by,
+    createdAt: r.created_at,
+    revokedAt: r.revoked_at,
+  };
+}
+
+interface IntakeRequestDbRow {
+  id: string;
+  link_id: string;
+  task_id: string;
+  status_hash: string;
+  name: string;
+  contact: string | null;
+  notified_step: string | null;
+  created_at: string;
+}
+
+function toIntakeRequest(r: IntakeRequestDbRow): IntakeRequestRow {
+  return {
+    id: r.id,
+    linkId: r.link_id,
+    taskId: r.task_id,
+    statusHash: r.status_hash,
+    name: r.name,
+    contact: r.contact,
+    notifiedStep: r.notified_step,
+    createdAt: r.created_at,
+  };
 }
 
 function toHost(r: HostDbRow): HostRow {
@@ -1312,6 +1404,100 @@ export class SqliteA2AStore implements A2AStore {
           .run(at, id).changes
       ) > 0
     );
+  }
+
+  putIntakeLink(l: IntakeLinkRow): void {
+    this.db
+      .prepare(
+        'INSERT INTO intake_links (id, client, label, token_hash, created_by, created_at, revoked_at) VALUES (?,?,?,?,?,?,?)'
+      )
+      .run(
+        l.id,
+        l.client,
+        l.label,
+        l.tokenHash,
+        l.createdBy,
+        l.createdAt,
+        l.revokedAt
+      );
+  }
+
+  intakeLinks(): IntakeLinkRow[] {
+    return queryAll<IntakeLinkDbRow>(
+      this.db,
+      'SELECT * FROM intake_links ORDER BY created_at, id'
+    ).map(toIntakeLink);
+  }
+
+  intakeLink(id: string): IntakeLinkRow | null {
+    const r = queryOne<IntakeLinkDbRow>(
+      this.db,
+      'SELECT * FROM intake_links WHERE id = ?',
+      [id]
+    );
+    return r === undefined ? null : toIntakeLink(r);
+  }
+
+  intakeLinkByTokenHash(hash: string): IntakeLinkRow | null {
+    const r = queryOne<IntakeLinkDbRow>(
+      this.db,
+      'SELECT * FROM intake_links WHERE token_hash = ?',
+      [hash]
+    );
+    return r === undefined ? null : toIntakeLink(r);
+  }
+
+  revokeIntakeLink(id: string, at: string): boolean {
+    return (
+      Number(
+        this.db
+          .prepare(
+            'UPDATE intake_links SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL'
+          )
+          .run(at, id).changes
+      ) > 0
+    );
+  }
+
+  putIntakeRequest(r: IntakeRequestRow): void {
+    this.db
+      .prepare(
+        'INSERT INTO intake_requests (id, link_id, task_id, status_hash, name, contact, notified_step, created_at) VALUES (?,?,?,?,?,?,?,?)'
+      )
+      .run(
+        r.id,
+        r.linkId,
+        r.taskId,
+        r.statusHash,
+        r.name,
+        r.contact,
+        r.notifiedStep,
+        r.createdAt
+      );
+  }
+
+  intakeRequestByStatusHash(hash: string): IntakeRequestRow | null {
+    const r = queryOne<IntakeRequestDbRow>(
+      this.db,
+      'SELECT * FROM intake_requests WHERE status_hash = ?',
+      [hash]
+    );
+    return r === undefined ? null : toIntakeRequest(r);
+  }
+
+  intakeRequestForTask(taskId: string): IntakeRequestRow | null {
+    const r = queryOne<IntakeRequestDbRow>(
+      this.db,
+      'SELECT * FROM intake_requests WHERE task_id = ?',
+      [taskId]
+    );
+    return r === undefined ? null : toIntakeRequest(r);
+  }
+
+  setIntakeNotified(id: string, step: string): void {
+    this.db
+      .prepare('UPDATE intake_requests SET notified_step = ? WHERE id = ?')
+      .run(step, id);
   }
 
   markSigPresented(address: Address): void {

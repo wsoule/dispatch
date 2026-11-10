@@ -5,11 +5,16 @@ import { join } from 'node:path';
 
 import {
   ConfigError,
+  difficultyPolicy,
   loadConfig,
   projectPolicy,
   updateConfig,
 } from '../src/config.js';
-import { DEFAULT_POLICY, FLOOR_CHECKS } from '../src/policy.js';
+import {
+  DEFAULT_DIFFICULTY_POLICY,
+  DEFAULT_POLICY,
+  FLOOR_CHECKS,
+} from '../src/policy.js';
 
 function root(contents?: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'dispatch-policy-'));
@@ -183,5 +188,55 @@ describe('the irreversibility floor at the config seam', () => {
     }
     expect(read(dir)).toBe(before);
     expect(loadConfig(dir).policy).toEqual({ rung: 4, gates: {} });
+  });
+});
+
+describe('policy.difficulty', () => {
+  it('is absent by default, and difficultyPolicy reads that as all off', () => {
+    const policy = projectPolicy(loadConfig(root('autoCommit: true\n')));
+    expect(policy.difficulty).toBeUndefined();
+    expect(difficultyPolicy(policy)).toEqual(DEFAULT_DIFFICULTY_POLICY);
+    expect(DEFAULT_DIFFICULTY_POLICY.autoLand).toBe(false);
+    expect(DEFAULT_DIFFICULTY_POLICY.autoDispatch).toBe(false);
+  });
+
+  it('fills a partial block from the defaults', () => {
+    const dir = root(
+      'policy:\n  difficulty:\n    autoLand: true\n    threshold: trivial\n'
+    );
+    expect(projectPolicy(loadConfig(dir)).difficulty).toEqual({
+      ...DEFAULT_DIFFICULTY_POLICY,
+      autoLand: true,
+      threshold: 'trivial',
+    });
+  });
+
+  it('rejects a bad threshold, a non-positive ceiling, and an unknown field', () => {
+    for (const block of [
+      'threshold: substantial',
+      'maxFiles: 0',
+      'maxLines: 1.5',
+      'autoLand: yes please',
+      'autoland: true',
+    ]) {
+      expect(() =>
+        loadConfig(root(`policy:\n  difficulty:\n    ${block}\n`))
+      ).toThrow(ConfigError);
+    }
+  });
+
+  it('patches field by field, keeping what the patch omits, and refuses a bad value before writing', () => {
+    const dir = root('policy:\n  difficulty:\n    maxLines: 50\n');
+    updateConfig(dir, { policy: { difficulty: { autoLand: true } } });
+    expect(projectPolicy(loadConfig(dir)).difficulty).toEqual({
+      ...DEFAULT_DIFFICULTY_POLICY,
+      autoLand: true,
+      maxLines: 50,
+    });
+    const before = read(dir);
+    expect(() =>
+      updateConfig(dir, { policy: { difficulty: { maxFiles: -1 } } })
+    ).toThrow(ConfigError);
+    expect(read(dir)).toBe(before);
   });
 });

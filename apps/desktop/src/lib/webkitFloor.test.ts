@@ -84,22 +84,55 @@ describe('built bundle parses on the oldest supported WebKit', () => {
     expect(failures).toEqual([]);
   });
 
-  test('the polyfill banner leads both the entry chunk and the worker bundle', () => {
+  test('the polyfill banner leads both entry chunks and the worker bundle', () => {
     // Matched on the shim's own defineProperty descriptor, which survives
     // minification, rather than on any identifier a minifier would rename.
     const marker = 'writable:!0,enumerable:!1';
     const assets = bundleFiles().filter((f) => f.includes('assets/'));
-    const entry = assets.find((f) => f.includes('/index-'));
+    // vite.config.ts's two inputs: the desktop app and the phone app (m/).
+    const desktop = assets.find((f) => f.includes('/main-'));
+    const phone = assets.find((f) => f.includes('/mobile-'));
     const worker = assets.find((f) => f.includes('/worker-'));
 
-    if (entry === undefined || worker === undefined) {
+    if (desktop === undefined || phone === undefined || worker === undefined) {
       throw new Error(
-        'expected dist/assets to hold both an index-*.js entry chunk and a worker-*.js bundle'
+        'expected dist/assets to hold main-*.js and mobile-*.js entry chunks and a worker-*.js bundle'
       );
     }
     // A worker has its own global scope, so the main thread's shims never reach
     // it and it needs its own copy.
-    expect(readFileSync(entry, 'utf8')).toContain(marker);
+    expect(readFileSync(desktop, 'utf8')).toContain(marker);
+    expect(readFileSync(phone, 'utf8')).toContain(marker);
     expect(readFileSync(worker, 'utf8')).toContain(marker);
+  });
+
+  test('the pre-paint theme script is inline, before #root, and parses as ES5', () => {
+    // vite.config.ts's dispatch-theme plugin injects themeScript() at
+    // body-prepend. It must be a classic script (no src, no type=module, which
+    // would defer it past first paint) ahead of the root. The bundle check
+    // above reads only dist's .js files, so this one parses the inline body
+    // itself, at ES5: themeScript promises var and function expressions only,
+    // stricter than the bundles' MAX_ECMA_VERSION.
+    const html = readFileSync(join(DIST_DIR, 'index.html'), 'utf8');
+    const rootAt = html.indexOf('<div id="root">');
+    expect(rootAt).toBeGreaterThan(-1);
+    const inline = [
+      ...html.matchAll(/<script(?<attrs>[^>]*)>(?<body>[\s\S]*?)<\/script>/g),
+    ]
+      .filter((match) => {
+        const attrs = match.groups?.attrs ?? '';
+        return !/\bsrc=/.test(attrs) && !/type=["']?module/.test(attrs);
+      })
+      .find((match) => (match.groups?.body ?? '').includes('dispatch:theme'));
+    if (inline === undefined) {
+      throw new Error(
+        'dist/index.html has no inline script reading dispatch:theme'
+      );
+    }
+    expect(inline.index).toBeLessThan(rootAt);
+    const body = inline.groups?.body ?? '';
+    expect(() =>
+      parse(body, { ecmaVersion: 5, sourceType: 'script' })
+    ).not.toThrow();
   });
 });

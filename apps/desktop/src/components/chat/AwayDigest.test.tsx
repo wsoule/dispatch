@@ -36,6 +36,37 @@ test('renders each line with its door and dismisses on Got it', () => {
   expect(dismissed).toBe(true);
 });
 
+test('a failed line reads danger and a review line success', () => {
+  render(
+    <AwayDigest
+      lines={[
+        {
+          key: 'failed',
+          tone: 'failed',
+          text: '✕ r-1 failed · A',
+          door: { taskId: 't-1' },
+        },
+        {
+          key: 'review',
+          tone: 'review',
+          text: '◇ 1 ready for review: B',
+          door: { taskId: 't-2' },
+        },
+      ]}
+      since="2026-10-06T09:00:00Z"
+      onDismiss={() => {}}
+      onOpenDoor={() => {}}
+    />
+  );
+  // The glyph stays in the words, so the tone is never the only signal.
+  expect(screen.getByText('✕ r-1 failed · A').getAttribute('data-tone')).toBe(
+    'danger'
+  );
+  expect(
+    screen.getByText('◇ 1 ready for review: B').getAttribute('data-tone')
+  ).toBe('success');
+});
+
 test('says nothing with no lines', () => {
   const { container } = render(
     <AwayDigest

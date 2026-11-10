@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { type IsolatedDaemon, startIsolatedDaemon } from './isolatedDaemon';
 import { StdioMcp } from './mcp';
 import { APP_TOKEN, REPO } from './paths';
+import { openDestination } from './shell';
 
 // The docs v0 flow: an agent writes a spec over the MCP tools and reads it back, the human
 // links it and edits it in Docs, and an ops save landing during the human's autosave merges.
@@ -139,7 +140,7 @@ test('an agent writes a spec, the human edits it in Docs, and a concurrent ops s
   });
 
   await page.goto(daemon.appUrl);
-  await page.getByTestId('two-views-docs').click();
+  await openDestination(page, 'Docs');
   await page.getByRole('button', { name: 'E2E spec', exact: true }).click();
   const editor = page.getByLabel(`Editing ${SLUG}`);
   await expect(editor).toHaveValue(/agent v1/);

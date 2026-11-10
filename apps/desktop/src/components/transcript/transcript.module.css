@@ -1,0 +1,369 @@
+/* The transcript family (ShimmerLabel.tsx, StreamingText.tsx, ToolChip.tsx,
+   ThinkingTrace.tsx):
+   its faces and its motion. Tokens only; every animation runs under
+   prefers-reduced-motion: no-preference, with the static face as the
+   fallback. */
+
+/* ShimmerLabel: the static words are the fallback; the sweep is a gradient
+   between the quiet and the full text colour, clipped to the glyphs and
+   slid across them, only under no-preference motion. Both stops are text
+   colours (4.5:1), so every frame of the sweep stays readable. */
+@media (prefers-reduced-motion: no-preference) {
+  .shimmer {
+    background-image: linear-gradient(
+      90deg,
+      var(--text-2) 35%,
+      var(--text) 50%,
+      var(--text-2) 65%
+    );
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: shimmer-text 1.4s linear infinite;
+  }
+}
+
+@keyframes shimmer-text {
+  from {
+    background-position: 100% 0;
+  }
+
+  to {
+    background-position: -100% 0;
+  }
+}
+
+/* Forced colours: plain system text, no sweep. */
+@media (forced-colors: active) {
+  .shimmer {
+    background: none;
+    color: CanvasText;
+    animation: none;
+  }
+}
+
+/* ---- StreamingText ------------------------------------------------------ */
+
+.streaming {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+}
+
+.streamingText {
+  margin: 0;
+  font-size: var(--fs);
+  line-height: var(--lh-long);
+  color: var(--text);
+}
+
+/* The typing caret: never drawn under reduced motion (the hook shows the
+   whole text at once there), and blinking only where motion is welcome. */
+.caret {
+  display: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .caret {
+    display: inline-block;
+    width: 2px;
+    height: 0.9em;
+    margin-inline-start: 2px;
+    border-radius: var(--r-full);
+    background: currentcolor;
+    vertical-align: -0.1em;
+    animation: caret-blink 1s step-end infinite;
+  }
+}
+
+@keyframes caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.streamActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: var(--s-2);
+}
+
+.sources {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+/* A numbered citation: Gr8r's quiet chip, a link or a plain button. */
+.source {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: var(--h-xs);
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-chip);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  text-decoration: none;
+}
+
+.source:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+@media (hover: hover) {
+  .source:hover {
+    background: var(--surface-3);
+    color: var(--text);
+  }
+}
+
+/* The citation number, on the type scale's smallest step (counts and keys). */
+.sourceIndex {
+  font-size: var(--fs-2xs);
+  line-height: 1;
+}
+
+.followUps {
+  display: flex;
+  flex-direction: column;
+  margin-top: 10px;
+}
+
+.followUpsLabel {
+  margin: 0;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+
+.followUpList {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.followUp {
+  max-width: 100%;
+  text-align: start;
+}
+
+/* ---- ToolChip ----------------------------------------------------------- */
+
+.toolGroup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.toolChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  color: var(--text);
+  text-align: start;
+}
+
+.toolChip:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+/* The inline pill: --surface-2 under a soft edge; a running call takes the
+   info tint and a failed one the danger tint (data-tone), the words staying
+   --text or the tone's ink. */
+.toolPill {
+  height: var(--h-xs);
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-chip);
+  background: var(--surface-2);
+  font-size: var(--fs-xs);
+}
+
+.toolPill[data-tone] {
+  border-color: var(--tone-line);
+  background: var(--tone-soft);
+}
+
+/* The flat work-log line: an icon column, the label, the meta. */
+.toolRow {
+  display: flex;
+  width: 100%;
+  min-height: 24px;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  font-size: var(--fs);
+  line-height: var(--lh);
+}
+
+.toolIcon {
+  display: inline-flex;
+  flex: none;
+  justify-content: center;
+  color: var(--text-2);
+}
+
+.toolRow .toolIcon {
+  width: 24px;
+}
+
+.toolChip[data-tone] .toolIcon {
+  color: var(--tone-ink);
+}
+
+.toolLabel {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolRow .toolLabel {
+  flex: none;
+  color: var(--text-2);
+}
+
+.toolChip[data-state='failed'] .toolLabel {
+  color: var(--tone-ink);
+}
+
+.toolMeta {
+  flex: none;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolRow .toolMeta {
+  flex: 0 1 auto;
+}
+
+.toolChip[data-state='failed'] .toolMeta {
+  color: var(--tone-ink);
+}
+
+.toolFailed {
+  display: inline-flex;
+  flex: none;
+  color: var(--tone-ink);
+}
+
+.toolChevron {
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--text-2);
+}
+
+.toolChip[data-expanded='true'] .toolChevron {
+  transform: rotate(90deg);
+}
+
+.toolClickable {
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .toolRow.toolClickable:hover {
+    background: var(--surface-2);
+  }
+
+  .toolPill.toolClickable:hover {
+    background: var(--surface-3);
+  }
+}
+
+/* "+N": the quiet count after the chips a group shows. */
+.toolOverflow {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: var(--h-xs);
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-full);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .toolChip {
+    transition: background-color var(--dur) var(--ease);
+  }
+
+  .toolChevron {
+    transition: transform var(--dur) var(--ease);
+  }
+}
+
+/* Forced colours: every chip keeps its edge, a failed chip its X. */
+@media (forced-colors: active) {
+  .toolPill,
+  .toolOverflow,
+  .source {
+    border-color: CanvasText;
+  }
+
+  .toolFailed {
+    color: CanvasText;
+  }
+}
+
+/* ---- ThinkingTrace ------------------------------------------------------ */
+
+/* The opened reasoning sits under the row's label, past its 24px icon
+   column and the 2px row inset. */
+.traceBody {
+  min-width: 0;
+  padding: 2px 0 4px 28px;
+}
+
+/* The raw reasoning: a sunken mono well that scrolls past about 24 lines and
+   wraps, so a long thought never widens the transcript. */
+.traceWell {
+  box-sizing: border-box;
+  max-width: 100%;
+  max-height: 384px;
+  margin: 0;
+  padding: var(--s-2) var(--s-3);
+  overflow: auto;
+  scrollbar-width: thin;
+  border-radius: var(--r-sm);
+  background: var(--sunken);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-long);
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Forced colours drop the sunken fill: an edge keeps the well apart. */
+@media (forced-colors: active) {
+  .traceWell {
+    border: 1px solid CanvasText;
+  }
+}

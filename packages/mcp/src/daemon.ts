@@ -230,6 +230,46 @@ export async function startDaemon(rootDir: string): Promise<LiveDaemon | null> {
   return liveDaemon(rootDir);
 }
 
+// Where macOS installs the Dispatch desktop app, which starts dispatchd for
+// whichever project it opens. Named by tauri.conf.json's `productName`, the
+// same name the CLI's `open -a Dispatch` uses. Other platforms have no fixed
+// install location to look at, so they get none.
+export function desktopAppCandidates(
+  platform: NodeJS.Platform = process.platform,
+  home: string = homedir()
+): string[] {
+  if (platform !== 'darwin') return [];
+  return [
+    '/Applications/Dispatch.app',
+    join(home, 'Applications', 'Dispatch.app'),
+  ];
+}
+
+/** Whether the Dispatch desktop app is installed at any of `candidates`. */
+export function desktopAppInstalled(
+  candidates: string[] = desktopAppCandidates()
+): boolean {
+  return candidates.some((path) => existsSync(path));
+}
+
+/**
+ * How to get a daemon running, for the end of every "dispatchd not running"
+ * error.
+ *
+ * `dispatch serve` alone was the wrong advice for the most common install: a
+ * user who set Dispatch up through the desktop app runs the standalone
+ * `dispatch-mcp`, which has no way to start a daemon, and may not have the
+ * `dispatch` CLI on PATH at all. The app is what runs dispatchd for them, so
+ * when it is installed the fix is to open it on this project.
+ */
+export function startDaemonAdvice(
+  appInstalled: boolean = desktopAppInstalled()
+): string {
+  return appInstalled
+    ? 'Open this project in the Dispatch desktop app, which starts dispatchd for it (or run: dispatch serve)'
+    : 'Start it with: dispatch serve';
+}
+
 // How long `liveDaemon` keeps re-probing a daemon whose pid is alive but whose
 // health check stalls before reporting it as unreachable. Bounded, so a
 // daemon that wedged for good still reads as unreachable rather than holding
@@ -309,7 +349,7 @@ export class DaemonUnreachableError extends Error {
     cause: string
   ) {
     super(
-      `dispatchd stopped responding on port ${port} (${cause}). It answered a health check moments ago, so it has probably just exited — start it again with: dispatch serve`
+      `dispatchd stopped responding on port ${port} (${cause}). It answered a health check moments ago, so it has probably just exited. ${startDaemonAdvice()}`
     );
     this.name = 'DaemonUnreachableError';
   }

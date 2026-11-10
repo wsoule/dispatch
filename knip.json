@@ -34,16 +34,36 @@
         "test/fixtures/a2aFixturePeer.ts"
       ]
     },
+    "apps/desktop": {
+      // The phone app is a second Vite page (m/index.html → src/mobile/main.tsx)
+      // that the plugin does not read, and its service worker is a plain file
+      // under public/ that the browser loads by URL (/m/sw.js), never imported.
+      "entry": ["src/mobile/main.tsx"],
+      "ignore": ["public/m/sw.js"]
+    },
     "packages/protocol-spec": {
       // Scripts run from moon tasks; fixture adapters are spawned by the
       // runner tests, never imported.
       "entry": ["scripts/*.ts", "test/fixtures/adapters/*.ts"]
+    },
+    "packages/ui": {
+      // src/index.ts is inferred from `exports`, and the bun plugin makes
+      // the *.test.ts(x) files entries; the test/*-ssr-entry.tsx render
+      // entries are spawned as child processes (`bun run`, no happy-dom) by
+      // the *-ssr tests, never imported, so nothing static reaches them.
+      "entry": ["test/**/*.ts", "test/**/*.tsx"]
     },
     "packages/demo": {
       // storefront-src is a template copied into the generated demo repo
       // (see src/paths.ts's `template`), so nothing in this workspace ever
       // imports it. Unreferenced here is the point, not dead code.
       "ignore": ["storefront-src/**"]
+    },
+    "apps/mobile": {
+      // bun runs test/*.test.ts, but the app has no bun dependency for knip's
+      // bun plugin to notice (its tsconfig is React Native's), so the tests
+      // need naming here.
+      "entry": ["test/**/*.test.ts"]
     },
     "apps/demo": {
       // daemon.ts is spawned as a subprocess (`bun src/daemon.ts --root ...`)

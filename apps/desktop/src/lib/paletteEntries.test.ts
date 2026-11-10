@@ -1,12 +1,18 @@
 import type { DocHit } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
-import type { PaletteEntriesContext, PaletteSection } from './paletteEntries';
+import type {
+  PaletteEntriesContext,
+  PaletteEntry,
+  PaletteSection,
+} from './paletteEntries';
 import {
   addressEntries,
   buildPaletteEntries,
   docHitEntries,
+  entriesForTheme,
 } from './paletteEntries';
+import { parseHref } from './routes';
 
 function context(over: Partial<PaletteEntriesContext> = {}) {
   const calls: string[] = [];
@@ -42,6 +48,34 @@ describe('buildPaletteEntries', () => {
     // No row sits outside its group.
     expect(sections.lastIndexOf('actions')).toBeLessThan(firstOf('navigation'));
     expect(sections.lastIndexOf('navigation')).toBeLessThan(firstOf('tasks'));
+  });
+
+  test('every navigation row carries the real route of the place it opens', () => {
+    const { ctx } = context();
+    const navigation = buildPaletteEntries(ctx).filter(
+      (e) => e.section === 'navigation'
+    );
+    expect(navigation.length).toBeGreaterThan(0);
+    const routes = Object.fromEntries(
+      navigation.map((e) => [
+        e.id,
+        e.href === undefined ? null : parseHref(e.href),
+      ])
+    );
+    expect(routes).toEqual({
+      'go-overseer': [{ type: 'showOverseer' }],
+      'go-board': [{ type: 'showTasks' }],
+      'go-settings': [{ type: 'openSettings' }],
+      'go-week': [{ type: 'setProjectView', view: 'week' }],
+      'go-timeline': [{ type: 'openTimeline', project: null }],
+      'go-graph': [
+        { type: 'openGraph', scope: { level: 'milestone' }, nodeId: null },
+      ],
+      'go-files': [{ type: 'setProjectView', view: 'files' }],
+      'go-terminals': [{ type: 'setProjectView', view: 'terminals' }],
+      'go-projects': [{ type: 'setProjectView', view: 'projects' }],
+      'go-live': [{ type: 'setProjectView', view: 'live' }],
+    });
   });
 
   test('new task is C and the shortcuts sheet is ?', () => {
@@ -132,6 +166,50 @@ describe('buildPaletteEntries', () => {
   });
 });
 
+describe('Follow the system theme', () => {
+  // A context whose actions include followSystemTheme, logging to `calls`.
+  function withFollow(over: Partial<PaletteEntriesContext> = {}) {
+    const { ctx, calls } = context(over);
+    ctx.actions.followSystemTheme = () => calls.push('theme-system');
+    return { ctx, calls };
+  }
+
+  const themeRow = (entries: PaletteEntry[]) =>
+    entries.find((e) => e.id === 'action-theme-system');
+
+  test('it is built only with the action', () => {
+    expect(themeRow(buildPaletteEntries(context().ctx))).toBeUndefined();
+    expect(themeRow(buildPaletteEntries(withFollow().ctx))).toBeDefined();
+  });
+
+  for (const hasProject of [true, false]) {
+    test(`it follows Keyboard shortcuts and runs the action (project: ${String(hasProject)})`, () => {
+      const { ctx, calls } = withFollow({ hasProject });
+      const entries = buildPaletteEntries(ctx);
+      const index = entries.findIndex((e) => e.id === 'action-theme-system');
+      expect(entries[index - 1]?.id).toBe('action-shortcuts');
+      const row = entries[index];
+      expect(row?.label).toBe('Follow the system theme');
+      expect(row?.kind).toBe('action');
+      expect(row?.section).toBe('actions');
+      row?.run();
+      expect(calls).toEqual(['theme-system']);
+    });
+  }
+
+  // Shown only while a Light or Dark choice is stored; the rest are untouched.
+  test('entriesForTheme drops it under System and keeps it for Light or Dark', () => {
+    const entries = buildPaletteEntries(withFollow().ctx);
+    const ids = entries.map((e) => e.id);
+    expect(entriesForTheme(entries, 'system').map((e) => e.id)).toEqual(
+      ids.filter((id) => id !== 'action-theme-system')
+    );
+    for (const theme of ['light', 'dark'] as const) {
+      expect(entriesForTheme(entries, theme)).toBe(entries);
+    }
+  });
+});
+
 describe('docHitEntries', () => {
   const hit = (anchor: string, heading: string): DocHit => ({
     doc: 'doc-01K',
@@ -191,8 +269,13 @@ describe('navigation rows', () => {
       ['Go to Overseer', '⌘1'],
       ['Go to Tasks', '⌘2'],
       ['Go to Settings', '⌘,'],
+      ['Go to My week', 'G W'],
+      ['Go to Timeline', 'G L'],
+      ['Go to Graph', 'G G'],
       ['Open Files', undefined],
       ['Open Terminals', undefined],
+      ['Open Projects', undefined],
+      ['Open Live', undefined],
     ]);
     expect(entries.some((e) => e.id === 'action-toggle-sidebar')).toBe(false);
     for (const row of nav) row.run();
@@ -200,8 +283,13 @@ describe('navigation rows', () => {
       'global:overseer',
       'project:board',
       'global:settings',
+      'project:week',
+      'project:timeline',
+      'project:graph',
       'project:files',
       'project:terminals',
+      'project:projects',
+      'project:live',
     ]);
   });
 });

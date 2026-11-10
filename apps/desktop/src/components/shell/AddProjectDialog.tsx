@@ -1,4 +1,15 @@
-import { ChevronLeft, FolderOpen, GitBranch, Search } from 'lucide-react';
+import {
+  Button,
+  Dialog,
+  EmptyState,
+  Notice,
+  Register,
+  RegisterCell,
+  RegisterRow,
+  SearchField,
+  Spinner,
+} from '@dispatch/ui';
+import { ChevronLeft, FolderOpen, GitBranch, Server } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import {
@@ -7,20 +18,10 @@ import {
   listGithubRepos,
   pickDirectory,
 } from '../../lib/tauri';
-import { Button } from '@/ui/button';
-import { EmptyState } from '@/ui/chrome';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/ui/dialog';
-import { InputGroup, InputGroupAddon, InputGroupInput } from '@/ui/input-group';
-import { ScrollArea } from '@/ui/scroll-area';
-import { Spinner } from '@/ui/spinner';
+import styles from './AddProjectDialog.module.css';
+import { ConnectRemoteForm } from './ConnectRemoteForm';
 
-type Mode = 'choose' | 'github';
+type Mode = 'choose' | 'github' | 'remote';
 
 interface AddProjectDialogProps {
   /** Called with an absolute path once a project is chosen — either a locally picked folder
@@ -28,6 +29,9 @@ interface AddProjectDialogProps {
    * `App`'s `handleAddProject`); may reject (e.g. the path isn't a directory), in which case
    * the error is surfaced here rather than closing the dialog. */
   onAdd: (path: string) => Promise<void>;
+  /** Called with the remote root once the app pairs with a dispatchd on another
+   * machine. When omitted the "Remote dispatchd" choice is not offered. */
+  onConnectRemote?: (remoteRoot: string) => void;
   onClose: () => void;
   /** Which pane to open on; 'github' skips the choice when the caller already asked for GitHub. */
   initialMode?: Mode;
@@ -49,6 +53,7 @@ interface AddProjectDialogProps {
  */
 export function AddProjectDialog({
   onAdd,
+  onConnectRemote,
   onClose,
   initialMode = 'choose',
   startIn = null,
@@ -70,8 +75,18 @@ export function AddProjectDialog({
     if (mode === 'github') filterRef.current?.focus();
   }, [mode]);
 
+  // Asks for the repositories once each time the GitHub pane opens without a list. A
+  // failed load (gh missing or signed out) says so and waits for the person: Back, then
+  // From GitHub again, asks once more. Keyed on the loading flag instead, a failure (the
+  // list still null, loading back to false) asked again at once, over and over.
+  const reposAsked = useRef(false);
   useEffect(() => {
-    if (mode !== 'github' || repos !== null || reposLoading) return;
+    if (mode !== 'github') {
+      reposAsked.current = false;
+      return;
+    }
+    if (repos !== null || reposAsked.current) return;
+    reposAsked.current = true;
     setReposLoading(true);
     setError(null);
     listGithubRepos()
@@ -80,7 +95,7 @@ export function AddProjectDialog({
         setError(err instanceof Error ? err.message : String(err))
       )
       .finally(() => setReposLoading(false));
-  }, [mode, repos, reposLoading]);
+  }, [mode, repos]);
 
   // Registers `path` and switches to it; leaves the dialog open showing the error if that
   // fails so the user can retry or pick something else.
@@ -142,146 +157,180 @@ export function AddProjectDialog({
   return (
     <Dialog
       open
-      onOpenChange={(open) => {
-        if (!open && busy === null) onClose();
-      }}
+      onClose={onClose}
+      dismissible={busy === null}
+      contentKey={mode}
+      titleAction={
+        mode !== 'choose' ? (
+          <Button
+            variant="quiet"
+            size="sm"
+            icon={<ChevronLeft size={14} strokeWidth={1.8} />}
+            aria-label="Back"
+            onClick={() => {
+              setMode('choose');
+              setError(null);
+            }}
+          />
+        ) : undefined
+      }
+      title={
+        mode === 'github'
+          ? 'Clone from GitHub'
+          : mode === 'remote'
+            ? 'Connect to a remote dispatchd'
+            : 'Add project'
+      }
+      description={
+        mode === 'github'
+          ? 'Pick a repository to clone, then choose where to put it.'
+          : mode === 'remote'
+            ? 'Work with a project whose daemon runs on another machine.'
+            : 'Open a local folder, or clone a repository from GitHub.'
+      }
+      actions={
+        <Button variant="secondary" onClick={onClose} disabled={busy !== null}>
+          Cancel
+        </Button>
+      }
     >
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            {mode === 'github' && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                onClick={() => {
-                  setMode('choose');
-                  setError(null);
-                }}
-                aria-label="Back"
-                className="text-muted-foreground hover:text-foreground -ml-1 size-auto rounded p-0.5 hover:bg-transparent"
-              >
-                <ChevronLeft className="size-4" />
-              </Button>
-            )}
-            {mode === 'github' ? 'Clone from GitHub' : 'Add project'}
-          </DialogTitle>
-          <DialogDescription>
-            {mode === 'github'
-              ? 'Pick a repository to clone, then choose where to put it.'
-              : 'Open a local folder, or clone a repository from GitHub.'}
-          </DialogDescription>
-        </DialogHeader>
-
+      <div className={styles.body}>
         {error !== null && (
-          <div className="bg-destructive/10 text-destructive rounded-md px-3 py-2 text-[13px] whitespace-pre-wrap">
-            {error}
-          </div>
+          <Notice tone="danger" role="alert">
+            <span className={styles.error}>{error}</span>
+          </Notice>
         )}
 
         {busy !== null ? (
-          <div className="text-muted-foreground flex items-center justify-center gap-2 py-8 text-[13px]">
-            <Spinner />
+          <div className={styles.waiting}>
+            <Spinner label="" />
             {busy}
           </div>
         ) : mode === 'choose' ? (
-          <div className="flex flex-col gap-2">
-            <Button
+          <div className={styles.choices}>
+            <button
               type="button"
-              variant="ghost"
-              size="xs"
+              className={styles.choice}
               onClick={() => void pickLocalFolder()}
-              className="shadow-hairline rounded-card h-auto justify-start gap-3 px-3 py-3 text-left text-[length:inherit] font-normal has-[>svg]:px-3"
             >
-              <FolderOpen className="text-muted-foreground size-5 shrink-0" />
-              <span className="flex flex-col">
-                <span className="text-foreground text-[13px] font-medium">
-                  Local folder…
-                </span>
-                <span className="text-muted-foreground text-[12px]">
+              <FolderOpen
+                className={styles.choiceIcon}
+                size={20}
+                strokeWidth={1.6}
+                aria-hidden="true"
+              />
+              <span className={styles.choiceText}>
+                <span className={styles.choiceName}>Local folder…</span>
+                <span className={styles.choiceNote}>
                   Add a project already on this machine
                 </span>
               </span>
-            </Button>
-            <Button
+            </button>
+            <button
               type="button"
-              variant="ghost"
-              size="xs"
+              className={styles.choice}
               onClick={() => setMode('github')}
-              className="shadow-hairline rounded-card h-auto justify-start gap-3 px-3 py-3 text-left text-[length:inherit] font-normal has-[>svg]:px-3"
             >
-              <GitBranch className="text-muted-foreground size-5 shrink-0" />
-              <span className="flex flex-col">
-                <span className="text-foreground text-[13px] font-medium">
-                  From GitHub
-                </span>
-                <span className="text-muted-foreground text-[12px]">
+              <GitBranch
+                className={styles.choiceIcon}
+                size={20}
+                strokeWidth={1.6}
+                aria-hidden="true"
+              />
+              <span className={styles.choiceText}>
+                <span className={styles.choiceName}>From GitHub</span>
+                <span className={styles.choiceNote}>
                   Clone one of your repositories
                 </span>
               </span>
-            </Button>
+            </button>
+            {onConnectRemote !== undefined && (
+              <button
+                type="button"
+                className={styles.choice}
+                onClick={() => setMode('remote')}
+              >
+                <Server
+                  className={styles.choiceIcon}
+                  size={20}
+                  strokeWidth={1.6}
+                  aria-hidden="true"
+                />
+                <span className={styles.choiceText}>
+                  <span className={styles.choiceName}>Remote dispatchd…</span>
+                  <span className={styles.choiceNote}>
+                    Pair with a daemon on another machine
+                  </span>
+                </span>
+              </button>
+            )}
           </div>
+        ) : mode === 'remote' && onConnectRemote !== undefined ? (
+          <ConnectRemoteForm onConnected={onConnectRemote} />
         ) : (
-          <div className="flex flex-col gap-2">
-            <InputGroup>
-              <InputGroupAddon>
-                <Search className="size-3.5" />
-              </InputGroupAddon>
-              <InputGroupInput
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                placeholder="Search repositories…"
-                ref={filterRef}
-              />
-            </InputGroup>
+          <div className={styles.github}>
+            {/* Escape in a field with text clears it; in an empty field it
+                reaches the dialog, which closes. */}
+            <SearchField
+              inputRef={filterRef}
+              value={filter}
+              onChange={setFilter}
+              label="Search repositories"
+              placeholder="Search repositories…"
+            />
 
             {reposLoading ? (
-              <div className="text-muted-foreground flex items-center justify-center gap-2 py-8 text-[13px]">
-                <Spinner />
+              <div className={styles.waiting}>
+                <Spinner label="" />
                 Loading repositories…
               </div>
-            ) : repos !== null && filteredRepos.length === 0 ? (
-              <EmptyState
-                message={
-                  repos.length === 0
-                    ? 'No repositories found.'
-                    : 'No repositories match your search.'
-                }
-              />
+            ) : repos === null ? null : filteredRepos.length === 0 ? (
+              <EmptyState icon={null}>
+                {repos.length === 0
+                  ? 'No repositories found.'
+                  : 'No repositories match your search.'}
+              </EmptyState>
             ) : (
-              <ScrollArea className="max-h-72">
-                <div className="flex flex-col gap-0.5">
+              <div className={styles.repos}>
+                <Register
+                  label="Repositories"
+                  columns="minmax(0, 1fr)"
+                  stackWithin={480}
+                  stackedColumns="minmax(0, 1fr)"
+                >
                   {filteredRepos.map((repo) => (
-                    <Button
+                    <RegisterRow
                       key={repo.nameWithOwner}
-                      type="button"
-                      variant="ghost"
-                      onClick={() => void cloneRepo(repo)}
+                      onActivate={() => void cloneRepo(repo)}
+                      // The description is part of the row's name (the
+                      // stretched button's words replace the cells') and
+                      // whole on hover, where one line cuts it.
+                      rowLabel={
+                        repo.description === ''
+                          ? `Clone ${repo.nameWithOwner}`
+                          : `Clone ${repo.nameWithOwner}, ${repo.description}`
+                      }
                       title={repo.description || repo.nameWithOwner}
-                      className="h-auto flex-col items-start justify-start gap-0.5 px-2.5 py-2 text-left font-normal"
                     >
-                      <span className="text-foreground w-full truncate text-[13px] font-medium">
-                        {repo.nameWithOwner}
-                      </span>
-                      {repo.description !== '' && (
-                        <span className="text-muted-foreground w-full truncate text-[12px]">
-                          {repo.description}
+                      <RegisterCell
+                        variant="name"
+                        sub={
+                          repo.description === '' ? undefined : repo.description
+                        }
+                      >
+                        {/* owner/name is read by machines (gh), so mono. */}
+                        <span className={styles.repoName}>
+                          {repo.nameWithOwner}
                         </span>
-                      )}
-                    </Button>
+                      </RegisterCell>
+                    </RegisterRow>
                   ))}
-                </div>
-              </ScrollArea>
+                </Register>
+              </div>
             )}
           </div>
         )}
-
-        <div className="flex justify-end">
-          <Button variant="outline" onClick={onClose} disabled={busy !== null}>
-            Cancel
-          </Button>
-        </div>
-      </DialogContent>
+      </div>
     </Dialog>
   );
 }

@@ -1,7 +1,8 @@
+import { cx } from '@dispatch/ui';
 import { memo } from 'react';
 
 import type { FlightPlan } from './flightPlan';
-import { cn } from '@/lib/utils';
+import styles from './FlightPlanMini.module.css';
 
 // More waves than this share segments, so a deep plan never outgrows a row.
 const MAX_SEGMENTS = 8;
@@ -30,7 +31,8 @@ function segmentsOf(plan: FlightPlan): Segment[] {
   return out;
 }
 
-// One wave: landed fill, then the running share, on a hairline track.
+// One wave: the landed share in the neutral done fill, then the running share in the
+// info (in progress) hue, on a soft track. The wave being worked wears an info outline.
 function WaveSegment({ segment }: { segment: Segment }) {
   const donePct =
     segment.total === 0 ? 0 : (segment.done / segment.total) * 100;
@@ -40,18 +42,13 @@ function WaveSegment({ segment }: { segment: Segment }) {
     <span
       data-slot="flight-wave"
       data-current={segment.current || undefined}
-      className={cn(
-        'relative h-1.5 w-3.5 overflow-hidden rounded-[2px] bg-(--border-strong)',
-        segment.current &&
-          'outline-[0.5px] outline-offset-1 outline-(--state-working-fg)'
-      )}
+      data-tone={segment.current ? 'info' : undefined}
+      className={styles.wave}
     >
+      <span className={styles.landed} style={{ width: `${donePct}%` }} />
       <span
-        className="absolute inset-y-0 left-0 bg-(--status-done)"
-        style={{ width: `${donePct}%` }}
-      />
-      <span
-        className="absolute inset-y-0 bg-(--state-working-fg)"
+        data-tone="info"
+        className={styles.running}
         style={{ left: `${donePct}%`, width: `${runPct}%` }}
       />
     </span>
@@ -60,9 +57,10 @@ function WaveSegment({ segment }: { segment: Segment }) {
 
 /**
  * The mini Flight Plan: a container's fan-out at row height. One segment per wave — landed
- * in the done hue, running in the working hue, the wave being worked outlined — then `Wave
- * 2/3`, the running count, and one dot per agent slot (filled while in use). Pure display
- * over `buildFlightPlan`; the full Flight Plan reads the same model.
+ * in the neutral done fill, running in the info hue, the wave being worked outlined in
+ * info — then `Wave 2/3`, the running count in info, and one dot per agent slot (filled
+ * while in use, a ring while free). Pure display over `buildFlightPlan`; the full Flight
+ * Plan reads the same model. The parts are decorative: the `role="img"` name says it all.
  */
 export const FlightPlanMini = memo(function FlightPlanMini({
   plan,
@@ -93,37 +91,26 @@ export const FlightPlanMini = memo(function FlightPlanMini({
       role="img"
       aria-label={summary}
       data-slot="flight-plan-mini"
-      className={cn(
-        'font-book text-muted-foreground inline-flex shrink-0 items-center gap-2 text-[12px] tabular-nums',
-        className
-      )}
+      className={cx(styles.mini, className)}
     >
-      <span aria-hidden className="flex items-center gap-[3px]">
+      <span aria-hidden className={styles.waves}>
         {segmentsOf(plan).map((segment, i) => (
           <WaveSegment key={i} segment={segment} />
         ))}
       </span>
       <span aria-hidden>{waveLabel}</span>
       {plan.running > 0 && (
-        <span aria-hidden className="text-(--state-working-fg)">
+        <span aria-hidden className="toneText" data-tone="info">
           {plan.running} running
         </span>
       )}
       {slotTotal !== null && slotTotal > 0 && (
-        <span
-          aria-hidden
-          data-slot="flight-slots"
-          className="flex items-center gap-[3px]"
-        >
+        <span aria-hidden data-slot="flight-slots" className={styles.slots}>
           {Array.from({ length: slotTotal }, (_, i) => (
             <span
               key={i}
-              className={cn(
-                'size-1.5 rounded-full',
-                i < plan.slots.used
-                  ? 'bg-(--state-working-fg)'
-                  : 'border-[0.5px] border-(--text-muted)'
-              )}
+              data-tone={i < plan.slots.used ? 'info' : undefined}
+              className={styles.slot}
             />
           ))}
         </span>

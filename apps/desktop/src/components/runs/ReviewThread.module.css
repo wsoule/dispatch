@@ -1,0 +1,123 @@
+/* ReviewThread and ReviewComposer (ReviewThread.tsx): one comment card for both, the same
+   card a task's comments sit in. A thread is its author, the note, a suggestion's Apply,
+   the replies and the reply field; the composer is the line it targets, the note's field,
+   the suggestion editor and its actions. Status words take their tone's ink through the
+   global .toneText (data-tone), never a raw hue. */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+  padding: var(--s-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  font-family: var(--font-body);
+  font-size: var(--fs);
+  color: var(--text);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+  min-height: var(--h-sm);
+}
+
+.author {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+
+.meta {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+.body {
+  margin: 0;
+  line-height: var(--lh-long);
+  overflow-wrap: anywhere;
+}
+
+/* A resolved thread stays readable (the words keep 4.5:1) and steps back to the quiet text
+   colour instead of fading the whole card. */
+.card[data-resolved='true'] .body {
+  color: var(--text-2);
+}
+
+.applyRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.reply {
+  display: flex;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.replyIcon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-3);
+}
+
+.replyText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.message {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: var(--lh);
+  overflow-wrap: anywhere;
+}
+
+.field {
+  width: 100%;
+  min-width: 0;
+}
+
+.composerBody {
+  min-height: 56px;
+}
+
+/* The suggestion editor: a nested CodeView that scrolls inside its own soft-edged box. */
+.suggestion {
+  max-height: 160px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  scrollbar-width: thin;
+}
+
+.suggestionCode {
+  font-size: var(--fs-xs);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--s-2);
+}
+
+@media (forced-colors: active) {
+  .card,
+  .suggestion {
+    border-color: CanvasText;
+  }
+}

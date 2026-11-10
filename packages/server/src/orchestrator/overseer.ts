@@ -1,10 +1,11 @@
 import {
   DEFAULT_EXECUTOR_NAME,
   loadConfig,
+  overseerAutonomy,
   overseerSettings,
   untrustedInline,
 } from '@dispatch-foo/core';
-import type { EffortLevel } from '@dispatch-foo/core';
+import type { EffortLevel, OverseerAutonomy } from '@dispatch-foo/core';
 import type { Message, Sender } from '@dispatch-foo/protocol';
 import { SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 import { createHash, randomBytes } from 'node:crypto';
@@ -28,9 +29,19 @@ import type {
   OverseerTurnAttachment,
   OverseerTurnOptions,
 } from './overseerBackend.js';
-import { grantKey, GrantStore, type GrantView } from './overseerGrants.js';
+import {
+  actionGrantKey,
+  grantKey,
+  GrantStore,
+  type GrantView,
+} from './overseerGrants.js';
 import type { OverseerStore } from './overseerStore.js';
-import type { OverseerAction, OverseerToolRegistry } from './overseerTools.js';
+import type {
+  OverseerAction,
+  OverseerActionTier,
+  OverseerFieldChange,
+  OverseerToolRegistry,
+} from './overseerTools.js';
 import {
   capToolResult,
   OrchestratorClientError,
@@ -123,6 +134,9 @@ export interface OverseerMessage {
   actionId?: string;
   /** `approval` entries: the OverseerApproval this entry reports on. */
   requestId?: string;
+  /** Applied `action` entries: the tasks the action created or dispatched,
+   *  in order, so a client can show them as a list it links to. */
+  taskIds?: string[];
   /**
    * `action` and `approval` entries only. `failed` means the human approved
    * an action but the effect itself threw — the action stays pending so it
@@ -137,6 +151,17 @@ export interface OverseerMessage {
   notice?: 'stopped' | 'rollover' | 'restarted';
   /** `user` entries: the files the human attached to the line. */
   attachments?: OverseerAttachment[];
+  /** `action` entries at `pending`: the action's validated input, so a decided
+   *  action's card can still show what was proposed. */
+  input?: unknown;
+  /** `action` entries at `applied`: the task ids the effect created or changed. */
+  entities?: string[];
+  /** `action` entries for a call that ran without a card: the receipt. */
+  auto?: boolean;
+  /** `action` entries: the tool's risk tier. */
+  tier?: OverseerActionTier;
+  /** `action` entries: what an update changed, before → after. */
+  changes?: OverseerFieldChange[];
 }
 
 /**
@@ -211,10 +236,12 @@ export interface OverseerRecord {
   pendingApprovals: OverseerApproval[];
   /**
    * Decisions the human has made since the last turn, not yet shown to the
-   * model. Drained into the next `sendMessage`'s prompt so the assistant never
-   * claims it cancelled a run the human refused (or keeps offering to do
-   * something that already happened) — the model's own tool result only ever
-   * said "queued", so this is the only way the outcome reaches it.
+   * model. Drained into the next turn's prompt so the assistant never claims
+   * it cancelled a run the human refused (or keeps offering to do something
+   * that already happened) — the model's own tool result only ever said
+   * "queued", so this is the only way the outcome reaches it. A decision does
+   * not wait for the human's next line: an idle conversation takes a turn for
+   * it at once, and a running one as soon as that turn ends (`wakeForDecisions`).
    */
   undeliveredDecisions: string[];
   /** The backend's resume handle from the most recent turn. */
@@ -290,14 +317,40 @@ export interface OverseerManagerContext {
   store?: OverseerStore;
 }
 
-// What a mutating tool call returns to the model. Deliberately explicit that
-// nothing happened: a model told only "ok" would go on to report the run as
-// cancelled in the very same turn.
+// What a queued mutating tool call returns to the model. Deliberately explicit
+// that nothing happened: a model told only "ok" would go on to report the run
+// as cancelled in the very same turn.
 const QUEUED_NOTE =
   'Queued for human confirmation. NOTHING has happened yet and nothing will ' +
   'until the human confirms its approval card. Do not say the action was ' +
   'taken — tell the user what you have queued and that it needs their ' +
   'confirmation.';
+
+// What an auto-run mutating tool call returns: the opposite news, just as
+// plainly, so the model reports it as done rather than as waiting.
+const DONE_NOTE =
+  'Done. This action has ALREADY been carried out — no approval card was ' +
+  'needed. Tell the user it is done (not queued), with the task id when ' +
+  'there is one.';
+
+/** What one mutating overseer call does: run now, ask once per conversation, or always ask. */
+export type OverseerActionRoute = 'auto' | 'ask-once' | 'ask';
+
+/**
+ * Where a mutating call goes, from its tool's tier and the project's
+ * `overseer.autonomy`. The high tier asks in every mode, and `cautious` asks
+ * about everything; otherwise the low tier runs at once, and the medium tier
+ * runs at once under `trusting` but asks once per conversation under
+ * `balanced` (a grant made on that first card covers the rest).
+ */
+export function overseerActionRoute(
+  tier: OverseerActionTier,
+  autonomy: OverseerAutonomy
+): OverseerActionRoute {
+  if (tier === 'high' || autonomy === 'cautious') return 'ask';
+  if (tier === 'low' || autonomy === 'trusting') return 'auto';
+  return 'ask-once';
+}
 
 // How much of a built-in tool call's input the transcript and an approval
 // card quote — a whole file written by `Write` is not what a human reads
@@ -431,6 +484,9 @@ export class OverseerManager {
   // What the human allowed "for this conversation": per program for Bash, up to
   // four hours or the next rollover. Off the record: a grant, not transcript.
   private readonly grants = new GrantStore();
+  // The running turn's batch id, per conversation: every action one turn
+  // queues carries it, so they are answered on one card.
+  private readonly turnBatches = new Map<string, string>();
   // Each conversation's bus posts, chained so its lines land in order.
   private readonly posts = new Map<string, Promise<void>>();
   // Conversations already logged as having a turn no human spoke.
@@ -972,6 +1028,7 @@ export class OverseerManager {
     const texts = lines.map((l) => l.text);
     // A slash command goes to the session verbatim: no decisions prefix, and
     // never a rollover, since commands like /compact act on that session.
+    // No lines at all is a turn that only delivers decisions.
     const slash = texts.length === 1 && isSlashCommand(texts[0]);
     const rollover = !slash && (record.contextTokens ?? 0) >= ROLLOVER_TOKENS;
     if (rollover) this.grants.clear(conversationId);
@@ -1027,14 +1084,16 @@ export class OverseerManager {
     const rootDir = this.ctx.rootDir;
     const said = slash
       ? texts[0].trim()
-      : withDecisions(
-          lines
-            .map((l) =>
-              withAttachmentNote(l.text, l.attachments ?? [], rootDir)
-            )
-            .join('\n\n'),
-          drained
-        );
+      : lines.length === 0
+        ? decisionsOnly(drained)
+        : withDecisions(
+            lines
+              .map((l) =>
+                withAttachmentNote(l.text, l.attachments ?? [], rootDir)
+              )
+              .join('\n\n'),
+            drained
+          );
     const outgoing = rollover ? `${recapOf(record.messages)}\n${said}` : said;
     const sessionId = rollover ? undefined : record.sessionId;
     const turnId = this.live.begin(conversationId);
@@ -1100,6 +1159,13 @@ export class OverseerManager {
   ): Promise<void> {
     const abort = new AbortController();
     this.turns.set(conversationId, abort);
+    // Only a turn that landed its reply wakes for decisions made during it: a
+    // failed one put its own back, and retrying those at once would loop.
+    let landed = false;
+    this.turnBatches.set(
+      conversationId,
+      `tb-${randomBytes(4).toString('hex')}`
+    );
     try {
       // Stop ends the turn here even when a backend ignores the signal.
       const turn = await Promise.race([
@@ -1146,6 +1212,7 @@ export class OverseerManager {
         ],
       });
       this.postEntry(conversationId, earlier.length, from.speaker, from.line);
+      landed = true;
     } catch (err) {
       if (this.shuttingDown) return;
       // What the turn had said stays, ahead of the notice or the failure.
@@ -1186,12 +1253,14 @@ export class OverseerManager {
       this.runningCalls.delete(conversationId);
       // Past shutdown, or for a conversation that is gone, nothing more lands.
       this.live.end(conversationId, stream.turnId);
+      this.turnBatches.delete(conversationId);
       // A turn that is over has no tool call left to run: anything still
       // parked would otherwise sit on the record forever, undecidable in any
       // way that could matter. Past shutdown the next boot clears them instead.
       if (!this.shuttingDown) {
         this.sweepApprovals(conversationId);
         if (!abort.signal.aborted) this.sendQueued(conversationId);
+        if (landed) this.wakeForDecisions(conversationId);
       }
     }
   }
@@ -1209,6 +1278,30 @@ export class OverseerManager {
       this.beginTurn(record, batch, speaker, rest);
     } catch (err) {
       console.error(`overseer: could not send ${conversationId}'s queue`, err);
+    }
+  }
+
+  // Delivers the decisions the model has not heard about, now, when nothing
+  // else will: the conversation is idle and has no queued lines to carry them
+  // (a queue drain does, through beginTurn). The turn has no human line, so
+  // nothing of it goes on the bus; the transcript's action rows say why it ran.
+  private wakeForDecisions(conversationId: string): void {
+    const record = this.conversations.get(conversationId);
+    if (record === undefined || this.shuttingDown) return;
+    if (record.state === 'running' || record.undeliveredDecisions.length === 0)
+      return;
+    if ((record.queued ?? []).length > 0) {
+      this.sendQueued(conversationId);
+      return;
+    }
+    if (this.ctx.bus?.revoked() === true) return;
+    try {
+      this.beginTurn(record, [], null);
+    } catch (err) {
+      console.error(
+        `overseer: could not tell ${conversationId} what the human decided`,
+        err
+      );
     }
   }
 
@@ -1268,20 +1361,27 @@ export class OverseerManager {
    *
    * `approve: true` calls the registry's `applyAction` — the only call to it
    * in this class — and folds its real outcome into the transcript: `applied`
-   * when the effect ran, `failed` (with the thrown message, the action left
-   * pending to retry, and its gate raised again with the error) when it
-   * didn't. `approve: false` never calls it and records a denial.
+   * when the effect ran, `failed` (with the thrown message, settled like the
+   * other outcomes) when it didn't. `approve: false` never calls it and records a denial.
    *
    * Deliberately allowed while a turn is `running`: the action was queued by
    * an earlier turn, and making a human wait for the assistant to stop talking
    * before they can approve a cancel would be exactly backwards.
+   *
+   * Either way the model hears the outcome without waiting for the human's
+   * next line: an idle conversation starts a turn for it before this returns,
+   * a running one takes it as soon as the turn ends.
    */
   async confirmAction(
     conversationId: string,
     actionId: string,
     approve: boolean,
     actor: string = SYSTEM_ADDRESS,
-    ownerCredential = false
+    ownerCredential = false,
+    // 'session' also allows the action's tool for the rest of the
+    // conversation — honoured only on a grantable action, and only once the
+    // effect ran.
+    scope: 'once' | 'session' = 'once'
   ): Promise<OverseerRecord> {
     const record = this.get(conversationId);
     // Membership check, not just "is this action pending anywhere": one
@@ -1310,12 +1410,25 @@ export class OverseerManager {
         ownerCredential,
         canDecide: true,
       });
-      this.settleAction(conversationId, applied, 'applied');
+      const granted = scope === 'session' && action.grantable === true;
+      if (granted) {
+        this.grants.grant(
+          conversationId,
+          actionGrantKey(action.tool),
+          Date.now(),
+          this.conversations.get(conversationId)?.sessionId
+        );
+      }
+      this.settleAction(conversationId, applied, 'applied', granted);
     } catch (err) {
       const message = (err as Error).message;
-      // The registry restores a failed action to `pending`, so restore it here
-      // too — the human approved it and may well want to retry.
-      this.restorePendingAction(conversationId, action);
+      // Reported once and settled: the action stays off the confirmation list
+      // and its gate is not raised again, so one failure is one row.
+      this.ctx.bus?.closeGate(
+        conversationId,
+        { actionId },
+        'the action was approved, but it failed'
+      );
       this.appendMessage(conversationId, {
         role: 'action',
         tool: action.tool,
@@ -1327,7 +1440,6 @@ export class OverseerManager {
         conversationId,
         `${action.summary} — the human approved it, but it failed: ${message}`
       );
-      await this.raiseActionGate(conversationId, action, message);
       throw err;
     }
     return this.get(conversationId);
@@ -1553,6 +1665,7 @@ export class OverseerManager {
   // next turn rather than only for new conversations.
   private toolsetFor(conversationId: string): OverseerToolset {
     const { registry } = this.ctx;
+    const autonomy = this.autonomy();
     const tools: OverseerToolDescriptor[] = [
       ...registry.statusTools().map((tool) => ({
         name: tool.name,
@@ -1565,23 +1678,25 @@ export class OverseerManager {
         description: tool.description,
         inputSchema: tool.inputSchema,
         mutating: true,
+        route: this.routeFor(conversationId, tool.name, tool.tier, autonomy),
       })),
     ];
     return {
       tools,
-      call: (name, input) =>
-        Promise.resolve(this.callTool(conversationId, name, input)),
+      call: (name, input) => this.callTool(conversationId, name, input),
     };
   }
 
-  // Routes one tool call: a status tool runs now, a mutating tool only queues.
-  // Never throws — a tool-level failure comes back as `isError` so the model
-  // can fix its call, exactly like the registry's own OverseerToolError contract.
-  private callTool(
+  // Routes one tool call: a status tool runs now; a mutating tool runs now,
+  // queues for a card, or runs under an earlier grant, by its tier and the
+  // project's autonomy (overseerActionRoute). Never throws — a tool-level
+  // failure comes back as `isError` so the model can fix its call, exactly
+  // like the registry's own OverseerToolError contract.
+  private async callTool(
     conversationId: string,
     name: string,
     input: unknown
-  ): OverseerToolResult {
+  ): Promise<OverseerToolResult> {
     const { registry } = this.ctx;
     const mutating = registry.mutatingTools().some((t) => t.name === name);
     const known =
@@ -1590,7 +1705,29 @@ export class OverseerManager {
       if (!known) throw new Error(`unknown overseer tool: ${name}`);
       if (mutating) {
         const action = registry.callMutatingTool(name, input);
-        this.queueAction(conversationId, action);
+        const autonomy = this.autonomy();
+        const route = overseerActionRoute(action.tier, autonomy);
+        if (route === 'auto') {
+          return await this.autoApply(
+            conversationId,
+            action,
+            `overseer.autonomy ${autonomy} (${action.tier} tier)`
+          );
+        }
+        if (route === 'ask-once' && this.granted(conversationId, action.tool)) {
+          return await this.autoApply(
+            conversationId,
+            action,
+            `a grant for this conversation (overseer.autonomy ${autonomy}, ${action.tier} tier)`
+          );
+        }
+        const batch = this.turnBatches.get(conversationId);
+        const queued: OverseerAction = {
+          ...action,
+          ...(batch !== undefined ? { batch } : {}),
+          ...(route === 'ask-once' ? { grantable: true } : {}),
+        };
+        this.queueAction(conversationId, queued);
         return {
           content: {
             queued: true,
@@ -1599,7 +1736,7 @@ export class OverseerManager {
             note: QUEUED_NOTE,
           },
           isError: false,
-          action,
+          action: queued,
         };
       }
       const owner = this.conversations.get(conversationId)?.owner;
@@ -1625,6 +1762,112 @@ export class OverseerManager {
     }
   }
 
+  // Whether the human allowed `tool` for the rest of this conversation.
+  private granted(conversationId: string, tool: string): boolean {
+    return this.grants.allows(
+      conversationId,
+      actionGrantKey(tool),
+      Date.now(),
+      this.conversations.get(conversationId)?.sessionId
+    );
+  }
+
+  // What a call of `tool` would do right now, for the tool's description: an
+  // ask-once tool the human already allowed reads as running at once.
+  private routeFor(
+    conversationId: string,
+    tool: string,
+    tier: OverseerActionTier,
+    autonomy: OverseerAutonomy
+  ): OverseerActionRoute {
+    const route = overseerActionRoute(tier, autonomy);
+    return route === 'ask-once' && this.granted(conversationId, tool)
+      ? 'auto'
+      : route;
+  }
+
+  // The project's overseer.autonomy, read fresh per call so a Settings change
+  // applies to the very next tool call. A config that will not load asks about
+  // everything: an unreadable setting must never widen what runs unasked.
+  private autonomy(): OverseerAutonomy {
+    try {
+      return overseerAutonomy(loadConfig(this.ctx.rootDir));
+    } catch (err) {
+      console.error('overseer: could not read overseer.autonomy', err);
+      return 'cautious';
+    }
+  }
+
+  // Runs an action no card needs to ask about, as the conversation's owner,
+  // and leaves the receipt: a transcript row saying it is done (with the task
+  // it touched and, for an update, what changed) and an audit entry in the
+  // ledger naming the setting that allowed it. `how` is that setting.
+  // canDecide stays false: auto-running grants nothing the owner's own click
+  // would not, so messaging another human's run is still refused.
+  private async autoApply(
+    conversationId: string,
+    action: OverseerAction,
+    how: string
+  ): Promise<OverseerToolResult> {
+    const { registry } = this.ctx;
+    const owner = this.conversations.get(conversationId)?.owner;
+    let applied: OverseerAction;
+    try {
+      applied = await registry.applyAction(action.id, {
+        actor: owner ?? SYSTEM_ADDRESS,
+        canDecide: false,
+      });
+    } catch (err) {
+      const message = (err as Error).message;
+      registry.dropAction(action.id);
+      this.appendMessage(conversationId, {
+        role: 'action',
+        tool: action.tool,
+        actionId: action.id,
+        outcome: 'failed',
+        auto: true,
+        tier: action.tier,
+        text: `Failed: ${action.summary} — ${message}`,
+      });
+      return {
+        content: { done: false, error: message, summary: action.summary },
+        isError: true,
+      };
+    }
+    try {
+      registry.recordAutoApproved(applied, how);
+      this.ctx.events.broadcast({ type: 'ledger.changed' });
+    } catch (err) {
+      console.error(
+        `overseer: could not write the ledger receipt for ${action.id}`,
+        err
+      );
+    }
+    this.appendMessage(conversationId, {
+      role: 'action',
+      tool: applied.tool,
+      actionId: applied.id,
+      outcome: 'applied',
+      auto: true,
+      tier: applied.tier,
+      ...(applied.taskIds !== undefined ? { taskIds: applied.taskIds } : {}),
+      ...(applied.entities !== undefined ? { entities: applied.entities } : {}),
+      ...(applied.changes !== undefined ? { changes: applied.changes } : {}),
+      text: `Done: ${applied.summary}`,
+    });
+    return {
+      content: {
+        done: true,
+        actionId: applied.id,
+        summary: applied.summary,
+        ...(applied.taskIds !== undefined ? { taskIds: applied.taskIds } : {}),
+        note: DONE_NOTE,
+      },
+      isError: false,
+      action: applied,
+    };
+  }
+
   // ---------------------------------------------------------------------
   // Record bookkeeping
   // ---------------------------------------------------------------------
@@ -1643,30 +1886,23 @@ export class OverseerManager {
       actionId: action.id,
       outcome: 'pending',
       text: action.summary,
+      input: action.input,
     });
     void this.raiseActionGate(conversationId, action);
   }
 
-  // Raises an action's gate, replacing an open one with the last error if any;
-  // a gate written after its action was decided closes at once. Never rejects.
+  // Raises an action's gate; a gate written after its action was decided
+  // closes at once. Never rejects.
   private async raiseActionGate(
     conversationId: string,
-    action: OverseerAction,
-    lastError?: string
+    action: OverseerAction
   ): Promise<void> {
     const bus = this.ctx.bus;
     if (bus === undefined) return;
-    if (lastError !== undefined)
-      bus.closeGate(
-        conversationId,
-        { actionId: action.id },
-        'the action is asked about again'
-      );
     try {
       await bus.raiseAction(conversationId, {
         id: action.id,
         summary: action.summary,
-        ...(lastError !== undefined ? { lastError } : {}),
       });
     } catch (err) {
       console.error(
@@ -1692,7 +1928,8 @@ export class OverseerManager {
   private settleAction(
     conversationId: string,
     action: OverseerAction,
-    outcome: 'applied' | 'denied'
+    outcome: 'applied' | 'denied',
+    granted = false
   ): void {
     this.dropPendingAction(conversationId, action.id);
     this.ctx.bus?.closeGate(
@@ -1701,12 +1938,23 @@ export class OverseerManager {
       `the action was ${outcome}`
     );
     const verb = outcome === 'applied' ? 'Applied' : 'Denied';
+    const grant = granted
+      ? ` · ${action.tool} allowed for this conversation (up to 4 hours)`
+      : '';
     this.appendMessage(conversationId, {
       role: 'action',
       tool: action.tool,
       actionId: action.id,
       outcome,
-      text: `${verb}: ${action.summary}`,
+      tier: action.tier,
+      ...(outcome === 'applied' && action.taskIds !== undefined
+        ? { taskIds: action.taskIds }
+        : {}),
+      ...(action.entities !== undefined ? { entities: action.entities } : {}),
+      ...(outcome === 'applied' && action.changes !== undefined
+        ? { changes: action.changes }
+        : {}),
+      text: `${verb}: ${action.summary}${grant}`,
     });
     this.noteDecision(
       conversationId,
@@ -1724,24 +1972,14 @@ export class OverseerManager {
     });
   }
 
-  private restorePendingAction(
-    conversationId: string,
-    action: OverseerAction
-  ): void {
-    const record = this.conversations.get(conversationId);
-    if (record === undefined) return;
-    if (record.pendingActions.some((a) => a.id === action.id)) return;
-    this.updateRecord(conversationId, {
-      pendingActions: [...record.pendingActions, { ...action }],
-    });
-  }
-
+  // Records a decision for the model and delivers it at once when idle.
   private noteDecision(conversationId: string, note: string): void {
     const record = this.conversations.get(conversationId);
     if (record === undefined) return;
     this.updateRecord(conversationId, {
       undeliveredDecisions: [...record.undeliveredDecisions, note],
     });
+    this.wakeForDecisions(conversationId);
   }
 
   // Posts entry `index` to the thread: `speaker`'s line, or the reply to their
@@ -1908,6 +2146,18 @@ function turnAttachments(
     absolutePath: join(rootDir, a.path),
     mimeType: a.mimeType,
   }));
+}
+
+// The whole prompt of a turn taken only to deliver decisions: the human said
+// nothing, so the model is asked to report the outcome rather than to act.
+function decisionsOnly(decisions: string[]): string {
+  return [
+    'The human just decided on the actions you queued:',
+    ...decisions.map((d) => `- ${d}`),
+    '',
+    'They have not said anything else. Briefly tell them what the outcome ' +
+      'means. Do not queue a refused action again unless they ask for it.',
+  ].join('\n');
 }
 
 // Prefixes a follow-up with whatever the human decided since the last turn.

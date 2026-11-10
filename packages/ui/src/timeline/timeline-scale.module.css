@@ -1,0 +1,180 @@
+/* Gr8r's two-row time header: month names (12px semibold, a --border rule
+   at each month start) over day numbers (11px, tabular, --divider rules,
+   weekends sunken), today's number in the accent ink at 600 (or, with
+   week columns, the word "Today" in the month row). The grid layer
+   behind the rows repeats the furniture quietly: sunken weekends,
+   --divider week rules, --border month rules and the 2px accent today
+   line (full strength: 4.5:1 on the light surface). In forced colours the
+   line and today's marker take the Highlight colour, so they stay. */
+
+/* Fills the header's content box (52px less its 1px bottom border), so
+   the tick row never paints over that border under the lane column. */
+.scale {
+  position: relative;
+  flex: none;
+  align-self: stretch;
+}
+
+.months,
+.ticks {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+
+.months {
+  top: 0;
+  height: 26px;
+}
+
+.ticks {
+  top: 26px;
+  bottom: 0;
+  border-top: 1px solid var(--divider);
+}
+
+/* clip, not hidden, so the sticky name inside still sticks to the chart. */
+.month {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  overflow: clip;
+  border-left: 1px solid var(--border);
+}
+
+.month:first-child {
+  border-left: 0;
+}
+
+/* The name sticks just inside the lane column while its month is partly
+   scrolled away (8px past the lane column). */
+.monthLabel {
+  position: sticky;
+  left: calc(var(--timeline-lane-width, 264px) + 8px);
+  display: inline-block;
+  padding: 0 8px;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  line-height: 26px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: grid;
+  place-items: center;
+  border-left: 1px solid var(--divider);
+  font-size: var(--fs-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.tick:first-child {
+  border-left: 0;
+}
+
+.weekTick {
+  justify-items: start;
+  padding-left: 8px;
+}
+
+.weekend {
+  background: var(--sunken);
+}
+
+.todayTick {
+  color: var(--accent-ink);
+  font-weight: var(--fw-semibold);
+}
+
+/* Today's number, Gr8r's: the accent ink at 600 (.todayTick), no fill,
+   right above where the today line starts. */
+.todayNum {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: var(--r-chip);
+}
+
+/* "Today" in the month row (week columns have no day number): the accent
+   ink at 600, centred over the today line, on the header's own surface so
+   a month name under it never shows through. */
+.todayFlag {
+  position: absolute;
+  z-index: 1;
+  top: 5px;
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 4px;
+  transform: translateX(-50%);
+  border-radius: var(--r-chip);
+  background: var(--surface);
+  color: var(--accent-ink);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* ---- grid layer behind the rows --------------------------------------- */
+
+/* No z-index of its own: the bands and rules paint first (the layer comes
+   before the rows), and the today line's z-index: 1 then lifts it over the
+   rows' backgrounds, so it runs through the sunken initiative bands at full
+   strength (as Gr8r's does), under the connectors, bars and the sticky lane
+   column. */
+.grid {
+  position: absolute;
+  top: 0;
+  left: var(--timeline-lane-width, 264px);
+  pointer-events: none;
+}
+
+.weekendBand {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--sunken);
+}
+
+.weekRule,
+.monthRule {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--divider);
+}
+
+.monthRule {
+  background: var(--border);
+}
+
+/* Gr8r's today line, over the rows' bands and under the connectors and
+   bars (z-index 1 in the chart body, see .grid). */
+.todayLine {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent);
+}
+
+@media (forced-colors: active) {
+  .todayLine,
+  .todayNum,
+  .todayFlag {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+  }
+}

@@ -26,6 +26,9 @@ function mount(
     baseUrl: 'http://127.0.0.1:1',
     fetchLicense: mock(() => Promise.resolve(status)),
     installLicense: mock(install),
+    // Board sync is off: there is no team, so the keys are never asked for.
+    getTeamStatus: mock(() => Promise.resolve({ state: 'off' })),
+    getTeamKeys: mock(() => Promise.reject(new Error('board sync is not on'))),
   };
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -42,6 +45,28 @@ test('the free plan says how many people it fits and how many are here', async (
   mount(FREE);
   expect(await screen.findByText('Free plan: up to 3 people')).toBeTruthy();
   expect(screen.getByText(/2 of 3 seats used/)).toBeTruthy();
+});
+
+// A daemon that cannot report a license still gets a true line, not a blank page.
+test('with no license to read, it says free plan and still offers a key', async () => {
+  const client = {
+    baseUrl: 'http://127.0.0.1:1',
+    fetchLicense: mock(() => Promise.reject(new Error('not found'))),
+    getTeamStatus: mock(() => Promise.resolve({ state: 'off' })),
+  };
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <LicenseSection
+        data={dataWith({ client: client as never, myTier: 'operator' })}
+      />
+    </QueryClientProvider>
+  );
+  expect(await screen.findByText('Free plan')).toBeTruthy();
+  expect(screen.getByText('No license on this project.')).toBeTruthy();
+  expect(screen.getByLabelText('Paste a key')).toBeTruthy();
 });
 
 test('a licensed plan names who it is for and until when', () => {
@@ -82,9 +107,11 @@ test('a key that does not verify says why, and the plan stays', async () => {
     target: { value: 'dispatch1.abc.def' },
   });
   fireEvent.click(screen.getByRole('button', { name: /Install/ }));
-  expect((await screen.findByRole('alert')).textContent).toContain(
-    'signature does not match'
-  );
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toContain('signature does not match');
+  // The refusal reads in the danger tone's text colour (the global toneText).
+  expect(alert.getAttribute('data-tone')).toBe('danger');
+  expect(alert.classList.contains('toneText')).toBe(true);
   expect(screen.getByText('Free plan: up to 3 people')).toBeTruthy();
 });
 
@@ -99,12 +126,25 @@ test('below the operator tier there is nothing to install with', async () => {
   );
 });
 
+// The keys route answers 409 while board sync is off, so the page asks for
+// the team status first and skips the keys then (no refused request per load).
+test('asks nothing of the team keys while board sync is off', async () => {
+  const client = mount(FREE);
+  expect(await screen.findByText('Free plan: up to 3 people')).toBeTruthy();
+  await waitFor(() => expect(client.getTeamStatus).toHaveBeenCalled());
+  // Let the status settle; the keys query must stay idle after it.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(client.getTeamKeys).not.toHaveBeenCalled();
+  expect(screen.queryByRole('heading', { name: 'Team' })).toBeNull();
+});
+
 // Task 13: a founded team shares one key; these mount with the team keys.
 function mountTeam(status: LicenseStatus, keys: TeamKeys) {
   const client = {
     baseUrl: 'http://127.0.0.1:1',
     fetchLicense: mock(() => Promise.resolve(status)),
     installLicense: mock(() => Promise.resolve(status)),
+    getTeamStatus: mock(() => Promise.resolve({ state: 'member' })),
     getTeamKeys: mock(() => Promise.resolve(keys)),
     shareTeamLicense: mock(() => Promise.resolve({ ok: true })),
   };
@@ -211,4 +251,5 @@ test('names whose key the team uses', async () => {
   expect(
     await screen.findByText("Your team uses bob's key: Acme, 10 people")
   ).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Team' })).toBeTruthy();
 });
