@@ -66,6 +66,13 @@
   stroke-width: 1;
 }
 
+/* A frame inside another (a project inside its initiative) is drawn on the
+   page surface, so the two read apart. */
+.group[data-depth='1'] rect,
+.group[data-depth='3'] rect {
+  fill: var(--surface);
+}
+
 .group[data-loose] rect {
   stroke-dasharray: 5 4;
 }

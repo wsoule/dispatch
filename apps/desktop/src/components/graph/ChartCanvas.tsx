@@ -262,6 +262,7 @@ export function ChartCanvas({
             <g
               key={group.id}
               data-slot="graph-group"
+              data-depth={group.depth}
               className={styles.group}
               data-loose={group.id === NO_MILESTONE_GROUP ? '' : undefined}
             >

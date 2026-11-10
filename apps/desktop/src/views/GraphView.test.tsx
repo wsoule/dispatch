@@ -32,8 +32,9 @@ import { GraphView, type GraphViewProps } from './GraphView';
 // over the task list below): two projects, three milestones and issues whose
 // blocking relations cross the milestones, so the milestone chart has lines.
 // The chart itself (components/graph/MilestoneMap) has its own tests; these
-// cover what the page adds: the tasks grouped by milestone, a route's scope
-// narrowing them, the drawer, and the draw cap. Where the view is lives in
+// cover what the page adds: the levels (initiatives, projects, milestones,
+// issues) and drilling between them, a route's scope narrowing the tasks,
+// the trail back up, the drawer, and the draw cap. Where the view is lives in
 // App's nav reducer, so the harness (GraphHost) runs one and hands the page's
 // scope back to the view.
 
@@ -124,6 +125,23 @@ function fixture(): TaskListItem[] {
       status: 'ready',
       assignee: 'none',
     }),
+  ];
+}
+
+/** The fixture with Storefront under a Growth initiative; Search is in none. */
+function withInitiative(): TaskListItem[] {
+  return [
+    taskDoc({
+      id: 'i-growth',
+      title: 'Growth',
+      kind: 'initiative',
+      status: 'working',
+    }),
+    ...fixture().map((task) =>
+      task.meta.id === 'p-store'
+        ? { ...task, meta: { ...task.meta, parent: 'i-growth' } }
+        : task
+    ),
   ];
 }
 
@@ -263,8 +281,45 @@ async function milestoneTitles(): Promise<string[]> {
   return nodes.map((node) => node.getAttribute('title') ?? '');
 }
 
+/** The cards on the chart (a level above issues), by their title attribute. */
+async function cardTitles(): Promise<string[]> {
+  return milestoneTitles();
+}
+
+/** A task's card on the Issues level, once laid out. */
+function taskCard(id: string): Promise<HTMLElement> {
+  return waitFor(() => {
+    const found = screen
+      .queryAllByTestId('chart-task')
+      .find((el) => el.closest(`[data-chart-node="${id}"]`) !== null);
+    if (found === undefined) throw new Error(`no ${id} card`);
+    return found;
+  });
+}
+
+/** The level tabs' names, the current one starred. */
+function levels(): string[] {
+  const nav = screen.queryByRole('navigation', { name: 'Graph level' });
+  if (nav === null) return [];
+  return within(nav)
+    .getAllByRole('link')
+    .map(
+      (link) =>
+        `${link.textContent ?? ''}${link.getAttribute('aria-current') === 'page' ? '*' : ''}`
+    );
+}
+
+/** A card by its title, double-clicked: the way down a level. */
+async function drill(title: string): Promise<void> {
+  const card = (
+    await screen.findAllByTestId('milestone-node', {}, { timeout: 10_000 })
+  ).find((node) => node.getAttribute('title') === title);
+  if (card === undefined) throw new Error(`no ${title} card`);
+  fireEvent.doubleClick(card);
+}
+
 describe('GraphView', () => {
-  test('opens on the milestone chart, a card per milestone', async () => {
+  test('opens on the milestone level, a card per milestone, with the levels as tabs', async () => {
     mount();
     const view = screen.getByTestId('graph-view');
     expect(
@@ -275,45 +330,88 @@ describe('GraphView', () => {
       'Storefront › Beta',
       'Storefront › Launch',
     ]);
+    // No initiatives in this workspace: no Initiatives tab, and no trail at the top.
+    expect(levels()).toEqual(['Projects', 'Milestones*', 'Issues']);
     expect(
-      screen.queryByRole('button', { name: 'Whole workspace' })
+      screen.queryByRole('navigation', { name: 'Graph scope' })
     ).toBeNull();
   });
 
-  test('a scoped route draws only its tasks and those they wait on; Whole workspace leaves it', async () => {
-    const { log } = mount({
-      scope: { level: 'issue', milestoneId: 'ms-launch' },
+  test('the Projects level draws a card per project with the waits between them', async () => {
+    mount({ scope: { level: 'project' } });
+    expect((await cardTitles()).sort()).toEqual(['Search', 'Storefront']);
+    expect(screen.getByTestId('milestone-map-summary').textContent).toContain(
+      '2 projects · 1 wait between them'
+    );
+    expect(levels()).toEqual(['Projects*', 'Milestones', 'Issues']);
+  });
+
+  test('a double-click drills project → milestones → tasks, and the trail climbs back', async () => {
+    const { log } = mount({ scope: { level: 'project' } });
+    await drill('Storefront');
+    expect(log.at(-1)).toEqual({
+      type: 'openGraph',
+      scope: { level: 'milestone', projectId: 'p-store' },
+      nodeId: null,
     });
-    // Launch's announcement waits on Beta's cart work: Beta comes along, Index does not.
+    // Storefront's milestones, and Index that its cart work waits on.
     await waitFor(async () =>
-      expect((await milestoneTitles()).sort()).toEqual([
+      expect((await cardTitles()).sort()).toEqual([
+        'Search › Index',
         'Storefront › Beta',
         'Storefront › Launch',
       ])
     );
-    expect(screen.getByText(/Showing Launch/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Whole workspace' }));
+    expect(levels()).toEqual(['Milestones*', 'Issues']);
+    await drill('Storefront › Launch');
     expect(log.at(-1)).toEqual({
       type: 'openGraph',
-      scope: DEFAULT_GRAPH_SCOPE,
+      scope: { level: 'issue', milestoneId: 'ms-launch' },
       nodeId: null,
     });
-    await waitFor(async () => expect(await milestoneTitles()).toHaveLength(3));
+    await taskCard('t-announce');
+    // Launch's announcement waits on Beta's cart work, so the cart comes along.
+    await taskCard('t-cart');
+    const trail = screen.getByRole('navigation', { name: 'Graph scope' });
+    expect(
+      within(trail)
+        .getAllByRole('link')
+        .map((link) => [link.textContent, link.getAttribute('href')])
+    ).toEqual([
+      ['Workspace', '#/graph?level=project'],
+      ['Storefront', '#/graph?project=p-store&level=milestone'],
+    ]);
+    expect(trail.textContent).toContain('Launch');
+  });
+
+  test('with initiatives, the Initiatives level draws them and drills into their projects', async () => {
+    const { log } = mount({
+      tasks: withInitiative(),
+      scope: { level: 'initiative' },
+    });
+    expect((await cardTitles()).sort()).toEqual(['Growth', 'No initiative']);
+    expect(levels()).toEqual([
+      'Initiatives*',
+      'Projects',
+      'Milestones',
+      'Issues',
+    ]);
+    await drill('Growth');
+    expect(log.at(-1)).toEqual({
+      type: 'openGraph',
+      scope: { level: 'project', initiativeId: 'i-growth' },
+      nodeId: null,
+    });
+    // Storefront, and Search that its cart work waits on.
+    await waitFor(async () =>
+      expect((await cardTitles()).sort()).toEqual(['Search', 'Storefront'])
+    );
   });
 
   test('Open task quick-looks the task in the shell’s drawer', async () => {
     const peekTask = mock((_id: string) => {});
-    mount({ peekTask });
-    await milestoneTitles();
-    fireEvent.click(screen.getByRole('radio', { name: 'Tasks' }));
-    const card = await waitFor(() => {
-      const found = screen
-        .queryAllByTestId('chart-task')
-        .find((el) => el.closest('[data-chart-node="t-cart"]') !== null);
-      if (found === undefined) throw new Error('no t-cart card');
-      return found;
-    });
-    fireEvent.click(card);
+    mount({ peekTask, scope: { level: 'issue' } });
+    fireEvent.click(await taskCard('t-cart'));
     fireEvent.click(
       within(screen.getByTestId('chart-inspector')).getByRole('button', {
         name: 'Open task',
@@ -323,8 +421,7 @@ describe('GraphView', () => {
   });
 
   test('past the draw cap the milestones to narrow to stand where the canvas would', async () => {
-    window.localStorage.setItem('dispatch:graph-mode:graph-test', 'tasks');
-    mount({ tasks: oversized(TASK_DRAW_CAP + 5) });
+    mount({ tasks: oversized(TASK_DRAW_CAP + 5), scope: { level: 'issue' } });
     const section = await screen.findByRole('region', {
       name: 'Too many to draw',
     });

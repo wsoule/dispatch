@@ -28,7 +28,7 @@ function authedUrl(baseURL: string | undefined): string {
   return `${baseURL}&token=${requireToken()}&appToken=${APP_TOKEN}`;
 }
 
-test('the Graph charts the fixture’s milestones, traces a task and quick-looks it', async ({
+test('the Graph charts the fixture’s milestones, drills into one, traces a task and quick-looks it', async ({
   page,
   baseURL,
 }, testInfo) => {
@@ -50,12 +50,21 @@ test('the Graph charts the fixture’s milestones, traces a task and quick-looks
     view.getByRole('button', { name: /Checkout rewrite, / })
   ).toBeVisible();
 
-  // The view switch draws the tasks; a click traces one and the inspector
+  // The levels are tabs; a double-click on a card drills into its tasks, and
+  // the trail names where it went. A click traces a task and the inspector
   // names it.
-  await view.getByRole('radio', { name: 'Tasks' }).click();
+  await expect(
+    view
+      .getByRole('navigation', { name: 'Graph level' })
+      .getByRole('link', { name: 'Milestones' })
+  ).toHaveAttribute('aria-current', 'page');
+  await view.getByRole('button', { name: /Checkout rewrite, / }).dblclick();
   await expect(
     view.getByRole('group', { name: 'Task dependencies' })
   ).toBeVisible();
+  await expect(
+    view.getByRole('navigation', { name: 'Graph scope' })
+  ).toContainText('Checkout rewrite');
   const cart = view.getByRole('button', {
     name: /Persist the cart across devices, /,
   });

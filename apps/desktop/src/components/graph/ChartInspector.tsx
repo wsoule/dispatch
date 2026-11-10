@@ -166,11 +166,38 @@ function TaskList({
   );
 }
 
+/**
+ * What the card view's cards are, in the words the chart uses: milestones by default, or
+ * projects or initiatives on the Graph's upper levels. `drill` names a card's way down
+ * ("Show its milestones"), when the host offers one.
+ */
+export interface ChartUnit {
+  one: string;
+  many: string;
+  drill?: string;
+}
+
+export const MILESTONE_UNIT: ChartUnit = {
+  one: 'milestone',
+  many: 'milestones',
+};
+
+/** "a" or "an" before a word ("an initiative"). */
+const VOWELS = new Set(['a', 'e', 'i', 'o', 'u']);
+const article = (word: string): string =>
+  VOWELS.has(word.charAt(0).toLowerCase()) ? 'an' : 'a';
+
+/** "milestone" → "Milestone". */
+export const capital = (word: string): string =>
+  word.charAt(0).toUpperCase() + word.slice(1);
+
 export interface OverviewProps {
   chart: ChartModel;
   view: 'milestones' | 'tasks';
   /** Open tasks left off the Tasks chart because nothing links them. */
   unlinkedHidden: number;
+  /** What the card view's cards are. */
+  unit?: ChartUnit;
   onPick: (id: string) => void;
   onShowUnlinked: () => void;
 }
@@ -181,6 +208,7 @@ export function InspectorOverview({
   chart,
   view,
   unlinkedHidden,
+  unit = MILESTONE_UNIT,
   onPick,
   onShowUnlinked,
 }: OverviewProps) {
@@ -207,11 +235,13 @@ export function InspectorOverview({
           </p>
         ) : (
           <p>
-            Click a milestone to see its neighbours. Lines turn{' '}
-            <span className={styles.up}>amber</span> to the milestones it waits
-            on and <span className={styles.down}>teal</span> to the ones it
-            unblocks. The number on a line counts the task waits behind it;
+            Click {article(unit.one)} {unit.one} to see its neighbours. Lines
+            turn <span className={styles.up}>amber</span> to the {unit.many} it
+            waits on and <span className={styles.down}>teal</span> to the ones
+            it unblocks. The number on a line counts the task waits behind it;
             click it to list them.
+            {unit.drill !== undefined &&
+              ` Double-click ${article(unit.one)} ${unit.one} to go into it.`}
           </p>
         )}
         <p className={styles.keys}>
@@ -392,7 +422,12 @@ export interface MilestoneInspectorProps {
   onPick: (id: string) => void;
   onPickMilestone: (id: string) => void;
   onOpenPlan: (id: string) => void;
-  onShowTasks: (id: string) => void;
+  /** Switches to its tasks on the Tasks chart; absent when the chart has no Tasks view. */
+  onShowTasks?: (id: string) => void;
+  /** Goes a level down into it (`unit.drill` names the button). */
+  onDrill?: (id: string) => void;
+  /** What the card is (milestone, project, initiative). */
+  unit?: ChartUnit;
   onClear: () => void;
   /** The host's own verbs for this milestone (a plan band's fan-out controls). */
   extraActions?: ReactNode;
@@ -413,6 +448,8 @@ export function MilestoneInspector({
   onPickMilestone,
   onOpenPlan,
   onShowTasks,
+  onDrill,
+  unit = MILESTONE_UNIT,
   onClear,
   extraActions,
 }: MilestoneInspectorProps) {
@@ -448,7 +485,7 @@ export function MilestoneInspector({
     });
   return (
     <Frame
-      kicker="Milestone"
+      kicker={capital(unit.one)}
       title={title}
       meta={
         <>
@@ -461,15 +498,25 @@ export function MilestoneInspector({
       }
       actions={
         <>
+          {onDrill !== undefined && unit.drill !== undefined && (
+            <Button
+              size="sm"
+              variant="primary"
+              data-testid="chart-inspector-drill"
+              onClick={() => onDrill(id)}
+            >
+              {unit.drill}
+            </Button>
+          )}
           <Button
             size="sm"
-            variant="primary"
+            variant={onDrill === undefined ? 'primary' : 'secondary'}
             data-testid="milestone-node-open"
             onClick={() => onOpenPlan(id)}
           >
-            Open milestone
+            Open {unit.one}
           </Button>
-          {taskIds.length > 0 && (
+          {onShowTasks !== undefined && taskIds.length > 0 && (
             <Button
               size="sm"
               variant="secondary"
@@ -487,14 +534,14 @@ export function MilestoneInspector({
     >
       <Section label="Waits on" count={waitsOn.length} dir="up">
         {waitsOn.length === 0 ? (
-          <Hint>No other milestone.</Hint>
+          <Hint>No other {unit.one}.</Hint>
         ) : (
           links(waitsOn, 'up')
         )}
       </Section>
       <Section label="Unblocks" count={unblocks.length} dir="down">
         {unblocks.length === 0 ? (
-          <Hint>No other milestone.</Hint>
+          <Hint>No other {unit.one}.</Hint>
         ) : (
           links(unblocks, 'down')
         )}
@@ -544,20 +591,23 @@ export interface LinkInspectorProps {
   to: { id: string; title: string };
   onPick: (id: string) => void;
   onClear: () => void;
+  /** What the two ends are. */
+  unit?: ChartUnit;
 }
 
-/** A selected milestone link: every task wait it stands for. */
+/** A selected card link: every task wait it stands for. */
 export function LinkInspector({
   chart,
   from,
   to,
   onPick,
   onClear,
+  unit = MILESTONE_UNIT,
 }: LinkInspectorProps) {
   const pairs = chart.milestonePairs.get(`${from.id}\u0000${to.id}`) ?? [];
   return (
     <Frame
-      kicker="Milestone link"
+      kicker={`${capital(unit.one)} link`}
       title={`${to.title} waits on ${from.title}`}
       actions={
         <Button size="sm" variant="quiet" onClick={onClear}>

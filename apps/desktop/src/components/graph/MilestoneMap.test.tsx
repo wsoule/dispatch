@@ -554,3 +554,66 @@ describe('MilestoneMapView draw cap', () => {
     expect(screen.queryByTestId('chart-stage')).toBeNull();
   });
 });
+
+describe('MilestoneMapView cards above milestones', () => {
+  const PROJECT = {
+    one: 'project',
+    many: 'projects',
+    drill: 'Show its milestones',
+  };
+
+  test('a unit renames the cards, and a double-click drills instead of opening', async () => {
+    const drilled: string[] = [];
+    const { opened } = mount({
+      views: ['milestones'],
+      unit: PROJECT,
+      onDrill: (id) => drilled.push(id),
+    });
+    fireEvent.doubleClick(await node('Search'));
+    expect(drilled).toEqual(['m2']);
+    expect(opened).toEqual([]);
+    expect(screen.getByTestId('milestone-map-summary').textContent).toMatch(
+      /^2 projects · /
+    );
+    // No Tasks view here: no switch, and no way onto it from the inspector.
+    expect(screen.queryByRole('radiogroup', { name: 'Graph of' })).toBeNull();
+    fireEvent.click(await node('Search'));
+    const inspector = screen.getByTestId('chart-inspector');
+    expect(within(inspector).getByText('Project')).toBeTruthy();
+    expect(
+      within(inspector).queryByRole('button', { name: 'Show its tasks' })
+    ).toBeNull();
+    fireEvent.click(
+      within(inspector).getByRole('button', { name: 'Show its milestones' })
+    );
+    expect(drilled).toEqual(['m2', 'm2']);
+    fireEvent.click(
+      within(inspector).getByRole('button', { name: 'Open project' })
+    );
+    expect(opened).toEqual([['m2', 'plan']]);
+  });
+
+  test('Box by … frames each card in its parent', async () => {
+    mount({
+      views: ['milestones'],
+      cardParents: {
+        of: new Map([
+          ['m1', { id: 'p1', label: 'Storefront' }],
+          ['m2', { id: 'p1', label: 'Storefront' }],
+        ]),
+        one: 'project',
+      },
+    });
+    await node('Search');
+    fireEvent.click(screen.getByRole('button', { name: 'Display' }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Box by project' }));
+    await waitFor(() =>
+      expect(
+        Array.from(
+          document.querySelectorAll('[data-slot=graph-group] text'),
+          (t) => t.textContent
+        )
+      ).toEqual(['Storefront'])
+    );
+  });
+});

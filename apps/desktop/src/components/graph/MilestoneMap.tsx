@@ -59,8 +59,11 @@ import {
   TraceSwatch,
 } from './ChartCanvas';
 import {
+  capital,
+  type ChartUnit,
   InspectorOverview,
   LinkInspector,
+  MILESTONE_UNIT,
   MilestoneInspector,
   SetInspector,
   TaskInspector,
@@ -409,15 +412,21 @@ function TraceLegend() {
   );
 }
 
-/** The legend under the Milestones chart: the trace lines and what the pills count. */
-function MilestonesLegend({ attention }: { attention: boolean }) {
+/** The legend under the card chart: the trace lines and what the pills count. */
+function MilestonesLegend({
+  attention,
+  unit,
+}: {
+  attention: boolean;
+  unit: ChartUnit;
+}) {
   return (
     <>
       <TraceLegend />
       <LegendItem swatch={<PillSwatch />}>Task waits</LegendItem>
       {attention && (
         <LegendItem swatch={<PillSwatch attention />}>
-          From a milestone that needs attention
+          From a {unit.one} that needs attention
         </LegendItem>
       )}
     </>
@@ -451,6 +460,17 @@ export interface MilestoneMapViewProps {
   milestoneActions?: (milestoneId: string) => ReactNode;
   /** A chart inside a scrolling page: a plain scroll scrolls the page, a pinch zooms. */
   embedded?: boolean;
+  /** What the card view's cards are (milestones unless the host says otherwise). */
+  unit?: ChartUnit;
+  /** A card's way down a level: a double-click, and the inspector's primary button
+   * (`unit.drill`). Without it a double-click opens the card's own page. */
+  onDrill?: (id: string) => void;
+  /** The frame each card sits in when "Box by …" is on (a milestone's project), and the
+   * frame's name in that switch ("project"). */
+  cardParents?: {
+    of: ReadonlyMap<string, { id: string; label: string }>;
+    one: string;
+  };
   /** With the inspector toggled off, a selection still opens it, for the host's verbs. */
   inspectorOnSelect?: boolean;
   className?: string;
@@ -478,6 +498,9 @@ export function MilestoneMapView({
   milestoneActions,
   embedded = false,
   inspectorOnSelect = false,
+  unit = MILESTONE_UNIT,
+  onDrill,
+  cardParents,
   className,
 }: MilestoneMapViewProps) {
   const storageKey = `dispatch:graph-mode:${projectKey}`;
@@ -630,16 +653,30 @@ export function MilestoneMapView({
   const specJson = useMemo((): string => {
     if (view === 'milestones') {
       if (map.nodes.length === 0) return '';
-      const spec: ChartSpec = {
-        nodes: map.nodes.map((n) => ({
+      // "Box by …" frames each card in its parent (a milestone in its project).
+      const framed = prefs.grouped && cardParents !== undefined;
+      const frames = new Map<string, string>();
+      const nodes = map.nodes.map((n) => {
+        const parent = framed ? cardParents.of.get(n.id) : undefined;
+        if (parent !== undefined) frames.set(parent.id, parent.label);
+        return {
           id: n.id,
           width: MILESTONE_NODE.width,
           height: MILESTONE_NODE.height,
-        })),
+          group: parent === undefined ? null : `parent:${parent.id}`,
+        };
+      });
+      const spec: ChartSpec = {
+        nodes,
         edges: map.edges.map((e) => ({
           id: pairKey(e.from, e.to),
           from: e.from,
           to: e.to,
+        })),
+        groups: [...frames].map(([id, label]) => ({
+          id: `parent:${id}`,
+          label,
+          parent: null,
         })),
       };
       return JSON.stringify(spec);
@@ -671,7 +708,7 @@ export function MilestoneMapView({
       return JSON.stringify(spec);
     }
     return '';
-  }, [view, map, chart, drawn, drawnSet, prefs.grouped, tooLarge]);
+  }, [view, map, chart, drawn, drawnSet, prefs.grouped, tooLarge, cardParents]);
   const spec = useMemo(
     (): ChartSpec | null =>
       specJson === '' ? null : (JSON.parse(specJson) as ChartSpec),
@@ -875,7 +912,8 @@ export function MilestoneMapView({
    * switching view and opening toggles as needed, and zooms to it. A task the chart can
    * never draw (landed, with no links) opens instead. */
   const goTo = (id: string) => {
-    if (!findableSet.has(id)) {
+    // A chart of cards alone (an upper Graph level) opens a task it lists.
+    if (!views.includes('tasks') || !findableSet.has(id)) {
       if (chart.tasks.has(id)) onOpenTask(id);
       return;
     }
@@ -1048,9 +1086,9 @@ export function MilestoneMapView({
 
   // Stable handlers for the memoised node cards, so a selection re-renders only the two
   // cards whose `selected` flips; they read the latest props through a ref.
-  const handlersRef = useRef({ onOpenTask });
+  const handlersRef = useRef({ onOpenTask, onDrill });
   useEffect(() => {
-    handlersRef.current = { onOpenTask };
+    handlersRef.current = { onOpenTask, onDrill };
   });
   const onSelectTask = useCallback(
     (id: string) => setSelection({ kind: 'task', id }),
@@ -1064,10 +1102,13 @@ export function MilestoneMapView({
     (id: string) => handlersRef.current.onOpenTask(id),
     []
   );
-  const onOpenMilestoneNode = useCallback(
-    (id: string) => handlersRef.current.onOpenTask(id, 'plan'),
-    []
-  );
+  // A double-click on a card drills a level down when the host offers it, else opens it.
+  const onOpenMilestoneNode = useCallback((id: string) => {
+    const { onOpenTask: open, onDrill: drill } = handlersRef.current;
+    if (drill !== undefined) drill(id);
+    else open(id, 'plan');
+  }, []);
+
   const emptyStatus = useMemo(
     () => containerStatus([], { bucketOf, asksByTask }),
     [bucketOf, asksByTask]
@@ -1150,9 +1191,13 @@ export function MilestoneMapView({
           onPick={goTo}
           onPickMilestone={selectMilestone}
           onOpenPlan={(mid) => onOpenTask(mid, 'plan')}
-          onShowTasks={(mid) =>
-            showSet({ kind: 'tasks-of', milestone: mid }, 'tasks')
+          onShowTasks={
+            views.includes('tasks')
+              ? (mid) => showSet({ kind: 'tasks-of', milestone: mid }, 'tasks')
+              : undefined
           }
+          onDrill={onDrill}
+          unit={unit}
           onClear={clear}
           extraActions={milestoneActions?.(id)}
         />
@@ -1172,6 +1217,7 @@ export function MilestoneMapView({
           }}
           onPick={goTo}
           onClear={clear}
+          unit={unit}
         />
       );
     }
@@ -1192,6 +1238,7 @@ export function MilestoneMapView({
         chart={chart}
         view={view}
         unlinkedHidden={unlinkedHidden}
+        unit={unit}
         onPick={goTo}
         onShowUnlinked={() => updatePrefs({ showUnlinked: true })}
       />
@@ -1223,9 +1270,8 @@ export function MilestoneMapView({
   const empty =
     view === 'milestones' && map.nodes.length === 0
       ? {
-          heading: 'No milestones yet',
-          description:
-            'Group tasks under milestones to see how they wait on each other.',
+          heading: `No ${unit.many} yet`,
+          description: `Group tasks under ${unit.many} to see how they wait on each other.`,
         }
       : view === 'tasks' && chart.tasks.size === 0
         ? {
@@ -1242,7 +1288,7 @@ export function MilestoneMapView({
       ? map.nodes.map((n) => ({
           value: `m:${n.id}`,
           label: n.title,
-          group: 'Milestones',
+          group: capital(unit.many),
         }))
       : [];
     for (const id of findable) {
@@ -1261,7 +1307,7 @@ export function MilestoneMapView({
       });
     }
     return out;
-  }, [map, findable, chart, views]);
+  }, [map, findable, chart, views, unit.many]);
 
   const onSearchPick = (value: string | null) => {
     if (value === null) return;
@@ -1282,7 +1328,7 @@ export function MilestoneMapView({
     prefs.inspector || (inspectorOnSelect && active !== null);
   const summary = !views.includes('milestones')
     ? taskSummary
-    : `${map.nodes.length} ${map.nodes.length === 1 ? 'milestone' : 'milestones'} · ${
+    : `${map.nodes.length} ${map.nodes.length === 1 ? unit.one : unit.many} · ${
         waits === 0
           ? 'no waits between them'
           : `${waits} ${waits === 1 ? 'wait' : 'waits'} between them`
@@ -1355,7 +1401,7 @@ export function MilestoneMapView({
         <span data-testid="milestone-map-summary" className={styles.summary}>
           {summary}
         </span>
-        {view === 'tasks' && empty === null && (
+        {empty === null && (view === 'tasks' || cardParents !== undefined) && (
           <Popover
             open={displayOpen}
             onOpenChange={setDisplayOpen}
@@ -1375,18 +1421,24 @@ export function MilestoneMapView({
             }
           >
             <div className={styles.display}>
+              {view === 'tasks' && (
+                <>
+                  <Switch
+                    label="Hide landed tasks"
+                    checked={prefs.hideLanded}
+                    onChange={(checked) => updatePrefs({ hideLanded: checked })}
+                  />
+                  <Switch
+                    label="Show unlinked tasks"
+                    checked={prefs.showUnlinked}
+                    onChange={(checked) =>
+                      updatePrefs({ showUnlinked: checked })
+                    }
+                  />
+                </>
+              )}
               <Switch
-                label="Hide landed tasks"
-                checked={prefs.hideLanded}
-                onChange={(checked) => updatePrefs({ hideLanded: checked })}
-              />
-              <Switch
-                label="Show unlinked tasks"
-                checked={prefs.showUnlinked}
-                onChange={(checked) => updatePrefs({ showUnlinked: checked })}
-              />
-              <Switch
-                label="Box by milestone"
+                label={`Box by ${view === 'tasks' ? 'milestone' : (cardParents?.one ?? 'parent')}`}
                 checked={prefs.grouped}
                 onChange={(checked) => updatePrefs({ grouped: checked })}
               />
@@ -1469,11 +1521,13 @@ export function MilestoneMapView({
                 view === 'tasks' ? (
                   <TasksLegend chart={chart} drawn={drawn} />
                 ) : (
-                  <MilestonesLegend attention={attentionEdges} />
+                  <MilestonesLegend attention={attentionEdges} unit={unit} />
                 )
               }
               ariaLabel={
-                view === 'tasks' ? 'Task dependencies' : 'Milestone map'
+                view === 'tasks'
+                  ? 'Task dependencies'
+                  : `${capital(unit.one)} map`
               }
               zoomHint={embedded ? 'pinch to zoom' : undefined}
             />
