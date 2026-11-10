@@ -7,14 +7,14 @@ import styles from './TakeOverDaemon.module.css';
 
 /** Items the attached window cannot list, and what a takeover does for them. */
 export function takeoverWaitingNotice(waiting: number): string {
-  const noun = waiting === 1 ? 'item is' : 'items are';
-  return `${waiting} ${noun} waiting on you (approvals, questions or agent sign-ins), and this window can't see them. Restarting Dispatch from this app shows them here.`;
+  const noun = waiting === 1 ? 'item waits' : 'items wait';
+  return `${waiting} ${noun} on you that this window can't show until Dispatch restarts from it.`;
 }
 
 /** Why the restart is held back: it would stop what the daemon is running.
  *  The sidecar refuses with the same words if this is stale. */
 export function takeoverBusyReason(busy: readonly string[]): string {
-  return `Dispatch for this project is busy with ${busy.join(', ')}. Restarting it from this app would stop that, so try again once it finishes.`;
+  return `You can restart once ${busy.join(', ')} finishes; restarting now would stop it.`;
 }
 
 /** What the restart does to runs that only wait on a human, confirmed first. */

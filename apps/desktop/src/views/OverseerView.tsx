@@ -77,7 +77,7 @@ const ICON = { size: 14, strokeWidth: 1.8, 'aria-hidden': true } as const;
 
 /** Why the composer is locked: the daemon refuses the Overseer to the agent token this window fell back to. */
 export const OVERSEER_ATTACHED_EXPLANATION =
-  "Something else started Dispatch for this project, so this window only holds the agents' token, and the Overseer only talks to you.";
+  "Dispatch was started outside this app (by the CLI or dispatch serve), so this window can look but not decide.";
 
 /** What a side column can open in the middle: a task (maybe on its conversation) or someone's talk. */
 export type OverseerFocus =
