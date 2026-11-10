@@ -231,7 +231,7 @@ export function GraphView({
   return (
     <div className={styles.root} data-testid="graph-view">
       <header className={styles.head}>
-        <h1 className={styles.title}>Dependencies</h1>
+        <h1 className={styles.title}>Graph</h1>
         {trail.length > 0 && (
           <div className={styles.trail}>
             <TaskCrumbs breadcrumb={trail} taskKey="" label="Graph scope" />

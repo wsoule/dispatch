@@ -323,7 +323,7 @@ describe('GraphView', () => {
     mount();
     const view = screen.getByTestId('graph-view');
     expect(
-      within(view).getByRole('heading', { level: 1, name: 'Dependencies' })
+      within(view).getByRole('heading', { level: 1, name: 'Graph' })
     ).toBeTruthy();
     expect((await milestoneTitles()).sort()).toEqual([
       'Search › Index',

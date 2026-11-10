@@ -257,14 +257,11 @@ export function InspectorOverview({
           note={(id) => `${chart.longestChain.indexOf(id) + 1}`}
         />
       </Section>
-      <Section label="Ready to start" count={chart.readyNow.length}>
-        <TaskList
-          ids={chart.readyNow}
-          chart={chart}
-          onPick={onPick}
-          empty="Nothing is ready: every open task waits on something or is a draft."
-        />
-      </Section>
+      {chart.readyNow.length > 0 && (
+        <Section label="Ready to start" count={chart.readyNow.length}>
+          <TaskList ids={chart.readyNow} chart={chart} onPick={onPick} />
+        </Section>
+      )}
       {chart.needsYou.length > 0 && (
         <Section label="Needs you" count={chart.needsYou.length}>
           <TaskList ids={chart.needsYou} chart={chart} onPick={onPick} />
@@ -522,20 +519,17 @@ export function MilestoneInspector({
         </>
       }
     >
-      <Section label="Waits on" count={waitsOn.length} dir="up">
-        {waitsOn.length === 0 ? (
-          <Hint>No other {unit.one}.</Hint>
-        ) : (
-          links(waitsOn, 'up')
-        )}
-      </Section>
-      <Section label="Unblocks" count={unblocks.length} dir="down">
-        {unblocks.length === 0 ? (
-          <Hint>No other {unit.one}.</Hint>
-        ) : (
-          links(unblocks, 'down')
-        )}
-      </Section>
+      {/* Neighbours show when there are some; "No other milestone." twice is noise. */}
+      {waitsOn.length > 0 && (
+        <Section label="Waits on" count={waitsOn.length} dir="up">
+          {links(waitsOn, 'up')}
+        </Section>
+      )}
+      {unblocks.length > 0 && (
+        <Section label="Unblocks" count={unblocks.length} dir="down">
+          {links(unblocks, 'down')}
+        </Section>
+      )}
       <Section label="Tasks" count={taskIds.length}>
         <TaskList
           ids={taskIds}

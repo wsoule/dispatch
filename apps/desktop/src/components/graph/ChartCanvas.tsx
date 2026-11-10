@@ -171,8 +171,6 @@ interface ChartCanvasProps {
   onFit: () => void;
   legend: ReactNode;
   ariaLabel: string;
-  /** How the legend says to zoom: a chart embedded in a scrolling page zooms on a pinch. */
-  zoomHint?: string;
 }
 
 /**
@@ -193,7 +191,6 @@ export function ChartCanvas({
   onFit,
   legend,
   ariaLabel,
-  zoomHint = 'scroll to zoom',
 }: ChartCanvasProps) {
   const uid = useId().replace(/:/g, '');
   const markerId = (key: MarkerKey) => `chart-arrow-${key}-${uid}`;
@@ -330,7 +327,6 @@ export function ChartCanvas({
         className={styles.legend}
       >
         {legend}
-        <span className={styles.legendHint}>Drag to pan · {zoomHint}</span>
       </div>
       {message !== null && (
         <div data-testid="chart-message" className={styles.message}>
