@@ -177,6 +177,11 @@ function user(id: string, name: string, more: Partial<User> = {}): User {
 }
 
 describe('buildWeekPage', () => {
+  test('greets by the email local part when the registry name is an address', () => {
+    const view = { ...week([section()]), userName: 'wsoule679@gmail.com' };
+    expect(page(view, [lane()]).heading).toBe('Good morning, wsoule679');
+  });
+
   test('greets the viewer and splits This week from Later', () => {
     const model = page(
       week([

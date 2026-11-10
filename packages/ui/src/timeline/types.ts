@@ -83,6 +83,9 @@ export interface TimelineGroup {
   /** Drawn after "N projects" in the chart's group row and the phone
    * card's group head. */
   link?: TimelineGroupLink;
+  /** Draws no group row or card head: the lanes need no grouping (a
+   * workspace with no initiatives has one catch-all group). */
+  headless?: boolean;
 }
 
 /** Milestone-level edge: `to` waits on `from` (bar ids). */

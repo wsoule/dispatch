@@ -273,14 +273,16 @@ export function computeLayout(input: LayoutInput): TimelineLayout {
   let y = SUMMARY_HEIGHT;
 
   for (const group of input.groups) {
-    rows.push({
-      kind: 'group',
-      key: `g:${group.id}`,
-      top: y,
-      height: GROUP_HEIGHT,
-      group,
-    });
-    y += GROUP_HEIGHT;
+    if (group.headless !== true) {
+      rows.push({
+        kind: 'group',
+        key: `g:${group.id}`,
+        top: y,
+        height: GROUP_HEIGHT,
+        group,
+      });
+      y += GROUP_HEIGHT;
+    }
 
     for (const lane of group.lanes) {
       let earlier = 0;
@@ -398,6 +400,13 @@ export function computeLayout(input: LayoutInput): TimelineLayout {
 
   summary.points = summaryPoints(summaryBars, scale);
   summary.count = summaryBars.length;
+  // No milestone in view: drop the empty "Milestones 0" row and lift the rest.
+  if (summary.count === 0) {
+    rows.shift();
+    for (const row of rows) row.top -= SUMMARY_HEIGHT;
+    for (const bar of bars.values()) bar.centerY -= SUMMARY_HEIGHT;
+    y -= SUMMARY_HEIGHT;
+  }
 
   return { scale, rows, height: y, bars, lanes, todayX };
 }

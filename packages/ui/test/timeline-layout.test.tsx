@@ -56,7 +56,14 @@ function laneRow(layout: ReturnType<typeof layoutOf>, id: string): LaneRow {
 describe('computeLayout rows', () => {
   test('summary, then each initiative row followed by its lanes', () => {
     const layout = layoutOf([
-      { id: 'g1', label: 'One', lanes: [lane('a', []), lane('b', [])] },
+      {
+        id: 'g1',
+        label: 'One',
+        lanes: [
+          lane('a', [bar('m', '2026-10-20', '2026-10-30')]),
+          lane('b', []),
+        ],
+      },
       { id: 'g2', label: 'Two', lanes: [lane('c', [])] },
     ]);
     expect(layout.rows.map((r) => r.key)).toEqual([
@@ -89,6 +96,15 @@ describe('computeLayout rows', () => {
       zoom: 'months',
     });
     expect(outside.todayX).toBeNull();
+  });
+
+  test('no milestone in view drops the summary row; a headless group draws no row', () => {
+    const layout = layoutOf([
+      { id: 'g', label: 'None', headless: true, lanes: [lane('a', [])] },
+    ]);
+    expect(layout.rows.map((r) => r.key)).toEqual(['l:a']);
+    expect(laneRow(layout, 'a').top).toBe(0);
+    expect(layout.height).toBe(ROW_HEIGHT);
   });
 });
 

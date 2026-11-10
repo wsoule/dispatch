@@ -143,22 +143,24 @@ function TimelineCardsImpl({
           className={styles.group}
           aria-label={group.label}
         >
-          <header className={styles.groupHead}>
-            <h3 className={styles.groupName}>{group.label}</h3>
-            <span className={styles.groupCount}>
-              {group.lanes.length}{' '}
-              {group.lanes.length === 1 ? 'project' : 'projects'}
-            </span>
-            {group.link !== undefined ? (
-              <Link
-                href={group.link.href}
-                className={styles.groupLink}
-                aria-label={group.link.ariaLabel}
-              >
-                {group.link.label}
-              </Link>
-            ) : null}
-          </header>
+          {group.headless === true ? null : (
+            <header className={styles.groupHead}>
+              <h3 className={styles.groupName}>{group.label}</h3>
+              <span className={styles.groupCount}>
+                {group.lanes.length}{' '}
+                {group.lanes.length === 1 ? 'project' : 'projects'}
+              </span>
+              {group.link !== undefined ? (
+                <Link
+                  href={group.link.href}
+                  className={styles.groupLink}
+                  aria-label={group.link.ariaLabel}
+                >
+                  {group.link.label}
+                </Link>
+              ) : null}
+            </header>
+          )}
           {group.lanes.map((lane) => {
             const bars = sorted.get(lane.id) ?? [];
             // An inactive lane is drawn in greys: no status hue in its
