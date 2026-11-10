@@ -209,7 +209,13 @@ export function TaskPageRail({
   // Run and Review draw the run's strip themselves, over the transcript or the diff.
   const showRunStrip =
     latestRun !== undefined && view !== 'run' && view !== 'review';
-  const showCard = !page.isContainer && canEdit;
+  // Once a run finished with work to review or land, the Review tab owns the
+  // next step; Dispatch comes back only after a failure or a discard.
+  const awaitingLanding =
+    latestRun !== undefined &&
+    latestRun.state === 'finished' &&
+    latestRun.reviewAction !== 'discard';
+  const showCard = !page.isContainer && canEdit && !awaitingLanding;
   const hasWork =
     enrich.questions !== null ||
     showCard ||

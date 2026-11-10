@@ -118,8 +118,11 @@ export function machinesHandler(deps: MachinesDeps): Machines {
           return {
             ...row,
             note:
-              answer.error === 'unknown frame kind'
-                ? 'This machine runs an older Dispatch; update it to reach it from the web.'
+              // Hubs older than web access drop the frame without a reply, so
+              // a silent machine most likely needs the same update.
+              answer.error === 'unknown frame kind' ||
+              answer.error === 'the machine did not answer'
+                ? 'This machine did not answer. Its Dispatch hub is probably older than web access; update it to reach it from the web.'
                 : (answer.error ?? 'The machine did not answer.'),
           };
         const projects = (answer.result as { projects?: LinkProject[] })

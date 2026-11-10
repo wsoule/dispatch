@@ -478,7 +478,7 @@ describe('TaskDrawer', () => {
   test('a task that left the list reads as gone; without a host nothing is drawn', () => {
     const log = newLog();
     mount(fakeHost(log, { tasks: [] }));
-    expect(screen.getByText(/no longer available/)).toBeTruthy();
+    expect(screen.getByText(/in this project/)).toBeTruthy();
     cleanup();
     const { container } = mount(null);
     expect(container.textContent).toBe('');

@@ -408,6 +408,7 @@ export function DispatchShell({
               destination,
               taskTitle,
               settingsPage,
+              hosted,
             })}
             onSearch={onSearch}
             topbarActions={topbarActions}

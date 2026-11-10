@@ -190,7 +190,7 @@ describe('opening a task', () => {
         back++;
       },
     });
-    expect(screen.getByText('That task is no longer available.')).toBeTruthy();
+    expect(screen.getByText(/^No task .* in this project\.$/)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     expect(back).toBe(1);
   });

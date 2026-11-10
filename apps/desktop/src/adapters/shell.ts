@@ -305,6 +305,8 @@ export interface CrumbsInput {
   /** The Settings page showing in the main column (`NavState.settings`), or
    * null while Settings is closed. */
   settingsPage?: NavSettingsPage | null;
+  /** The hosted planner: no Overseer, so the project crumb opens the Timeline. */
+  hosted?: boolean;
 }
 
 /**
@@ -319,7 +321,7 @@ export function buildCrumbs(input: CrumbsInput): ShellCrumb[] {
   if (input.projectName !== null && input.projectName !== '') {
     crumbs.push({
       label: input.projectName,
-      href: shellRoute('overseer').href,
+      href: shellRoute(input.hosted === true ? 'timeline' : 'overseer').href,
     });
   }
   const page = input.settingsPage ?? null;

@@ -64,6 +64,7 @@ import { PeopleProvider } from './components/people/PeopleContext';
 import { OverseerGrantsGroup } from './components/settings/OverseerGrantsGroup';
 import { AgentStep } from './components/setup/AgentStep';
 import { LinearStep } from './components/setup/LinearStep';
+import { ReadErrorBanner } from './components/setup/ReadErrorBanner';
 import { SetupBanner, setupProblem } from './components/setup/SetupBanner';
 import { AddProjectDialog } from './components/shell/AddProjectDialog';
 import { CommandPalette } from './components/shell/CommandPalette';
@@ -2458,7 +2459,12 @@ function App() {
       // Only while a step wants a person: the shell's banner slot is a styled
       // strip, and an empty SetupBanner inside it would still draw a band.
       banner={
-        setupComplete && setupProblem(setupBannerReport) !== undefined ? (
+        data.readError !== null ? (
+          <ReadErrorBanner
+            error={data.readError}
+            onRetry={() => void queryClient.invalidateQueries()}
+          />
+        ) : setupComplete && setupProblem(setupBannerReport) !== undefined ? (
           <SetupBanner
             report={setupBannerReport}
             onOpen={() => dispatchNav({ type: 'openSettings', page: 'setup' })}
@@ -2690,6 +2696,7 @@ function App() {
             onSelectPage={(page) => dispatchNav({ type: 'openSettings', page })}
             onOpenTask={(taskId) => openTaskView(taskId, 'auto')}
             hostedPages={hostedSettingsPages}
+            planner={hosted}
             pageExtras={{
               autonomy:
                 data.client === null ? null : (

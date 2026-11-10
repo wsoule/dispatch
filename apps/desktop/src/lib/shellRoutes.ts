@@ -189,7 +189,7 @@ export function currentShellDestination(state: NavState): ShellDestination {
   if (onLivePage(state)) return 'runs';
   const page = state.tasksPage;
   if (page.kind === 'docs') return 'docs';
-  if (page.kind === 'view' && hasOwnRow(page.view)) return page.view;
+  if (page.kind === 'view') return hasOwnRow(page.view) ? page.view : 'issues';
   return state.tasksPreset === 'needs-you' ? 'needs-you' : 'issues';
 }
 

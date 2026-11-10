@@ -209,6 +209,16 @@ describe('currentShellDestination', () => {
     expect(currentShellDestination(page)).toBe('issues');
   });
 
+  test('a page without a row does not inherit the Needs you preset', () => {
+    for (const view of ['projects', 'allocation', 'files'] as const) {
+      const page = after([
+        { type: 'showTasks', preset: 'needs-you' },
+        { type: 'setProjectView', view },
+      ]);
+      expect(currentShellDestination(page)).toBe('issues');
+    }
+  });
+
   test('the live page reads as Runs › Live: Runs stays current on it and after leaving it', () => {
     // Opened from the Runs page's Live button: any navigation closes Settings.
     const runs = after([

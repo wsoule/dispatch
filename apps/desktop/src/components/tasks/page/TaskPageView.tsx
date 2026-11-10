@@ -154,7 +154,7 @@ function TaskPageResolver({
     return (
       <div className={styles.gone}>
         <EmptyState
-          label="That task is no longer available."
+          label={`No task ${props.taskId} in this project.`}
           action={
             props.onBack === undefined ? undefined : (
               <Button size="sm" onClick={props.onBack}>
@@ -163,7 +163,7 @@ function TaskPageResolver({
             )
           }
         >
-          It was archived or deleted while it was open.
+          It may have been deleted, or the link belongs to another project.
         </EmptyState>
       </div>
     );

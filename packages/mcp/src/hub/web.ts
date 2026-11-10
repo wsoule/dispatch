@@ -84,6 +84,12 @@ export class HubWeb {
         signal: AbortSignal.timeout(FORWARD_TIMEOUT_MS),
       }
     );
+    // A daemon started before web access existed refuses the unknown link
+    // kind with a 409; say what fixes it rather than the bare status.
+    if (res.status === 409)
+      throw new Error(
+        'Dispatch for this project is older than web access. Restart it (quit and reopen the app) to reach it from the web.'
+      );
     if (!res.ok) throw new Error(`the project answered ${String(res.status)}`);
     return (await res.json()) as LinkHttpResponse;
   }

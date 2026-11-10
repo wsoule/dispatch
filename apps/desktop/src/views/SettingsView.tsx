@@ -111,6 +111,9 @@ interface SettingsViewProps {
    *  `openSettings` with it, so the hash and the crumbs follow; the view also
    *  switches at once on its own, so it works without a host. */
   onSelectPage?: (page: SettingsPage | HostedSettingsPage['id']) => void;
+  /** The hosted planner (app.dispatch.foo, no machine behind it): pages that
+   *  need a daemon on a machine are left out rather than shown stuck. */
+  planner?: boolean;
 }
 
 /** A page that is a whole view: full width, its own state, left out of search. Its
@@ -501,7 +504,34 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
   },
 ];
 
-const ALL_PAGES = SETTINGS_GROUPS.flatMap((group) => group.pages);
+// Pages that read or change a machine's daemon, its team link or its files:
+// on the hosted planner they could only show "Checking…" forever.
+const MACHINE_PAGES: ReadonlySet<SettingsPage> = new Set<SettingsPage>([
+  'setup',
+  'memory',
+  'team',
+  'sync',
+  'license',
+  'connected-agents',
+  'a2a',
+  'remotes',
+  'web',
+  'devices',
+  'daemon',
+  'diffs',
+]);
+
+// The rail's groups for this host: everything on a machine, the planning
+// pages alone on the hosted planner (empty groups dropped).
+function visibleGroups(
+  planner: boolean
+): { label: string; pages: PageSpec[] }[] {
+  if (!planner) return SETTINGS_GROUPS;
+  return SETTINGS_GROUPS.map((group) => ({
+    ...group,
+    pages: group.pages.filter((entry) => !MACHINE_PAGES.has(entry.id)),
+  })).filter((group) => group.pages.length > 0);
+}
 
 /** Settings for the active project, in the main column: a grouped rail of
  *  pages beside the selected page (SettingsLayout). Typing in the rail's
@@ -516,6 +546,7 @@ export function SettingsView({
   onOpenTask,
   initialPage,
   hostedPages = [],
+  planner = false,
   pageExtras,
   onSelectPage,
 }: SettingsViewProps) {
@@ -618,8 +649,11 @@ export function SettingsView({
     );
   }
 
-  const hosted = hostedPages.find((entry) => entry.id === page);
-  const spec = ALL_PAGES.find((entry) => entry.id === page) ?? ALL_PAGES[0];
+  const groups = visibleGroups(planner);
+  const pages = groups.flatMap((group) => group.pages);
+  const activityPages = planner ? [] : hostedPages;
+  const hosted = activityPages.find((entry) => entry.id === page);
+  const spec = pages.find((entry) => entry.id === page) ?? pages[0];
   const ctx: PageContext = {
     data,
     config: data.config,
@@ -635,10 +669,10 @@ export function SettingsView({
   };
 
   const navGroups: SettingsNavGroup[] = [
-    ...SETTINGS_GROUPS,
-    ...(hostedPages.length === 0
+    ...groups,
+    ...(activityPages.length === 0
       ? []
-      : [{ label: 'Activity', pages: hostedPages }]),
+      : [{ label: 'Activity', pages: activityPages }]),
   ];
   const saveLine = <SettingsSaveLine state={saveState} />;
   const showHosted = hosted !== undefined && !searching;
@@ -667,7 +701,7 @@ export function SettingsView({
             />
             <SettingsSearchProvider query={query}>
               <SettingsResults ref={resultsRef}>
-                {ALL_PAGES.map((entry) => (
+                {pages.map((entry) => (
                   <SearchScopeProvider key={entry.id} text={entry.label}>
                     <SettingsResultPage
                       page={entry}
