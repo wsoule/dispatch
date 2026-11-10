@@ -115,9 +115,8 @@ export function participantLabel(
   if (address.startsWith('run:')) {
     const runId = address.slice('run:'.length);
     const taskId = lookups.taskIdOfRun(runId);
-    return taskId === null
-      ? runId
-      : `${addressLabel(`task:${taskId}`, lookups)} · ${runId}`;
+    // The issue names the speaker; its run id is noise in a conversation.
+    return taskId === null ? runId : addressLabel(`task:${taskId}`, lookups);
   }
   return addressLabel(address, lookups);
 }

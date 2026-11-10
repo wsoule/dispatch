@@ -287,7 +287,7 @@ test('prints the sender beside an avatar kept from assistive tech, and tones Urg
   const avatar = article.querySelector('[data-mark="avatar"]');
   expect(avatar?.getAttribute('aria-hidden')).toBe('true');
   expect(
-    screen.getByRole('button', { name: 't-000002 · Checkout · r-000001' })
+    screen.getByRole('button', { name: 't-000002 · Checkout' })
   ).toBeTruthy();
   expect(toneOf('Urgent')).toBe('warning');
   expect(toneOf('Question')).toBe('default');
@@ -321,9 +321,7 @@ test('a run sender and a task ref open where they lead; a commit ref does not', 
     { onOpen, open: false }
   );
   expect(screen.getByText('Notice')).toBeTruthy();
-  fireEvent.click(
-    screen.getByRole('button', { name: 't-000002 · Checkout · r-000001' })
-  );
+  fireEvent.click(screen.getByRole('button', { name: 't-000002 · Checkout' }));
   expect(onOpen).toHaveBeenCalledWith({
     kind: 'run',
     taskId: 't-000002',
