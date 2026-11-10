@@ -143,8 +143,6 @@ export type SettingsPage =
   | 'agents'
   | 'checks'
   | 'autonomy'
-  | 'memory'
-  | 'previews'
   | 'planning'
   | 'notifications'
   | 'team'
@@ -173,8 +171,6 @@ export const SETTINGS_PAGE_LABELS: Readonly<Record<NavSettingsPage, string>> = {
   agents: 'Agents',
   checks: 'Checks',
   autonomy: 'Autonomy',
-  memory: 'Memory',
-  previews: 'Previews',
   planning: 'Planning',
   notifications: 'Notifications',
   team: 'Members',
@@ -191,6 +187,13 @@ export const SETTINGS_PAGE_LABELS: Readonly<Record<NavSettingsPage, string>> = {
   setup: 'Setup',
   usage: 'Usage',
   runs: 'Runs',
+};
+
+/** Pages folded into another, so an old `#/settings/<page>` link still lands:
+ * Memory's groups now sit on Agents, Previews on Checks. */
+export const RETIRED_SETTINGS_PAGES: Readonly<Record<string, SettingsPage>> = {
+  memory: 'agents',
+  previews: 'checks',
 };
 
 /** Every Settings page a route may open, for `#/settings/<page>`. */

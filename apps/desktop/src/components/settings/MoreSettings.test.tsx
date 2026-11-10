@@ -15,7 +15,7 @@ import {
 } from './DaemonConfigGroups';
 import { OPERATOR_ONLY } from './fields';
 import { testConfig as config, visibleText } from './fixtures.test-helper';
-import { PreviewsSection } from './PreviewsSection';
+import { PreviewsGroup } from './PreviewsGroup';
 import { moved, StatusesGroup, VerifyStepsList } from './ProjectGroups';
 import { QueueWeightsGroup } from './QueueWeightsGroup';
 import {
@@ -53,15 +53,15 @@ function type(label: string, value: string) {
 
 test('previews: the dev command saves on blur', () => {
   const r = recorder();
-  render(<PreviewsSection config={config} onSave={r.onSave} canOperate />);
-  type('Start command', 'pnpm dev --port $PORT');
+  render(<PreviewsGroup config={config} onSave={r.onSave} canOperate />);
+  type('Preview start command', 'pnpm dev --port $PORT');
   expect(r.saved).toEqual([{ preview: { command: 'pnpm dev --port $PORT' } }]);
 });
 
 test('previews: emptying a saved command sends null, restoring autodetect', () => {
   const r = recorder();
   render(
-    <PreviewsSection
+    <PreviewsGroup
       config={{
         ...config,
         preview: {
@@ -75,16 +75,18 @@ test('previews: emptying a saved command sends null, restoring autodetect', () =
       canOperate
     />
   );
-  type('Start command', '');
+  type('Preview start command', '');
   expect(r.saved).toEqual([{ preview: { command: null } }]);
 });
 
 test('previews: below the operator tier the commands are read-only', () => {
   const r = recorder();
   render(
-    <PreviewsSection config={config} onSave={r.onSave} canOperate={false} />
+    <PreviewsGroup config={config} onSave={r.onSave} canOperate={false} />
   );
-  expect(screen.queryByRole('textbox', { name: 'Start command' })).toBeNull();
+  expect(
+    screen.queryByRole('textbox', { name: 'Preview start command' })
+  ).toBeNull();
   // The reason is the lock's accessible name, not a printed sentence.
   expect(screen.getAllByLabelText(OPERATOR_ONLY).length).toBeGreaterThan(0);
   expect(visibleText(OPERATOR_ONLY)).toEqual([]);
@@ -348,13 +350,12 @@ test('task files: auto-commit renders as a switch named by its row title', () =>
   });
   expect(toggle.getAttribute('aria-checked')).toBe('false');
   expect(screen.queryByRole('checkbox')).toBeNull();
-  expect(screen.getByText("Sharing isn't available")).toBeDefined();
-  expect(screen.queryByText('No main branch to commit to')).toBeNull();
+  expect(screen.queryByText('Nothing to sync yet')).toBeNull();
 });
 
 // The committer needs a branch resolved at boot; without one the switch alone
-// would promise commits that never happen.
-test('task files: with no main branch, it says so and what to do', () => {
+// would promise commits that never happen, so one line says why and the fix.
+test('task files: with no main branch, one line says why and what to do', () => {
   render(
     <CommitTaskFilesGroup
       config={{ ...config, autoCommit: true }}
@@ -373,8 +374,9 @@ test('task files: with no main branch, it says so and what to do', () => {
       canOperate
     />
   );
-  expect(screen.getByText('No main branch to commit to')).toBeDefined();
-  expect(screen.getByText(/Add one, then restart Dispatch/)).toBeDefined();
+  expect(screen.getByText('Nothing to sync yet')).toBeDefined();
+  expect(screen.getByText(/add an origin default branch/)).toBeDefined();
+  expect(screen.queryByRole('switch')).toBeNull();
 });
 
 // Clicking the title, not just the switch, is the hit target people actually

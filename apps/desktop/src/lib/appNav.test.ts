@@ -477,10 +477,10 @@ describe('navReducer', () => {
   test('Settings opens over the current view and keeps it', () => {
     const state = run([
       { type: 'showTasks' },
-      { type: 'setGlobalView', view: 'settings', page: 'memory' },
+      { type: 'setGlobalView', view: 'settings', page: 'planning' },
     ]);
     expect(state.mainView).toBe('tasks');
-    expect(state.settings).toBe('memory');
+    expect(state.settings).toBe('planning');
     expect(run([{ type: 'openSettings' }]).settings).toBe('general');
     expect(run([{ type: 'openSettings', page: 'a2a' }]).settings).toBe('a2a');
   });

@@ -2709,8 +2709,8 @@ function App() {
                     conversationId={overseer.conversationId}
                   />
                 ),
-              memory:
-                data.client === null ? null : (
+              agents:
+                data.client === null || hosted ? null : (
                   <MemoryRecent client={data.client} port={data.port} />
                 ),
             }}

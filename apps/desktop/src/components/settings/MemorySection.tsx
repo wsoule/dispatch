@@ -24,9 +24,10 @@ import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 
 interface MemorySectionProps {
   data: DispatchProjectData;
-  /** Null until config loads; only the run settings wait for it. */
-  config: DispatchConfig | null;
+  config: DispatchConfig;
   onSave: (patch: ConfigPatch) => Promise<unknown>;
+  /** The hosted planner has no memory store: only the config rows show. */
+  planner?: boolean;
 }
 
 type MemoryClient = Pick<
@@ -82,109 +83,65 @@ function ActionError({ error }: { error: string | null }) {
   );
 }
 
-/** Settings → Memory: the store's health and warnings, where lessons live,
- *  re-homing a moved checkout's entries, the ledger import's parity report,
- *  the owner's Claude-notes import, Claude files a scan skipped, the caller's
- *  identity and links, and memory's run settings. */
-export function MemorySection({ data, config, onSave }: MemorySectionProps) {
+/** Settings → Agents' memory groups: the run settings with the store's
+ *  health, then the Claude-notes import, Claude files a scan skipped,
+ *  re-homing a moved checkout's entries, and the caller's identity and links,
+ *  each shown only when it has something to say. */
+export function MemorySection({
+  data,
+  config,
+  onSave,
+  planner = false,
+}: MemorySectionProps) {
   const { client, port } = data;
-  const enabled = client !== null;
-  const need = (): MemoryClient => {
-    if (client === null) throw new Error('dispatchd client not ready');
-    return client;
-  };
-  const health = useQuery({
-    queryKey: memoryQueryKey(port, 'health'),
-    queryFn: () => need().memoryHealth(),
-    enabled,
-    retry: false,
-  });
+  const machine = planner ? null : client;
+  const health = useMemoryHealth(machine, port);
   const model =
     health.data === undefined ? null : memorySettingsModel(health.data);
 
   return (
     <>
-      <StoreGroup
-        model={model}
-        error={health.error?.message ?? null}
-        connected={enabled}
-      />
-      {client !== null && (
-        <SettingsGroup
-          title="Lessons"
-          hint="What runs remember, by scope, with proposals waiting on a decision and stale entries."
-          keywords="memory entries lessons personal project team proposals stale"
-          requires="none"
-        >
-          <SettingsRow
-            title="Browse memory"
-            subtitle="Entries and proposals live in Docs → Memory."
-          />
-        </SettingsGroup>
-      )}
-      {client !== null && <RehomeGroup client={client} port={port} />}
-      {model !== null && model.status === 'ok' && (
-        <ParityGroup parityText={model.parityText} />
-      )}
-      {client !== null &&
+      <MemoryGroup model={model} config={config} onSave={onSave} />
+      {machine !== null &&
         model !== null &&
         model.claudeImport !== 'unknown' && (
-          <ClaudeImportGroup client={client} port={port} model={model} />
+          <ClaudeImportGroup client={machine} port={port} model={model} />
         )}
-      {client !== null && <SkippedFilesGroup client={client} port={port} />}
-      {client !== null && <IdentityGroup client={client} port={port} />}
-      {config !== null && (
-        <RunSettingsGroup
-          config={config}
-          exportBlocked={model?.exportBlocked ?? null}
-          onSave={onSave}
-        />
-      )}
+      {machine !== null && <SkippedFilesGroup client={machine} port={port} />}
+      {machine !== null && <RehomeGroup client={machine} port={port} />}
+      {machine !== null && <IdentityGroup client={machine} port={port} />}
     </>
   );
 }
 
-function StoreGroup({
-  model,
-  error,
-  connected,
-}: {
-  model: MemorySettingsModel | null;
-  error: string | null;
-  connected: boolean;
-}) {
-  const store =
-    model?.store ??
-    (error !== null
-      ? `Couldn’t read memory’s health: ${error}`
-      : connected
-        ? 'Loading…'
-        : 'Dispatch is not running for this project.');
-  return (
-    <SettingsGroup
-      title="Store"
-      hint="Lessons, conventions and facts runs read from, kept in this project's memory.db."
-      keywords="memory health status"
-      requires="none"
-    >
-      <SettingsRow title="Memory" subtitle={store} />
-      {model !== null && model.personalUnavailable !== null && (
-        <SettingsRow
-          title="Your personal memory"
-          subtitle={model.personalUnavailable}
-        />
-      )}
-      {model?.pinnedOverflow === true && (
-        <SettingsRow
-          title="Pinned entries alone exceed the index budget"
-          subtitle="Runs see only your highest-ranked pins. Unpin some, or raise the index budget below."
-        />
-      )}
-      {model?.warnings.map((warning) => (
-        <SettingsRow key={warning} title="Config warning" subtitle={warning} />
-      ))}
-    </SettingsGroup>
-  );
+// The daemon's memory health, shared by the memory groups and the parity
+// report; off without a machine's daemon behind the window.
+function useMemoryHealth(
+  client: Pick<ApiClient, 'memoryHealth'> | null,
+  port: number | undefined
+) {
+  return useQuery({
+    queryKey: memoryQueryKey(port, 'health'),
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.memoryHealth();
+    },
+    enabled: client !== null,
+    retry: false,
+  });
+}
+
+/** The ledger import's parity report, for Agents' Advanced fold: shown once
+ *  the store is open on a machine. */
+export function MemoryParityGroup({
+  data,
+  planner = false,
+}: Pick<MemorySectionProps, 'data' | 'planner'>) {
+  const health = useMemoryHealth(planner ? null : data.client, data.port);
+  const model =
+    health.data === undefined ? null : memorySettingsModel(health.data);
+  if (model?.status !== 'ok') return null;
+  return <ParityGroup parityText={model.parityText} />;
 }
 
 function ParityGroup({ parityText }: { parityText: string | null }) {
@@ -442,6 +399,11 @@ function IdentityGroup({
   const rebound =
     identity.error instanceof ApiError && identity.error.status === 409;
 
+  // The owner with nothing linked has nothing to do here.
+  if (me !== undefined && !teammate && !rebound && me.aliases.length === 0) {
+    return null;
+  }
+
   function link() {
     const trimmed = code.trim();
     if (trimmed === '') return;
@@ -514,7 +476,7 @@ function IdentityGroup({
       {teammate && (
         <SettingsRow
           title="Link another project"
-          subtitle="Get a one-time code here and enter it in the other project's Settings → Memory. It lasts 10 minutes."
+          subtitle="Get a one-time code here and enter it in the other project's Settings → Agents. It lasts 10 minutes."
           control={
             <Button
               variant="secondary"
@@ -571,22 +533,40 @@ function IdentityGroup({
   );
 }
 
-function RunSettingsGroup({
+// What runs carry from memory, with the store's health and anything it warns
+// about above the two settings.
+function MemoryGroup({
+  model,
   config,
-  exportBlocked,
   onSave,
 }: {
+  model: MemorySettingsModel | null;
   config: DispatchConfig;
-  exportBlocked: string | null;
   onSave: (patch: ConfigPatch) => Promise<unknown>;
 }) {
   const memory = config.memory ?? DEFAULT_MEMORY;
   return (
     <SettingsGroup
-      title="Runs"
-      hint="How much of memory each run's prompt carries, and whether Claude's own memory joins in."
-      keywords="memory index tokens claude auto memory"
+      title="Memory"
+      hint="What runs remember between tasks, and how much of it each prompt carries. Entries and proposals are in Docs → Memory."
+      keywords="memory lessons store health index tokens claude auto memory"
     >
+      {model !== null && <SettingsRow title="Store" subtitle={model.store} />}
+      {model !== null && model.personalUnavailable !== null && (
+        <SettingsRow
+          title="Your personal memory"
+          subtitle={model.personalUnavailable}
+        />
+      )}
+      {model?.pinnedOverflow === true && (
+        <SettingsRow
+          title="Pinned entries alone exceed the index budget"
+          subtitle="Runs see only your highest-ranked pins. Unpin some, or raise the index budget below."
+        />
+      )}
+      {model?.warnings.map((warning) => (
+        <SettingsRow key={warning} title="Config warning" subtitle={warning} />
+      ))}
       <ChoiceSetting
         id="memory-claude-auto"
         title="Claude’s memory in runs"
@@ -601,12 +581,14 @@ function RunSettingsGroup({
           void onSave({ memory: { claudeAutoMemory } })
         }
       />
-      {memory.claudeAutoMemory === 'export' && exportBlocked !== null && (
-        <SettingsRow
-          title="Export unavailable"
-          subtitle={`Runs carry memory in their prompt instead: ${exportBlocked}`}
-        />
-      )}
+      {memory.claudeAutoMemory === 'export' &&
+        model !== null &&
+        model.exportBlocked !== null && (
+          <SettingsRow
+            title="Export unavailable"
+            subtitle={`Runs carry memory in their prompt instead: ${model.exportBlocked}`}
+          />
+        )}
       <NumberSetting
         id="memory-index-tokens"
         title="Index budget"

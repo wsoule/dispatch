@@ -204,6 +204,7 @@ export function BoardSyncSettings({ config, onSave, canOperate }: Props) {
  * Settings → Board sync, for a board kept as task files in the repo, which
  * sharing cannot carry: committing those files to the main branch instead.
  * Pushing to that branch uses the owner's git credentials, so it's theirs.
+ * With no main branch either, the page says why in one line instead.
  */
 export function CommitTaskFilesGroup({
   config,
@@ -214,11 +215,25 @@ export function CommitTaskFilesGroup({
   /** GET /api/sync; `disabled` on this backend means no branch resolved at boot. */
   syncStatus: SyncStatus | null;
 }) {
+  if (syncStatus?.state === 'disabled') {
+    return (
+      <SettingsGroup
+        title="Task files"
+        keywords="board sync files git trunk share teammates"
+        requires="none"
+      >
+        <SettingsRow
+          title="Nothing to sync yet"
+          subtitle="This board is kept as files, which reach teammates only through commits to a main branch, and this repo has none: add an origin default branch or a local main, then restart Dispatch for this project."
+        />
+      </SettingsGroup>
+    );
+  }
   return (
     <SettingsGroup
       title="Task files"
-      hint="This board is kept as files in the repo, not in Dispatch's database."
-      keywords="board sync files git"
+      hint="This board is kept as files in the repo, so it reaches teammates through commits rather than a shared branch of its own."
+      keywords="board sync files git share teammates"
     >
       <SwitchSetting
         id="auto-commit"
@@ -228,18 +243,6 @@ export function CommitTaskFilesGroup({
         checked={config.autoCommit}
         locked={canOperate ? undefined : OPERATOR_ONLY}
         onSave={(autoCommit) => void onSave({ autoCommit })}
-      />
-      {syncStatus?.state === 'disabled' && (
-        <SettingsRow
-          title="No main branch to commit to"
-          subtitle="This repo has no origin default branch and no local main or master branch. Add one, then restart Dispatch for this project."
-          keywords="trunk"
-        />
-      )}
-      <SettingsRow
-        title="Sharing isn't available"
-        subtitle="Sharing a board through a branch of its own works only for boards kept in Dispatch's database."
-        keywords="sync share teammates"
       />
     </SettingsGroup>
   );

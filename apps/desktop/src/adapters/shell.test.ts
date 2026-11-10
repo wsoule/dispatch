@@ -147,7 +147,7 @@ describe('buildSettingsLink', () => {
         destination: 'settings',
         adminItems: [
           { label: '1 machine waiting to join', page: 'team', count: 1 },
-          { label: '2 Claude files skipped', page: 'memory', count: 2 },
+          { label: '2 Claude files skipped', page: 'agents', count: 2 },
         ],
       })
     ).toEqual({ href: '#/settings', label: 'Settings · 3', current: true });

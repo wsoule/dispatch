@@ -12,7 +12,7 @@ import {
   selectTrigger,
   testConfig,
 } from './fixtures.test-helper';
-import { PolicySection } from './PolicySection';
+import { GateOverridesGroup, PolicySection } from './PolicySection';
 
 function configAt(
   rung: number,
@@ -72,8 +72,18 @@ test('re-clicking the current stop does not save', () => {
   expect(saves).toEqual([]);
 });
 
+// The page with its Overrides group, which Settings folds under Advanced.
+function renderWithOverrides(props: Parameters<typeof GateOverridesGroup>[0]) {
+  render(
+    <>
+      <PolicySection {...props} client={null} />
+      <GateOverridesGroup {...props} />
+    </>
+  );
+}
+
 test('gate rows show the effective mode consultPolicy derives from the rung', () => {
-  render(<PolicySection config={configAt(3)} onSave={noSave} client={null} />);
+  renderWithOverrides({ config: configAt(3), onSave: noSave });
   // Rung 3: scope, approval, verify-retry and wake auto-decide; merge,
   // memory and doc still block.
   expect(screen.getAllByText('Automatic')).toHaveLength(4);
@@ -82,13 +92,10 @@ test('gate rows show the effective mode consultPolicy derives from the rung', ()
 
 test('a pinned gate reads as pinned and a pin change saves key-by-key', async () => {
   const saves: unknown[] = [];
-  render(
-    <PolicySection
-      config={configAt(1, { merge: 'auto' })}
-      onSave={(patch) => Promise.resolve(void saves.push(patch))}
-      client={null}
-    />
-  );
+  renderWithOverrides({
+    config: configAt(1, { merge: 'auto' }),
+    onSave: (patch) => Promise.resolve(void saves.push(patch)),
+  });
   expect(screen.getByText('Automatic, pinned')).toBeDefined();
   fireEvent.click(selectTrigger('Merging override'));
   await chooseOption('Follow level');
@@ -100,7 +107,7 @@ test('a pinned gate reads as pinned and a pin change saves key-by-key', async ()
 });
 
 test('the irreversibility floor renders fixed rows with no control', () => {
-  render(<PolicySection config={configAt(4)} onSave={noSave} client={null} />);
+  renderWithOverrides({ config: configAt(4), onSave: noSave });
   expect(screen.getAllByText('Always waits')).toHaveLength(6);
   expect(screen.getByText(/Force-push/)).toBeDefined();
   expect(screen.getByText(/Publishing packages/)).toBeDefined();
@@ -112,7 +119,7 @@ test('the irreversibility floor renders fixed rows with no control', () => {
 });
 
 test("the top stop says it accepts agents' shared memory, and memory has its own row", () => {
-  render(<PolicySection config={configAt(4)} onSave={noSave} client={null} />);
+  renderWithOverrides({ config: configAt(4), onSave: noSave });
   expect(
     screen.getByRole('button', {
       name: 'Merge and accept memory and doc edits on their own',
@@ -124,13 +131,10 @@ test("the top stop says it accepts agents' shared memory, and memory has its own
 
 test('the top stop covers doc edits, doc has its own row, and saving a rung never writes a doc pin', async () => {
   const saved: unknown[] = [];
-  render(
-    <PolicySection
-      config={configAt(3)}
-      onSave={(patch) => Promise.resolve(void saved.push(patch))}
-      client={null}
-    />
-  );
+  renderWithOverrides({
+    config: configAt(3),
+    onSave: (patch) => Promise.resolve(void saved.push(patch)),
+  });
   const top = screen.getByRole('button', {
     name: 'Merge and accept memory and doc edits on their own',
   });

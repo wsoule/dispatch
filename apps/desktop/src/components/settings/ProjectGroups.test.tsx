@@ -3,16 +3,19 @@ import { expect, test } from 'bun:test';
 
 import { OPERATOR_ONLY } from './fields';
 import { testConfig as config, visibleText } from './fixtures.test-helper';
-import { GeneralSection } from './GeneralSection';
+import { PullRequestsGroup, StatusesGroup } from './ProjectGroups';
 
 // Every group is a sentence-case heading over its card; no uppercase labels.
 test('the section headings are sentence-case group headings', () => {
   render(
-    <GeneralSection
-      config={config}
-      onSave={() => Promise.resolve()}
-      canOperate
-    />
+    <>
+      <StatusesGroup config={config} onSave={() => Promise.resolve()} />
+      <PullRequestsGroup
+        config={config}
+        onSave={() => Promise.resolve()}
+        canOperate
+      />
+    </>
   );
   const headings = screen.getAllByRole('heading', { level: 2 });
   expect(headings.map((h) => h.textContent)).toEqual([
@@ -29,7 +32,7 @@ test('the section headings are sentence-case group headings', () => {
 test('an edited checkout folder saves on blur, and emptying it sends null', () => {
   const saved: unknown[] = [];
   const { rerender } = render(
-    <GeneralSection
+    <PullRequestsGroup
       config={config}
       onSave={(p) => Promise.resolve(void saved.push(p))}
       canOperate
@@ -41,7 +44,7 @@ test('an edited checkout folder saves on blur, and emptying it sends null', () =
   expect(saved).toEqual([{ prWorktreeDir: '../pr' }]);
 
   rerender(
-    <GeneralSection
+    <PullRequestsGroup
       config={{ ...config, prWorktreeDir: '../pr' }}
       onSave={(p) => Promise.resolve(void saved.push(p))}
       canOperate
@@ -55,7 +58,7 @@ test('an edited checkout folder saves on blur, and emptying it sends null', () =
 // The checkout folder decides where commands run, so it is the operator's call.
 test('below the operator tier the checkout folder is read-only behind a lock', () => {
   render(
-    <GeneralSection
+    <PullRequestsGroup
       config={config}
       onSave={() => Promise.resolve()}
       canOperate={false}

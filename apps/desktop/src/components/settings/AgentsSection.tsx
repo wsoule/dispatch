@@ -155,9 +155,8 @@ function streamHint(
   return modes.find((m) => m.value === value)?.hint ?? '';
 }
 
-/** Settings → Agents: models and effort per kind of work, how their chats
- *  stream, the limits runs work under, what they may do unasked, and the
- *  agents a dispatch can use.
+/** Settings → Agents: models and effort per kind of work, the limits runs
+ *  work under, what they may do unasked, and the agents a dispatch can use.
  *  Save feedback lives in the shell, not here: this only calls `onSave`. */
 export function AgentsSection({
   config,
@@ -174,8 +173,6 @@ export function AgentsSection({
       config.orchestrator.executor,
     ]),
   ];
-  const overseerStream = overseerSettings(config).stream;
-  const runStream = runSettings(config).stream;
   return (
     <>
       <SettingsGroup
@@ -236,31 +233,6 @@ export function AgentsSection({
         keywords="typesafe jev"
       >
         <JudgmentStatusRow client={client} port={port} />
-      </SettingsGroup>
-
-      <SettingsGroup
-        title="Streaming"
-        hint="How a chat shows an agent's text while it works. Live is the default; the others are for when streaming misbehaves. A change applies from the Overseer's next turn, and to runs started after it."
-        keywords="stream live text typing chat"
-      >
-        <ModeSetting<OverseerStreamMode>
-          id="overseer-stream"
-          title="Overseer"
-          subtitle={streamHint(OVERSEER_STREAM, overseerStream)}
-          keywords="overseer.stream overseer narration"
-          value={overseerStream}
-          choices={OVERSEER_STREAM}
-          onSave={(stream) => void onSave({ overseer: { stream } })}
-        />
-        <ModeSetting<RunStreamMode>
-          id="runs-stream"
-          title="Runs"
-          subtitle={streamHint(RUN_STREAM, runStream)}
-          keywords="runs.stream task run agent"
-          value={runStream}
-          choices={RUN_STREAM}
-          onSave={(stream) => void onSave({ runs: { stream } })}
-        />
       </SettingsGroup>
 
       <SettingsGroup title="Limits" keywords="caps">
@@ -384,5 +356,41 @@ export function AgentsSection({
 
       <CliAgents config={config} onSave={onSave} canOperate={canOperate} />
     </>
+  );
+}
+
+/** Agents' Streaming group: how chats show an agent's text while it works.
+ *  Folded under Advanced, since Live suits everyone until streaming misbehaves. */
+export function AgentStreamingGroup({
+  config,
+  onSave,
+}: Pick<AgentsSectionProps, 'config' | 'onSave'>) {
+  const overseerStream = overseerSettings(config).stream;
+  const runStream = runSettings(config).stream;
+  return (
+    <SettingsGroup
+      title="Streaming"
+      hint="How a chat shows an agent's text while it works. Live is the default; the others are for when streaming misbehaves. A change applies from the Overseer's next turn, and to runs started after it."
+      keywords="stream live text typing chat"
+    >
+      <ModeSetting<OverseerStreamMode>
+        id="overseer-stream"
+        title="Overseer"
+        subtitle={streamHint(OVERSEER_STREAM, overseerStream)}
+        keywords="overseer.stream overseer narration"
+        value={overseerStream}
+        choices={OVERSEER_STREAM}
+        onSave={(stream) => void onSave({ overseer: { stream } })}
+      />
+      <ModeSetting<RunStreamMode>
+        id="runs-stream"
+        title="Runs"
+        subtitle={streamHint(RUN_STREAM, runStream)}
+        keywords="runs.stream task run agent"
+        value={runStream}
+        choices={RUN_STREAM}
+        onSave={(stream) => void onSave({ runs: { stream } })}
+      />
+    </SettingsGroup>
   );
 }

@@ -2,7 +2,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import { accessFor, SettingsAccessProvider } from './access';
-import { AgentsSection } from './AgentsSection';
+import { AgentsSection, AgentStreamingGroup } from './AgentsSection';
 import {
   chooseOption,
   testConfig as config,
@@ -18,6 +18,19 @@ function renderAgents(overrides: Partial<Props> = {}) {
       executors={null}
       onSave={async () => {}}
       canOperate
+      {...overrides}
+    />
+  );
+}
+
+// The Streaming group, which the page folds under Advanced.
+function renderStreaming(
+  overrides: Partial<Parameters<typeof AgentStreamingGroup>[0]> = {}
+) {
+  return render(
+    <AgentStreamingGroup
+      config={config}
+      onSave={async () => {}}
       {...overrides}
     />
   );
@@ -170,8 +183,8 @@ test('choosing Default effort clears the role', async () => {
   expect(r.saved).toEqual([{ effort: { execute: null } }]);
 });
 
-// Models first, then how their chats stream, the limits runs work under,
-// what they may do, then which agent a dispatch uses.
+// Models first, then the limits runs work under, what they may do, then
+// which agent a dispatch uses. Streaming sits apart, under Advanced.
 test('the page is sentence-case groups in order', () => {
   renderAgents();
   expect(
@@ -179,7 +192,6 @@ test('the page is sentence-case groups in order', () => {
   ).toEqual([
     'Models',
     'Judgments',
-    'Streaming',
     'Limits',
     'Permissions',
     'Defaults',
@@ -217,7 +229,7 @@ function streamMode(row: string, mode: string): HTMLElement {
 }
 
 test('both chats stream live when config.yml says nothing', () => {
-  renderAgents();
+  renderStreaming();
   expect(streamMode('Overseer', 'Live').getAttribute('aria-checked')).toBe(
     'true'
   );
@@ -237,7 +249,7 @@ test('both chats stream live when config.yml says nothing', () => {
 
 test('pressing a mode saves it under its own block', () => {
   const r = recorder();
-  renderAgents({ onSave: r.onSave });
+  renderStreaming({ onSave: r.onSave });
   fireEvent.click(streamMode('Overseer', 'Narration'));
   fireEvent.click(streamMode('Runs', 'Off'));
   expect(r.saved).toEqual([
@@ -248,7 +260,7 @@ test('pressing a mode saves it under its own block', () => {
 
 test('the configured mode is pressed and described, and pressing it again saves nothing', () => {
   const r = recorder();
-  renderAgents({
+  renderStreaming({
     config: {
       ...config,
       overseer: { stream: 'off', autonomy: 'balanced' },
@@ -275,12 +287,7 @@ test('a viewer who may not save config cannot press a mode', () => {
   const r = recorder();
   render(
     <SettingsAccessProvider access={accessFor('request', false)}>
-      <AgentsSection
-        config={config}
-        executors={null}
-        onSave={r.onSave}
-        canOperate={false}
-      />
+      <AgentStreamingGroup config={config} onSave={r.onSave} />
     </SettingsAccessProvider>
   );
   const narration = streamMode('Overseer', 'Narration');

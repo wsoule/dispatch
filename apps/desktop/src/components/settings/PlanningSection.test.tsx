@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import { testConfig } from './fixtures.test-helper';
-import { PlanningSection } from './PlanningSection';
+import { PlanningSection, PlanningTuningGroups } from './PlanningSection';
 
 // Settings → Planning saves field by field into config.yml's planning block.
 
@@ -25,7 +25,13 @@ function mount(planning = testConfig.planning) {
 }
 
 test('a tuning number saves on blur; emptying it goes back to the default', () => {
-  const saved = mount();
+  const saved: ConfigPatch[] = [];
+  render(
+    <PlanningTuningGroups
+      config={testConfig}
+      onSave={(patch) => Promise.resolve(void saved.push(patch))}
+    />
+  );
   const field = screen.getByRole('textbox', { name: 'Warn ahead' });
   expect(field.getAttribute('placeholder')).toBe('7');
   fireEvent.change(field, { target: { value: '10' } });

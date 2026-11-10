@@ -4,6 +4,7 @@ import {
   type NavAction,
   type NavSettingsPage,
   type NavState,
+  RETIRED_SETTINGS_PAGES,
   TASK_TABS,
   type TaskTab,
 } from './appNav';
@@ -233,8 +234,9 @@ const ROUTES: readonly Route[] = [
       if (rest.length === 0) {
         return settingsActions(params, { type: 'openSettings' });
       }
-      const [page] = rest;
-      return rest.length === 1 && page !== undefined && isSettingsPage(page)
+      if (rest.length !== 1 || rest[0] === undefined) return null;
+      const page = RETIRED_SETTINGS_PAGES[rest[0]] ?? rest[0];
+      return isSettingsPage(page)
         ? settingsActions(params, { type: 'openSettings', page })
         : null;
     },

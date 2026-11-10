@@ -193,6 +193,12 @@ describe('hrefForState ↔ parseHref', () => {
     expect(landed.tasksMode).toBe(state.tasksMode);
   });
 
+  // Memory folded into Agents and Previews into Checks; old links still land.
+  test('a retired Settings page opens the page that took it in', () => {
+    expect(land('#/settings/memory')?.settings).toBe('agents');
+    expect(land('#/settings/previews')?.settings).toBe('checks');
+  });
+
   test('a reload on the Overseer or under Settings keeps the Tasks side', () => {
     // Left on the list (narrowed, on the board) or on a task page's Review
     // tab, then the Overseer, then Settings: each href names what the reducer

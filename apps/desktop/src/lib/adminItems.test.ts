@@ -18,7 +18,7 @@ describe('adminItems', () => {
     ).toEqual([
       { label: '2 machines waiting to join', page: 'team', count: 2 },
       { label: '1 peer credential refused', page: 'a2a', count: 1 },
-      { label: '3 Claude files skipped', page: 'memory', count: 3 },
+      { label: '3 Claude files skipped', page: 'agents', count: 3 },
     ]);
   });
 
