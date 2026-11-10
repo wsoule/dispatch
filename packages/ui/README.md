@@ -1694,6 +1694,9 @@ mounts the first time it opens (every save starts from its open list) and then
 stays, so a resting picker is only its root and trigger: a board of cards with
 four pickers each pays no live region per card.
 
+A glyph-only trigger (the "⋯" menu) takes `tooltip`, the library `Tooltip` on
+the trigger, hidden while the popover is open.
+
 `PickerPopover` is also the family's menu: `searchable={false}` drops the search
 row (the list takes focus; ↑/↓, Home / End, ↵ and Space pick, Esc closes,
 letters jump to the next row starting with them) and the key-hint foot, and with

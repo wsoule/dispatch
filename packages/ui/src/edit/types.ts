@@ -240,6 +240,8 @@ interface PickerBaseProps extends DataAttributes {
   trigger?: ReactNode;
   /** Replaces the trigger's accessible name (with a custom face). */
   triggerLabel?: string;
+  /** A hover and focus hint on the trigger (a glyph-only "⋯"), hidden while open. */
+  tooltip?: ReactNode;
   disabled?: boolean;
   /** Controlled open state, e.g. for a host's single-key shortcuts. */
   open?: boolean;

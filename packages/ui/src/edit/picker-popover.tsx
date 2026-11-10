@@ -23,6 +23,7 @@ import {
   showInTopLayer,
   useLayer,
 } from '../shell/layer';
+import { Tooltip } from '../shell/tooltip';
 import { cx } from '../tasks/class-names';
 import { PickerMarkView } from './picker-mark';
 import styles from './picker-popover.module.css';
@@ -219,6 +220,7 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
     returnFocus,
     trigger,
     triggerLabel,
+    tooltip,
     disabled = false,
     open: openProp,
     onOpenChange,
@@ -1225,7 +1227,7 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
   // The trigger button. A glyph-only (mark) trigger sits straight in the
   // root: it prints no "Saving" note beside it (its dimmed face shows the
   // save, and the announcement says it), so it needs no row around it.
-  const triggerButton = (
+  const triggerFace = (
     <button
       ref={triggerRef}
       id={id}
@@ -1262,6 +1264,14 @@ export function PickerPopover(props: PickerPopoverProps): ReactNode {
       ) : null}
     </button>
   );
+  const triggerButton =
+    tooltip === undefined || tooltip === null ? (
+      triggerFace
+    ) : (
+      <Tooltip content={tooltip} disabled={isOpen}>
+        {triggerFace}
+      </Tooltip>
+    );
 
   return (
     <span

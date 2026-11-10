@@ -756,6 +756,29 @@ describe('PickerPopover as a menu (searchable={false})', () => {
     );
   }
 
+  test('a tooltip on the trigger shows on keyboard focus and hides while open', () => {
+    render(
+      <PickerPopover
+        label="More actions"
+        options={ITEMS}
+        value={null}
+        action
+        searchable={false}
+        trigger="…"
+        triggerLabel="More actions"
+        tooltip="More actions"
+        onChange={() => undefined}
+      />
+    );
+    const tip = () => screen.queryByRole('tooltip', { hidden: true });
+    const button = screen.getByRole('button', { name: 'More actions' });
+    expect(tip()).toBeNull();
+    act(() => button.focus());
+    expect(tip()?.textContent).toBe('More actions');
+    fireEvent.click(button);
+    expect(tip()).toBeNull();
+  });
+
   test('no search row: the list takes focus and drives the active option', () => {
     render(<Menu onPick={() => undefined} />);
     fireEvent.click(screen.getByRole('button', { name: 'Actions for ENG-12' }));

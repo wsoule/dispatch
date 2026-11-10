@@ -156,7 +156,7 @@ describe('opening a task', () => {
       within(nav)
         .getAllByRole('link')
         .map((link) => link.textContent)
-    ).toEqual(['Spec', 'RunNot dispatched', 'Review', 'Summary']);
+    ).toEqual(['Spec']);
     expect(tab('Spec').getAttribute('aria-current')).toBe('page');
     expect(modeOf()).toBe('spec');
     // The shell's main is the one main landmark; the page adds none.
@@ -434,7 +434,12 @@ describe('the mode follows the task', () => {
   });
 
   test('a stage picked by hand holds; picking the state’s own follows again', () => {
-    mount(fakeHost(newLog(), { tasks: [task('t-1')] }));
+    mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1')],
+        runs: [run({ state: 'finished' })],
+      })
+    );
     fireEvent.click(tab('Summary'));
     expect(modeOf()).toBe('summary');
     fireEvent.click(tab('Spec'));
@@ -443,13 +448,25 @@ describe('the mode follows the task', () => {
 
   test('the caller keeps the mode, as auto when it follows the state', () => {
     const changes: TaskTab[] = [];
-    mount(fakeHost(newLog(), { tasks: [task('t-1')] }), {
-      mode: 'auto',
-      onModeChange: (next) => changes.push(next),
-    });
+    mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1')],
+        runs: [run({ state: 'finished' })],
+      }),
+      {
+        mode: 'auto',
+        onModeChange: (next) => changes.push(next),
+      }
+    );
     fireEvent.click(tab('Review'));
     fireEvent.click(tab('Spec'));
     expect(changes).toEqual(['review', 'auto']);
+  });
+
+  test('before any run, a link to the Run tab lands on the spec', () => {
+    mount(fakeHost(newLog(), { tasks: [task('t-1')] }), { mode: 'run' });
+    expect(modeOf()).toBe('spec');
+    expect(screen.queryByRole('link', { name: /^Run/ })).toBeNull();
   });
 });
 
@@ -579,10 +596,10 @@ function fakeResizeObservers() {
   };
 }
 
-describe('a narrow header', () => {
-  const ICON_TOGGLES = [
-    "The run's files",
-    "A terminal in the run's worktree",
+describe('the header actions', () => {
+  const SIDE_VIEWS = [
+    "Show the run's files",
+    "Open a terminal in the run's worktree",
     "Preview the run's app",
   ];
 
@@ -609,48 +626,52 @@ describe('a narrow header', () => {
     );
   }
 
-  test('wide, the toggles are buttons and More actions holds the task’s own actions', async () => {
+  test('wide, the header keeps the star, More actions and close; the side views are menu rows', async () => {
     const observers = fakeResizeObservers();
     try {
       mountWithToggles([]);
       await settleLoads();
       observers.resizeTo(1200);
-      for (const name of [...ICON_TOGGLES, 'Unfavorite']) {
-        expect(screen.getByRole('button', { name })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Unfavorite' })).toBeTruthy();
+      for (const name of SIDE_VIEWS) {
+        expect(screen.queryByRole('button', { name })).toBeNull();
       }
+      // Every icon button names itself with a library tooltip on focus.
+      const star = screen.getByRole('button', { name: 'Unfavorite' });
+      act(() => star.focus());
+      expect(screen.getByRole('tooltip', { hidden: true }).textContent).toBe(
+        'Unfavorite'
+      );
       await openMoreActions();
       const names = screen.getAllByRole('option').map((o) => o.textContent);
-      for (const name of [...ICON_TOGGLES, 'Favorite']) {
-        expect(names).not.toContain(name);
-      }
+      for (const name of SIDE_VIEWS) expect(names).toContain(name);
+      expect(names).not.toContain('Favorite');
+      expect(names).not.toContain('Unfavorite');
     } finally {
       observers.restore();
     }
   });
 
-  test('under 480px the toggles move into More actions, named for their state, and come back when it widens', async () => {
+  test('under 480px the star moves into More actions too, and comes back when it widens', async () => {
     const observers = fakeResizeObservers();
     const toggled: unknown[] = [];
     try {
       mountWithToggles(toggled);
       // The Overseer's focus column: about 330px.
       observers.resizeTo(330);
-      for (const name of [...ICON_TOGGLES, 'Unfavorite']) {
-        expect(screen.queryByRole('button', { name })).toBeNull();
-      }
-      // More actions itself stays a button: it is where the toggles went.
+      expect(screen.queryByRole('button', { name: 'Unfavorite' })).toBeNull();
       expect(screen.getByRole('button', { name: 'More actions' })).toBeTruthy();
 
       await openMoreActions();
       // Starred: the row says what it does, as the wide button does.
-      for (const name of [...ICON_TOGGLES, 'Unfavorite']) {
+      for (const name of [...SIDE_VIEWS, 'Unfavorite']) {
         expect(optionNamed(name)).toBeTruthy();
       }
       // No toggle is drawn ticked (the keyboard would start on it).
       for (const option of screen.getAllByRole('option')) {
         expect(option.getAttribute('aria-selected')).not.toBe('true');
       }
-      await settle(() => fireEvent.click(optionNamed("The run's files")));
+      await settle(() => fireEvent.click(optionNamed("Show the run's files")));
       expect(modeOf()).toBe('files');
       await openMoreActions();
       expect(optionNamed("Hide the run's files")).toBeTruthy();
@@ -662,14 +683,7 @@ describe('a narrow header', () => {
       expect(screen.queryByRole('button', { name: 'Unfavorite' })).toBeNull();
 
       observers.resizeTo(1200);
-      for (const name of [...ICON_TOGGLES, 'Unfavorite']) {
-        expect(screen.getByRole('button', { name })).toBeTruthy();
-      }
-      expect(
-        screen
-          .getByRole('button', { name: "The run's files" })
-          .getAttribute('aria-pressed')
-      ).toBe('true');
+      expect(screen.getByRole('button', { name: 'Unfavorite' })).toBeTruthy();
     } finally {
       observers.restore();
     }

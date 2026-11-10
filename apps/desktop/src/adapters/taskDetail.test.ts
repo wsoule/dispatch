@@ -447,7 +447,7 @@ describe('buildDetailAlerts', () => {
     ).toEqual([]);
   });
 
-  test('readiness repeats blockers, a thin spec and overlaps in amber, not writes', () => {
+  test('readiness repeats blockers and overlaps in amber, not a thin spec or writes', () => {
     const alerts = buildDetailAlerts(
       alertsInput({
         readiness: readiness([
@@ -476,12 +476,6 @@ describe('buildDetailAlerts', () => {
         message: 'Waits on 2 tasks.',
       },
       {
-        id: 'readiness-spec',
-        label: 'Thin spec',
-        tone: 'warning',
-        message: 'Only a title.',
-      },
-      {
         id: 'readiness-overlap',
         label: 'Overlaps',
         tone: 'warning',
@@ -507,7 +501,7 @@ describe('buildDetailAlerts', () => {
 
   test('a closed task or a container gets no readiness advice', () => {
     const checks = readiness([
-      { id: 'spec', tone: 'warn', label: 'Only a title' },
+      { id: 'overlap', tone: 'warn', label: 'Overlaps 1 live run' },
     ]);
     expect(
       buildDetailAlerts(
@@ -560,7 +554,6 @@ describe('buildDetailAlerts', () => {
       'run-failed',
       'asks',
       'readiness-blockers',
-      'readiness-spec',
       'archived',
     ]);
   });
@@ -754,6 +747,25 @@ describe('buildDetailFacts', () => {
       tone: 'muted',
       raw: null,
     });
+  });
+
+  test("a container shows only what Linear's containers carry", () => {
+    const ids = (doc: TaskListItem) =>
+      buildDetailFacts(doc, context([doc])).map((f) => f.id);
+    // A project: its lead, priority, dates and initiative.
+    expect(ids(PROJECT)).toEqual([
+      'status',
+      'assignee',
+      'priority',
+      'start',
+      'due',
+      'parent',
+    ]);
+    expect(fact(buildDetailFacts(PROJECT, context()), 'assignee').label).toBe(
+      'Lead'
+    );
+    // A milestone with no parent shows none, and no task-only fields.
+    expect(ids(EPIC)).toEqual(['status', 'assignee', 'start', 'due']);
   });
 
   test('due date: red once past, amber on the day and the eve, plain later', () => {

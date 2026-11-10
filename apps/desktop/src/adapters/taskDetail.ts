@@ -234,13 +234,12 @@ const TONE_RANK: Record<UiTone, number> = {
 };
 
 // The readiness checks the alert stack repeats, with their lead-in words;
-// `writes` ("No declared writes") is advice for the dispatch card, not an
-// alert, and a passing or pending check says nothing here.
+// `spec` and `writes` are advice the dispatch card already gives with its fix,
+// and a passing or pending check says nothing here.
 const CHECK_LABEL: Partial<
   Record<ReadinessCheck['id'], Partial<Record<ReadinessCheck['tone'], string>>>
 > = {
   blockers: { block: 'Blocked', warn: 'Blockers' },
-  spec: { warn: 'Thin spec' },
   overlap: { warn: 'Overlaps' },
 };
 
@@ -278,8 +277,8 @@ function runFailureMessage(run: RunMeta): string {
 /**
  * The alert strips above the properties, most severe first: the due date is
  * past (danger), questions wait on you (warning), the latest run failed
- * (danger), readiness holds it back or wants a look (unmet blockers, a thin
- * spec, overlapping live runs: warning), and the task is archived (muted). A
+ * (danger), readiness holds it back or wants a look (unmet blockers,
+ * overlapping live runs: warning), and the task is archived (muted). A
  * closed task is never overdue and gets no readiness advice, nor does a
  * container (it is not dispatched).
  */
@@ -397,12 +396,20 @@ const RISK_TONE: Partial<Record<TaskRisk, UiTone>> = {
   critical: 'danger',
 };
 
+// What Linear calls a container's person: a project's lead, an initiative's owner.
+const CONTAINER_PERSON: Partial<Record<string, string>> = {
+  project: 'Lead',
+  initiative: 'Owner',
+};
+
 /**
  * The property sheet, in the rail's order: status, assignee, priority,
  * labels, estimate, start date (a container's, or when set), due date (toned
  * against `now`), parent, then the facts only shown when they say something
  * (cycle, creator, a non-routine risk, a model override), self review, and
  * whether a verify run exercised the work and where it lives in Linear.
+ * A container keeps what Linear's containers carry: a project's lead and
+ * priority, an initiative's owner, dates, a parent once set, and the link.
  * `editable` is false everywhere when the window may not write.
  */
 export function buildDetailFacts(
@@ -439,7 +446,7 @@ export function buildDetailFacts(
   const assignee: DetailFact = {
     id: 'assignee',
     kind: 'person',
-    label: 'Assignee',
+    label: CONTAINER_PERSON[meta.kind] ?? 'Assignee',
     value: needsOne ? NEEDS_ASSIGNEE_LABEL : who.label,
     editable: edit,
     raw: unassigned ? null : meta.assignee,
@@ -457,7 +464,7 @@ export function buildDetailFacts(
     raw: toTaskPriority(meta.priority),
   };
   if (meta.priority === 'urgent') priority.tone = 'danger';
-  facts.push(priority);
+  if (!container || meta.kind === 'project') facts.push(priority);
 
   const labels: DetailFact = {
     id: 'labels',
@@ -468,7 +475,7 @@ export function buildDetailFacts(
     raw: [...meta.labels],
   };
   if (meta.labels.length === 0) labels.tone = 'muted';
-  facts.push(labels);
+  if (!container) facts.push(labels);
 
   const estimate: DetailFact = {
     id: 'estimate',
@@ -480,7 +487,7 @@ export function buildDetailFacts(
     raw: meta.estimate,
   };
   if (meta.estimate === null) estimate.tone = 'muted';
-  facts.push(estimate);
+  if (!container) facts.push(estimate);
 
   if (container || meta.startDate !== null) {
     const start: DetailFact = {
@@ -538,7 +545,7 @@ export function buildDetailFacts(
   };
   if (meta.parent === null) parentFact.tone = 'muted';
   else if (parent !== undefined) parentFact.note = kindLabel(parent.meta.kind);
-  facts.push(parentFact);
+  if (!container || meta.parent !== null) facts.push(parentFact);
 
   if (meta.cycle !== null) {
     facts.push({
@@ -598,7 +605,7 @@ export function buildDetailFacts(
     raw: meta.selfReview,
   };
   if (!meta.selfReview) selfReview.tone = 'muted';
-  facts.push(selfReview);
+  if (!container) facts.push(selfReview);
 
   if (meta.exercised) {
     facts.push({
