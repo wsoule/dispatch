@@ -235,7 +235,8 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
             </div>
           </>
         )}
-        {runs.length > 0 && (
+        {/* One run's figures are already in its line above; tiles add up several. */}
+        {runs.length > 1 && (
           <StatsStrip
             label="Run figures"
             cells={figureCells(runs, totalCost, totalTurns, took)}
@@ -252,7 +253,7 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
         />
       )}
 
-      {rollup === null && runs.length > 0 && (
+      {rollup === null && runs.length > 1 && (
         <section className={styles.section}>
           <h3 className={styles.heading}>Runs</h3>
           <Register
@@ -314,14 +315,17 @@ export function SummaryMode({ page }: { page: TaskPageModel }) {
       )}
       <ReceiptsSection entries={ledger} />
 
-      <section className={styles.section}>
-        <h3 className={styles.heading}>Timeline</h3>
-        {page.bodyLoaded ? (
-          <ActivityTimeline items={timeline} />
-        ) : (
-          <SkeletonText lines={3} label="Loading the history" />
-        )}
-      </section>
+      {/* A loaded, empty history is a heading over "Nothing has happened yet". */}
+      {(!page.bodyLoaded || timeline.length > 0) && (
+        <section className={styles.section}>
+          <h3 className={styles.heading}>Timeline</h3>
+          {page.bodyLoaded ? (
+            <ActivityTimeline items={timeline} />
+          ) : (
+            <SkeletonText lines={3} label="Loading the history" />
+          )}
+        </section>
+      )}
     </div>
   );
 }

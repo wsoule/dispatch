@@ -354,6 +354,9 @@ describe('the mode follows the task', () => {
     );
     expect(modeOf()).toBe('summary');
     expect(screen.getByText('Landed on origin/main')).toBeTruthy();
+    // One run: its line already says it all, so no figures, no Runs list.
+    expect(screen.queryByRole('list', { name: 'Run figures' })).toBeNull();
+    expect(screen.queryByRole('list', { name: 'Runs' })).toBeNull();
   });
 
   test('a container opens on its plan, where the rail leaves its sub-issues out', () => {

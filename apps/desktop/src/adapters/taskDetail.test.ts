@@ -317,12 +317,11 @@ describe('buildDetailHeader', () => {
     expect('href' in header).toBe(false);
   });
 
-  test('the crumbs walk initiative › project › milestone, then the key', () => {
+  test('the crumbs walk initiative › project › milestone; the key stays under the title', () => {
     expect(buildDetailHeader(FULL, context()).breadcrumb).toEqual([
       { label: 'Platform', href: '#/task/i-1' },
       { label: 'Atlas', href: '#/task/p-1' },
       { label: 'Dual-write', href: '#/task/m-1' },
-      { label: 'ENG-24' },
     ]);
   });
 

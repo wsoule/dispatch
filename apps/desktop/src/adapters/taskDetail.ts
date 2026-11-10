@@ -196,7 +196,9 @@ export function buildDetailHeader(
       href: ctx.hrefFor(ancestor.meta.id),
     })
   );
-  breadcrumb.push({ label: taskKey });
+  // The key sits under the title already: the trail ends at the parent, and
+  // carries the key only when there is no parent to name.
+  if (breadcrumb.length === 0) breadcrumb.push({ label: taskKey });
   const out: DetailHeader = {
     taskKey,
     title: meta.title === '' ? 'Untitled task' : meta.title,

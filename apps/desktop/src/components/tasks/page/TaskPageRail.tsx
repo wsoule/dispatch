@@ -208,7 +208,10 @@ export function TaskPageRail({
   const showAttachments = attachments.length > 0 || (canEdit && !archived);
   // Run and Review draw the run's strip themselves, over the transcript or the diff.
   const showRunStrip =
-    latestRun !== undefined && view !== 'run' && view !== 'review';
+    latestRun !== undefined &&
+    view !== 'run' &&
+    view !== 'review' &&
+    view !== 'summary';
   // Once a run finished with work to review or land, the Review tab owns the
   // next step; Dispatch comes back only after a failure or a discard.
   const awaitingLanding =
