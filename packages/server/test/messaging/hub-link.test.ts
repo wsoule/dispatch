@@ -1,7 +1,7 @@
 import { TaskStore } from '@dispatch-foo/core';
 import { SYSTEM_ADDRESS } from '@dispatch-foo/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -88,6 +88,23 @@ describe('hub roster mirror', () => {
     await decide(CLIENT, 'approve');
     await roster([client, session]);
     expect(row(SESSION)?.status).toBe('approved');
+  });
+
+  it('approves a new client at once when the project opted in', async () => {
+    // #237: the person's own Claude Code agents waited on "Needs you".
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      'messaging:\n  approveMachineAgents: auto\n'
+    );
+    await roster([client, session]);
+    expect(row(CLIENT)?.status).toBe('approved');
+    await roster([client, session]);
+    expect(row(SESSION)?.status).toBe('approved');
+    const open = await fetch(`${baseUrl}/api/decisions/open`);
+    const { items } = (await open.json()) as {
+      items: { data?: { agent?: string } }[];
+    };
+    expect(items.some((i) => i.data?.agent === CLIENT)).toBe(false);
   });
 
   it('keeps a revoked session revoked through later rosters', async () => {

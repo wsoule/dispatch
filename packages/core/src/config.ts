@@ -301,9 +301,17 @@ function parseMessagingConfig(raw: unknown): MessagingConfig {
     );
   }
   const obj = raw as Record<string, unknown>;
-  const result = { ...DEFAULT_MESSAGING };
+  const result: MessagingConfig = { ...DEFAULT_MESSAGING };
+  const approve = obj.approveMachineAgents;
+  if (approve !== undefined) {
+    if (approve !== 'ask' && approve !== 'auto')
+      throw new ConfigError(
+        'invalid .dispatch/config.yml: messaging.approveMachineAgents must be "ask" or "auto"'
+      );
+    result.approveMachineAgents = approve;
+  }
   for (const key of Object.keys(DEFAULT_MESSAGING) as Array<
-    keyof MessagingConfig
+    Exclude<keyof MessagingConfig, 'approveMachineAgents'>
   >) {
     const value = obj[key];
     if (value === undefined) continue;

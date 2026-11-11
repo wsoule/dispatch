@@ -124,6 +124,9 @@ export interface HubLinkDeps {
   team: FederationHooks | null;
   /** The project owner, who decides registration gates. */
   owner: string;
+  /** Whether a hub client new to this project is approved without asking
+   *  (`messaging.approveMachineAgents: auto`); read each time. */
+  autoApprove?: () => boolean;
 }
 
 export class DaemonHubLink {
@@ -516,6 +519,24 @@ export class DaemonHubLink {
     const engine = this.engine;
     if (engine === null) return;
     const tokenHash = hubTokenHash();
+    // The project opted in: the hub serves only this OS user's processes,
+    // the same trust as the owner's own terminal, so no question is asked.
+    if (this.deps.autoApprove?.() === true) {
+      this.deps.messages().putAgent({
+        address: a.address,
+        displayName: a.displayName,
+        client: a.client,
+        tokenHash,
+        status: 'approved',
+        muted: false,
+        approvedBy: this.deps.owner,
+        createdAt: now,
+      });
+      console.log(
+        `dispatchd: hub link: approved ${a.address} (${a.client}) under messaging.approveMachineAgents: auto`
+      );
+      return;
+    }
     this.deps.messages().putAgent({
       address: a.address,
       displayName: a.displayName,
