@@ -58,6 +58,11 @@ design takes its shape and adds the part a team needs.
 18. **Everything a team shares is end-to-end encrypted.** Whoever hosts the
     server, us included, cannot read tasks, sessions, run logs, messages, docs
     or memory. This reverses decision 2.
+19. **No sessions live on the web.** The hosted endpoint that lets a claude.ai
+    session join a team from our server is removed, not postponed. A session
+    always runs on a machine with a core.
+20. **The app is modular the way herdr's app is.** A small app core, and every
+    panel, menu and dialog a mod kept as a file the person can change.
 
 ## The shape
 
@@ -445,13 +450,92 @@ status to review was not applied: Bob set it to done at 16:52."
 
 ## The app
 
-Desktop, phone and web become clients and nothing else. They use the generated
-client library and hold no logic the API does not expose. The desktop app can
-point at the local core or at one of your other machines with the same code. The
-web dashboard talks to the server and opens content in the browser.
+The model is herdr's desktop app (`herdrdev/herdr-app`): the app's own core
+stays small, and everything a person sees is a **mod**. Its guide says it
+plainly: "Nothing in the default interface is special."
 
-The desktop app is the largest part of the tree by far. It is not rewritten: its
-data layer (`packages/client`) is replaced and the views stay.
+### Two programs
+
+- **`dispatch`**, the core: runs agents, holds tasks and sessions. It keeps
+  running when the window closes or updates.
+- **`dispatch-app`**, the window: one client of the core. It can point at the
+  local core or at another machine of yours.
+
+### The app core stays small
+
+The app core is the model the core's API gives it, layout documents, commands,
+keys, and the mod API. Nothing else. Before anything is added to it, three
+questions (herdr's rule, taken whole):
+
+1. Does the app itself act on it, not only show it?
+2. Can only the app see it, for example a change that happens while no mod is
+   watching?
+3. Can mods not do it correctly, even with care?
+
+Three "no" answers mean it is a mod, even at the price of some repetition.
+
+### Everything else is a mod
+
+The board, a task's page, threads, the timeline, the graph, the run chat,
+review, the sessions list, settings, the command palette, dialogs and
+notifications are each a mod: a small program in its own folder that draws one
+panel and calls commands.
+
+| File                  | What it decides                             | Applied     |
+| --------------------- | ------------------------------------------- | ----------- |
+| `layouts/<name>.json` | The window: which mods sit where, the theme | live        |
+| `mods/<name>/`        | One panel, menu or dialog                   | live reload |
+| `keys.json`           | What every key does                         | live        |
+| `settings.json`       | The person: fonts, zoom, sounds             | live        |
+
+These live in one app folder on the person's machine: the interface, as files.
+
+- **Shipped and personal.** Shipped layouts and mods are replaced on update. To
+  change one, duplicate it; personal copies are never overwritten.
+- **Safe to break.** An invalid file keeps the last good version and writes the
+  reason beside it. One key that nothing can rebind returns to the default
+  layout.
+- **Agents can change the window.** The app writes a guide and the API's type
+  file into the app folder on every start, and has commands to list, check and
+  screenshot (`dispatch-app status`, `check <mod>`, `shot`). "Give me a sidebar
+  of blocked agents" is something a person asks their agent for.
+- **Mods are trusted code, not sandboxed.** A mod has the person's access to the
+  core, which includes readable team content. Read a mod before installing it,
+  as you would a shell script.
+- **Mods are personal.** They are files on a machine. The server does not carry
+  them.
+
+A sketch of a mod, to show the size intended (the API is not designed yet):
+
+```js
+// mods/blocked/main.js: every session waiting on a person
+export default function Blocked({ dispatch, ui }) {
+  const waiting = dispatch.sessions({ state: 'blocked' });
+  return ui.list(waiting, (s) =>
+    ui.row({
+      title: s.label ?? s.id,
+      note: s.waitingOn,
+      onClick: () => dispatch.run('session.open', { id: s.id }),
+    })
+  );
+}
+```
+
+### What mods are drawn with
+
+herdr's app is native and its mods cannot use HTML or CSS. **Proposed for
+Dispatch: keep the web view (Tauri) and let mods be web code.** Reasons: far
+more people and agents can write it; `packages/ui` already holds the component
+library the views use; and the same shipped mods can run on the phone and in the
+web dashboard. The alternative, a native rewrite like herdr's, discards that
+library and every existing view.
+
+Under the proposal the desktop app is not thrown away. Its views are moved into
+shipped mods one at a time on the new app core, and its data layer
+(`packages/client`) is replaced by the generated client.
+
+The phone app and the web dashboard are the same idea with fewer mods. The web
+dashboard talks to the server and opens content in the browser.
 
 ## Repositories
 
@@ -494,7 +578,7 @@ Source lines, tests excluded.
 | `packages/hub`                                            | ~1,050  | Becomes `home`                                                         |
 | `apps/web`                                                | 15,122  | Accounts and pages move to the server; `hub.ts` and `mcp.ts` are cut   |
 | `packages/remote`, `apps/remote-relay`                    | ~2,000  | Kept; the phone link becomes one more binding of the same API          |
-| `apps/desktop`, `packages/ui`, `packages/planning`        | —       | Kept; only the data layer changes                                      |
+| `apps/desktop`, `packages/ui`, `packages/planning`        | —       | Views become shipped mods on a small app core                          |
 
 **Rewrite the state in Rust, port the workers.** Everything that holds or orders
 state is new Rust code, written against today's behavior and tests: the kernel,
@@ -511,11 +595,9 @@ moved for workers.
 - **The host can do nothing that needs reading.** No server-side search, no
   Linear sync on the server, no email that quotes a task. Those run on a
   member's core or on an always-on core the team owns.
-- **The hosted MCP endpoint for claude.ai does not fit.** Today a claude.ai
-  session joins a team through `app.dispatch.foo/mcp` and lives on the hosted
-  hub (`apps/web/src/mcp.ts`). Such a session runs on our server, so it would
-  have to read team content there. It is left out of the first build. It can
-  return pointed at an always-on core the team owns.
+- **claude.ai cannot join a team from our server.** Today a claude.ai session
+  joins through `app.dispatch.foo/mcp` and lives on the hosted hub
+  (`apps/web/src/mcp.ts`). That is removed (decision 19).
 - **Lost keys are lost data.** There is no reset we can perform.
 - **A person who leaves keeps what they already had.**
 - **Every core must run the same rules.** A rules change is a coordinated
@@ -549,7 +631,7 @@ The old daemon keeps running until phase 8.
 | 5   | Link                 | Two of your machines share a project over SSH; the offline rules pass with the link cut                        | 2      |
 | 6   | Keys                 | Two devices share a team key through an invite link; a removed device cannot open later changes                | 5      |
 | 7   | Server               | Two people see each other's sessions and cannot both claim a task; the server's files hold no readable content | 6      |
-| 8   | App on the new API   | Desktop and phone run on the generated client; the web dashboard opens content in the browser                  | 2–4, 7 |
+| 8   | App core and mods    | The board, task page and sessions list run as mods on the new API; editing a mod file changes the window live  | 2–4, 7 |
 | 9   | Docs, memory, Linear | Ported modules pass their existing tests behind the new API                                                    | 2      |
 | 10  | Teardown and split   | Federation, board sync, the machine hub and the old daemon are deleted; repositories separate                  | 7–9    |
 | 11  | Overseer agent       | An agent answers "who is stuck" and "what collides" across the team                                            | 7      |
@@ -558,10 +640,13 @@ Phases 3, 5 and 9 can run in parallel once 2 lands.
 
 ## Open decisions
 
-None. The last point settled was the server's license (Wyat left the choice
-open; Elastic-2.0 is the pick). Anyone may run the server for their own team for
-free. Nobody may sell it to others as a hosted service. With self-hosting free
-and no license key, this is what keeps paid hosting ours.
+1. **What mods are drawn with.** Web code in the existing web view (proposed),
+   or a native rewrite like herdr's. See "What mods are drawn with".
+
+Settled last: the server's license (Wyat left the choice open; Elastic-2.0 is
+the pick). Anyone may run the server for their own team for free. Nobody may
+sell it to others as a hosted service. With self-hosting free and no license
+key, this is what keeps paid hosting ours.
 
 ## Notes on decided points
 
@@ -575,15 +660,22 @@ and no license key, this is what keeps paid hosting ours.
   through the server lets anyone on the team watch any run live, and keeps it
   readable to them when the laptop sleeps.
 
-## Taken from herdr-core, and not
+## Taken from herdr, and not
 
-Read: its README, agent guide, machines, security and API docs, and its module
-layout. Not read: its Rust source in depth. Not run.
+herdr is the reference for this design, not something Dispatch runs on.
+
+Read: herdr-core's README, agent guide, machines, security and API docs, and its
+module layout; herdr-app's README, agent guide, mods and security docs, and the
+opening of its mod guide. Not read: either's Rust source in depth, or the mod
+API in full. Not run.
 
 Taken: a headless core per machine; one API with a generated schema that only
 grows; every UI as a client; the same protocol over any pipe; holders; reported
 status; snapshot-then-events with a `missed` notice; isolated sessions for
-tests; a size budget.
+tests; a size budget. From the app: a small app core with a three-question gate,
+everything else as mods, the interface as files, shipped and personal copies,
+live reload that keeps the last good version, and an app agents can inspect and
+change.
 
 Not taken: its trust model (anything on the socket is you), and the absence of
 any always-on node. A team needs to know who acted, and needs state that stays
