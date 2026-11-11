@@ -65,11 +65,14 @@ design takes its shape and adds the part a team needs.
     panel, menu and dialog a mod kept as a file the person can change.
 21. **The app is native, like herdr's**, and is written fresh. Getting it right
     matters more than keeping today's app.
+22. **The app is built on GPUI.**
+23. **There is no web dashboard.** The server's website is sign-in, team setup,
+    invites and billing. Team content is only ever opened by a core.
 
 ## The shape
 
 ```text
- clients: desktop app · web dashboard · phone · CLI · MCP · your own program
+ clients: desktop app · phone · CLI · MCP · your own program
     │  one API (every client uses the same methods and events)
     ▼
 ┌──────────────────────────┐   pipe (ssh or any command)   ┌─────────────────┐
@@ -200,10 +203,11 @@ touching the core, because it only uses the public API.
 - **Methods** are JSON-RPC 2.0. One call per line in plain mode, so any language
   can talk to it.
 - **Three bindings of the same method table**: a local socket (Unix socket or
-  named pipe) for the CLI, the MCP and other cores; `dispatch connect`, which
-  carries the protocol over stdin and stdout so `ssh box dispatch connect` is a
-  remote core; and HTTP with a WebSocket on localhost, because the desktop
-  webview and a browser cannot open a Unix socket.
+  named pipe) for the app, the CLI, the MCP and workers; `dispatch connect`,
+  which carries the protocol over stdin and stdout so `ssh box dispatch connect`
+  is a remote core; and a WebSocket over TLS, which is how a core links to the
+  server and how the phone reaches a core through its relay. With a native app
+  and no web dashboard, nothing needs a plain HTTP API.
 - **Events**: `subscribe` answers with a snapshot and a sequence number, then
   sends events in order, a heartbeat when quiet, and a `missed` notice when the
   client fell too far behind and must take a fresh snapshot. The docs carry a
@@ -378,10 +382,9 @@ federation code (`content.ts`, `teamKeys.ts`, `hpke.ts`, `seal.ts`,
 `packages/federation/vectors`). It is rewritten in Rust as `keys`; the hard part
 of federation, merging without an orderer, is still gone.
 
-**The web dashboard** opens content in the browser. A device of yours approves
-the browser and seals the key to it. One honest limit: the page's code comes
-from the host, so a host that turned hostile could serve code that takes the
-key. The desktop app and the core do not have that limit.
+**No code from the host ever handles a key.** There is no web dashboard, so
+content is only opened by a core the person installed. The server's website
+handles sign-in, team setup, invites and billing, none of which needs the key.
 
 **One mode.** Self-hosted servers are encrypted the same way. Two modes would
 double what has to be tested, and a self-hosted team can run its own always-on
@@ -532,9 +535,10 @@ no HTML or CSS in a mod.
 herdr's app is built this way on GPUI (the UI library from the Zed editor) and
 gpui-kit, which runs the JavaScript mods. Both are Apache-licensed.
 
-_Unverified, and the riskiest piece in the app:_ herdr ships its own patched
-copies of both libraries, which says they need upkeep. Whether Dispatch builds
-on the same pair is decided by a spike (see "Build order"), not assumed here.
+GPUI is decided (decision 22). _Unverified, and the riskiest piece in the app:_
+the mod runtime. herdr ships its own patched copies of GPUI and gpui-kit, which
+says they need upkeep. The spike (see "Build order") settles whether Dispatch
+uses gpui-kit for mods or its own thin layer over GPUI.
 
 What this means for today's code:
 
@@ -543,8 +547,7 @@ What this means for today's code:
   does until its mod exists.
 - **The phone app stays separate.** A native desktop library does not run on a
   phone, so the phone keeps its own small app as a client of the core.
-- **The web dashboard cannot share mods** with a native app. It would be a
-  separate program written for the browser (see "Open decisions").
+- **There is no web dashboard** (decision 23).
 
 ## Repositories
 
@@ -638,7 +641,7 @@ The old daemon and today's app keep running until phase 9.
 
 | #   | Phase                | Done when                                                                                                      | After    |
 | --- | -------------------- | -------------------------------------------------------------------------------------------------------------- | -------- |
-| 1   | Kernel               | A method table yields the socket, stdio and HTTP bindings, the schema and the only-grows test                  | —        |
+| 1   | Kernel               | A method table yields the socket, stdio and WebSocket bindings, the schema and the only-grows test             | —        |
 | 2   | Home and tasks       | One core per machine serves several projects; the board works through the new API                              | 1        |
 | 3   | Sessions and mail    | The MCP is a client of the core; hand-driven sessions register, report status and message                      | 1        |
 | 4   | Runner               | A dispatched run survives a core restart; review, verify and merge pass the ported tests                       | 2, 3     |
@@ -657,10 +660,7 @@ to it.
 
 ## Open decisions
 
-1. **The web dashboard.** With a native app it shares nothing and is a separate
-   program. It is also the one place where the host serves the code that handles
-   a team's key. Proposed: leave it out of the first build. The server's site is
-   then sign-in, team setup, invites and billing only.
+None.
 
 Settled last: the server's license (Wyat left the choice open; Elastic-2.0 is
 the pick). Anyone may run the server for their own team for free. Nobody may
