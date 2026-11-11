@@ -1,6 +1,6 @@
 // The hub's vocabulary: what an edge sends (commands and beats), what the hub
 // answers (acks) and what it tells everyone (events). Nothing here touches a
-// database or a socket; docs/specs/2026-11-11-central-hub-design.md is the
+// database or a socket; docs/specs/2026-11-11-core-and-server-design.md is the
 // design these types implement.
 
 export type JsonValue =

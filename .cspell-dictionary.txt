@@ -241,6 +241,7 @@ headphnes
 healthcheck
 healthz
 hexdigit
+herdr
 HIDEABLE
 hjkmnp
 hookable
