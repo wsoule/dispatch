@@ -1,8 +1,9 @@
 # The central hub: one authority per team — design
 
-2026-11-11. Status: **draft for Wyat's review.** Direction decided in
-conversation the same day; nothing here is built. Sections marked _unverified_
-rest on a reading of headers and comments, not on a full read of the code.
+2026-11-11. Status: **direction decided (Wyat), build started.** The hub core
+exists (`packages/hub`, see "Built so far"); nothing is wired to it yet.
+Sections marked _unverified_ rest on a reading of headers and comments, not on a
+full read of the code.
 
 ## Why
 
@@ -34,6 +35,8 @@ decision and removes the detour.
    and memory. Sealed mail and `content-e2e` do not survive for hub teams.
 3. **Offline edges queue writes** and reconcile on reconnect. They do not go
    read-only.
+4. **A clean break.** Nobody but Wyat syncs a team today, so there is no
+   migration and no period where federation and the hub run side by side.
 
 ## Shape
 
@@ -286,9 +289,9 @@ If it does, it needs its own decision.
 - **A privacy promise is withdrawn.** Clients show today that the relay "cannot
   read message contents", and teams can turn on end-to-end content encryption
   (`2026-10-05-sealed-relay-contract.md`). Under decision 2 a hub team has
-  neither. Existing teams must be told before they move, and the site, the
-  privacy policy and `RELAY_DISCLOSURE` need rewriting. Self-hosting the hub is
-  the answer for a team that will not accept it.
+  neither. No team exists to notify, but the site, the privacy policy and
+  `RELAY_DISCLOSURE` need rewriting before one does. Self-hosting the hub is the
+  answer for a team that will not accept it.
 - **A published protocol changes.** `@dispatch-foo/protocol` and
   `packages/protocol-spec` (appendix F) describe federation. Removing it is a
   breaking version of both.
@@ -303,39 +306,58 @@ If it does, it needs its own decision.
 
 ## Phasing
 
-Each phase ships on its own and leaves the tree working.
+With no team to migrate, the new path is built beside the old one and the old
+one is deleted in one step. Each phase leaves the tree working.
 
-1. **Hub store and the read-only view.** The event log, tasks, sessions and runs
-   on the hub; edges push their state up; the web dashboard reads it with
-   machines asleep. Federation still runs. Proves the data model.
-2. **Writes through the hub.** `cmd`/`ack`/`evt`, the local cache, the outbox
-   and the offline rules. Board state stops traveling by federation.
-3. **Sessions and claims.** Leases, stalled detection, admission.
+1. **The hub core.** The ordered log, tasks with per-field revs, sessions as
+   leases and claim admission, with no transport. Done: `packages/hub`.
+2. **The wire.** `apps/web` serves a team's hub over the machine socket
+   (`hello`, `snap`, `cmd`, `ack`, `evt`, `beat`) and the web dashboard reads it
+   with machines asleep.
+3. **The edge.** dispatchd gets the sync layer over its SQLite store: the
+   outbox, applying events, and the "not yet synced" and "not applied" notes.
+   The MCP's task tools and `task_next` use claims.
 4. **Messages, docs and memory move.** The hub becomes the message store;
    sealing ends.
-5. **Teardown.** Delete federation, board sync, the relay transport and their
-   tests. Migrate existing teams: one admin machine uploads its board as the
-   first snapshot, the others resync, and the old op log is exported to the
-   receipt log.
+5. **Teardown.** Delete federation, board sync, the relay transport, their tests
+   and the `dispatch team` commands that drive them. Wyat's own board starts on
+   the hub from one machine's snapshot.
 6. **The Overseer agent** over the whole team.
 
-Phase 1 can also be reached faster by having the hub read the existing op log
-and materialize it. That only works for teams without `content-e2e`, and it
-builds on code phase 5 deletes, so the plan above skips it.
+## Built so far
+
+`packages/hub` (`@dispatch/hub`, Elastic-2.0) is phase 1: `TeamHub` over one
+SQLite database per team.
+
+- `apply(origin, command)` answers `task.create`, `task.set`, `task.append`,
+  `task.remove`, `claim` and `release`, each in one transaction, and answers a
+  resent `cid` with the ack it gave the first time.
+- `beat(machine, sessions)` and `sweep()` keep sessions as leases: stalled after
+  two minutes of silence, claims released 15 minutes after that, and at once
+  when a machine stops listing a session.
+- `eventsAfter(cursor)` and `snapshot()` are what the wire's `hello` and `snap`
+  will serve.
+
+Two details the code settled that the sections above left open:
+
+- **A claim with no declared paths holds only its task.** It neither blocks nor
+  is blocked by other claims' paths. `tasksConflict` in core treats an empty
+  list as "could touch anything", which would let one hand-driven session with
+  no declared writes block a whole project.
+- **Sessions are keyed by machine and id.** A claim command names its session,
+  and the hub takes the machine from the connection, so one machine cannot claim
+  or release in another's name.
+
+Not in the core yet: runs and `run_log`, messages, docs, memory, and event
+retention (the log keeps everything).
 
 ## Open decisions
 
-1. **Existing teams.** How many real teams sync today? If it is only Wyat's own
-   machines, phase 5's migration tool can be a script and the privacy notice is
-   a formality. If others do, both are real work.
-2. **Run logs.** Stream every `run.log` entry to the hub live (proposed, since
+1. **Run logs.** Stream every `run.log` entry to the hub live (proposed, since
    it makes any run watchable from anywhere), or upload at the end. Live costs
    storage and bandwidth; needs a retention default (proposed: 30 days).
-3. **Teammate links.** Keep, fold into the hub, or delete (see "What goes
+2. **Teammate links.** Keep, fold into the hub, or delete (see "What goes
    away").
-4. **Where the hub core lives.** A new `packages/hub` (ELv2, added to
-   `scripts/check-licenses.ts`) used by `apps/web`, or inside `apps/web`. A
-   package makes self-hosting and testing easier.
-5. **Hosted Overseer.** Whether the hub may ever run an agent with a
+3. **Hosted Overseer.** Whether the hub may ever run an agent with a
    team-supplied key.
-6. **Free tier.** What a team of three or fewer pays for a hosted hub.
+4. **Free tier.** What a team of three or fewer pays for a hosted hub.
