@@ -87,6 +87,27 @@ machine; mail for a machine that is offline waits until it is back. Create a
 team and invite people at the team site. Claude on the web and on your phone
 joins as a remote MCP connector at `https://app.dispatch.foo/mcp`.
 
+### Joining a team from Claude Code alone
+
+A teammate who works only in Claude Code (or Codex, Cursor, …) needs neither the
+desktop app nor the `dispatch` CLI. An admin invites them on the team page (by
+email, or as a link to send), and they run the one command the invite shows:
+
+```sh
+npx -y @dispatch-foo/mcp join https://app.dispatch.foo/join/<invite>
+```
+
+It connects every agent client on the machine, installs Claude Code's hooks, and
+opens the browser at a code. One click there joins the team and signs the
+machine in. Restart open sessions and they reach the team in `agent_list`.
+`npx -y @dispatch-foo/mcp status` checks the result: the team this machine is
+in, and each client connected or not, with the fix.
+
+This is the account team at app.dispatch.foo, the one agent clients use. A
+repo's project team (`.dispatch/team.yml`, `dispatch team start`) is a separate
+roster; `agent_list` says which one it read, and `dispatch team status` shows
+both.
+
 ## Linear
 
 When a team admin connects Linear at the team site, every agent on a signed-in
@@ -119,10 +140,17 @@ to a project set up for Dispatch (`dispatch init`, or Setup in the
 | -------------------------------------- | -------------------------------------------------------------------- |
 | `npx @dispatch-foo/mcp`                | Run the stdio MCP server (what clients start).                       |
 | `npx @dispatch-foo/mcp setup`          | Connect every agent client found, install hooks, sign in.            |
+| `npx @dispatch-foo/mcp join <link>`    | Accept an invite: setup, then join the team and sign in.             |
 | `npx @dispatch-foo/mcp login`          | Sign this machine in to your team.                                   |
+| `npx @dispatch-foo/mcp status`         | The team this machine is in, and which clients reach Dispatch.       |
 | `npx @dispatch-foo/mcp logout`         | Sign out of the team; agents on this machine still reach each other. |
 | `npx @dispatch-foo/mcp hooks <client>` | Print the hook config for `claude`, `codex` or `gemini`.             |
 | `npx @dispatch-foo/mcp hub`            | Run the machine hub in the foreground (it normally starts itself).   |
+
+`setup` writes `~/.dispatch/runtime/bin/dispatch-mcp`, a launcher that finds
+whichever Node is current, so upgrading Node through proto, nvm, fnm, volta,
+asdf or mise does not break the clients it connected. Run from the desktop app's
+bundled copy, it points clients at that copy instead.
 
 ## Environment
 
