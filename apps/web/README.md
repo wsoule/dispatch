@@ -46,6 +46,8 @@ both `TEAM_SECRET` and `LINEAR_CLIENT_ID`.
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | The GitHub OAuth app "Dispatch". Without them, GitHub sign-in answers 503.                                                                                |
 | `LINEAR_CLIENT_ID`                          | The public Linear OAuth app "Dispatch" (PKCE, no secret). Its redirect URIs must include `<PUBLIC_URL>/auth/linear/callback`. Unset hides Linear sign-in. |
 | `TEAM_SECRET`                               | Seals teams' Linear keys at rest. Changing it orphans every stored key.                                                                                   |
+| `RESEND_API_KEY`                            | A Resend API key: admins invite by email. Unset, invites are links to copy.                                                                               |
+| `INVITE_EMAIL_FROM`                         | The invite sender, on a domain verified in Resend: `Dispatch <invites@dispatch.foo>`.                                                                     |
 | `DESKTOP_DIST_DIR`                          | The desktop bundle the hosted planner serves. Defaults to `apps/desktop/dist`, which the image builds.                                                    |
 | `DEV_LOGIN`                                 | `1` allows the dev sign-in. Ignored when `PUBLIC_URL` is `https://`.                                                                                      |
 

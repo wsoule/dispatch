@@ -23,7 +23,7 @@ const fakeLinear = ((_url: string | URL | Request, init?: RequestInit) => {
   calls.push({ query, variables });
   const data = (): unknown => {
     if (query.includes('organization'))
-      return { organization: { name: 'Acme' } };
+      return { organization: { id: 'org_acme', name: 'Acme' } };
     if (query.includes('webhookCreate')) {
       webhookSecret = String((variables.input as { secret: string }).secret);
       return { webhookCreate: { success: true, webhook: { id: 'wh_1' } } };
@@ -119,6 +119,13 @@ afterAll(async () => {
 });
 
 describe('team Linear', () => {
+  it('keeps the workspace id, so its members can find the team', () => {
+    expect(service.linear.linkedOrgId(teamId)).toBe('org_acme');
+    expect(service.linear.linkedTeams(['org_acme'])).toEqual([
+      { teamId, org: 'Acme' },
+    ]);
+  });
+
   it('registers one webhook for the team, pointed at this service', () => {
     const hook = calls.find((c) => c.query.includes('webhookCreate'));
     expect((hook?.variables.input as { url: string } | undefined)?.url).toBe(

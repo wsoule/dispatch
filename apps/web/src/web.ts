@@ -3,6 +3,8 @@ import { createHash, randomBytes } from 'node:crypto';
 
 import type { Identity, TeamDb, User } from './db.js';
 import type { TeamLinear } from './linear.js';
+import type { Mailer } from './mailer.js';
+import { inviteEmail, looksLikeEmail } from './mailer.js';
 import {
   APP_JS,
   devicePage,
@@ -58,6 +60,9 @@ export interface WebDeps {
   machines?: (user: User) => Promise<MachineRow[]>;
   /** GitHub's and Linear's endpoints, swappable in tests. */
   fetch?: typeof fetch;
+  /** Sends invite emails; absent or null when the server has no mail set up
+   *  (RESEND_API_KEY and INVITE_EMAIL_FROM). */
+  mailer?: Mailer | null;
 }
 
 const SESSION_COOKIE = 'dt_session';
@@ -567,12 +572,21 @@ export function webHandler(
 
     // ---- device-code API (RFC 8628), called by MCP servers ----
     if (path === '/api/device/code' && method === 'POST') {
-      const body = (await req.json().catch(() => ({}))) as { client?: unknown };
+      const body = (await req.json().catch(() => ({}))) as {
+        client?: unknown;
+        invite?: unknown;
+      };
       const client =
         typeof body.client === 'string' && body.client.trim() !== ''
           ? body.client
           : 'agent';
-      const started = db.startDeviceCode(client);
+      // An invite (`dispatch-mcp join <link>`) rides along, so approving
+      // the code also joins its team; only its hash is kept.
+      const invite =
+        typeof body.invite === 'string' && /^[\w-]{16,128}$/.test(body.invite)
+          ? body.invite
+          : null;
+      const started = db.startDeviceCode(client, invite);
       return json(200, {
         device_code: started.deviceCode,
         user_code: started.userCode,
@@ -718,15 +732,30 @@ export function webHandler(
           502
         );
       }
-      const { viewer } = authorized;
-      if (mode === 'link')
+      const { viewer, organization } = authorized;
+      // Who is in which Linear workspace, so a team linked to it can offer
+      // them a Join button on Home.
+      const note = (userId: string): void => {
+        if (organization !== null) db.noteLinearOrg(userId, organization);
+      };
+      if (mode === 'link') {
+        const current = signedIn(req);
+        if (current !== null) note(current.id);
         return link(req, { provider: 'linear', id: viewer.id }, 'Linear');
-      if (mode === 'workspace') return openWorkspace(req, authorized);
+      }
+      if (mode === 'workspace') {
+        const current = signedIn(req);
+        if (current !== null) note(current.id);
+        return openWorkspace(req, authorized);
+      }
       if (mode === 'install') return installWorkspace(req, authorized);
-      return signIn(
-        db.upsertLinearUser(viewer.id, viewer.displayName, viewer.name),
-        safeNext(next ?? null)
+      const linearUser = db.upsertLinearUser(
+        viewer.id,
+        viewer.displayName,
+        viewer.name
       );
+      note(linearUser.id);
+      return signIn(linearUser, safeNext(next ?? null));
     }
     if (path === '/auth/dev' && method === 'GET' && config.devLogin) {
       const login = url.searchParams.get('login') ?? '';
@@ -778,10 +807,20 @@ export function webHandler(
     if (path === '/' && method === 'GET') {
       // Home: the planner, your machines and your teams, in that order, so
       // signing in lands on what you came to use rather than one team's page.
+      const mineIds = new Set(db.teamsOf(user.id).map((t) => t.id));
+      const joinable = (
+        deps.linear?.linkedTeams(db.linearOrgsOf(user.id)) ?? []
+      )
+        .filter((l) => !mineIds.has(l.teamId))
+        .flatMap((l) => {
+          const t = db.team(l.teamId);
+          return t === null ? [] : [{ id: t.id, name: t.name, org: l.org }];
+        });
       return html(
         homePage({
           user,
           teams: db.teamsOf(user.id),
+          joinable,
           planner: {
             workspaces: deps.grants?.workspacesOf(user.id) ?? [],
             canOpen: deps.grants !== undefined,
@@ -810,6 +849,24 @@ export function webHandler(
       const rest = teamMatch[2] ?? '';
       const team = db.team(teamId);
       const role = team === null ? null : db.role(teamId, user.id);
+      // A member of the Linear workspace a team is linked to joins it
+      // without an invite (the Join button on Home).
+      if (team !== null && rest === 'join' && method === 'POST') {
+        const org = deps.linear?.linkedOrgId(teamId) ?? null;
+        if (org === null || !db.linearOrgsOf(user.id).includes(org))
+          return html(
+            messagePage(
+              user,
+              'Could not join',
+              'Joining without an invite needs a Linear sign-in to the workspace this team is linked to. Ask an admin for an invite instead.'
+            ),
+            403
+          );
+        const joined = db.addMember(teamId, user.id);
+        return joined.ok
+          ? redirect(`/teams/${teamId}`)
+          : html(messagePage(user, 'Could not join', joined.reason), 409);
+      }
       if (team === null || role === null)
         return html(messagePage(user, 'Not found', 'No such team.'), 404);
       if (rest === '' && method === 'GET') {
@@ -822,6 +879,12 @@ export function webHandler(
             devices: db.devicesOf(teamId),
             sessions: deps.sessions(teamId),
             invite: url.searchParams.get('invite'),
+            openInvites: role === 'admin' ? db.openInvites(teamId) : [],
+            mail: {
+              available: (deps.mailer ?? null) !== null,
+              sent: url.searchParams.get('sent'),
+              error: url.searchParams.get('mail_error'),
+            },
             origin: config.origin,
             linear: {
               available: deps.linear?.available ?? false,
@@ -856,10 +919,48 @@ export function webHandler(
         await deps.linear.disconnect(teamId);
         return redirect(`/teams/${teamId}`);
       }
-      if (rest === 'invites' && method === 'POST' && role === 'admin')
-        return redirect(
-          `/teams/${teamId}?invite=${encodeURIComponent(db.createInvite(teamId, user.id))}`
+      if (rest === 'invites' && method === 'POST' && role === 'admin') {
+        const email = ((await form(req)).get('email') ?? '').trim();
+        if (email !== '' && !looksLikeEmail(email))
+          return redirect(
+            `/teams/${teamId}?mail_error=${encodeURIComponent(`${email.slice(0, 80)} is not an email address`)}`
+          );
+        const token = db.createInvite(
+          teamId,
+          user.id,
+          email === '' ? null : email
         );
+        const back = `/teams/${teamId}?invite=${encodeURIComponent(token)}`;
+        if (email === '') return redirect(back);
+        const mailer = deps.mailer ?? null;
+        if (mailer === null)
+          return redirect(
+            `${back}&mail_error=${encodeURIComponent('This server has no email set up; send the link yourself.')}`
+          );
+        try {
+          await mailer.send(
+            inviteEmail({
+              to: email,
+              team: team.name,
+              by: user.name ?? user.login,
+              link: `${config.origin}/join/${token}`,
+            })
+          );
+          return redirect(`${back}&sent=${encodeURIComponent(email)}`);
+        } catch (err) {
+          console.error(
+            JSON.stringify({
+              level: 'warn',
+              event: 'invite.email.failed',
+              team: teamId,
+              reason: (err as Error).message,
+            })
+          );
+          return redirect(
+            `${back}&mail_error=${encodeURIComponent('The email did not send; send the link yourself.')}`
+          );
+        }
+      }
       const removeMatch = /^members\/([^/]+)\/remove$/.exec(rest);
       if (removeMatch !== null && method === 'POST' && role === 'admin') {
         const gone = removeMatch[1] ?? '';
@@ -911,7 +1012,7 @@ export function webHandler(
       if (method === 'GET') {
         const code = (url.searchParams.get('code') ?? '').trim();
         if (code === '') return html(devicePage(user, teams, '', null, null));
-        const pending = db.pendingDevice(code);
+        const pending = db.pendingDevice(code, user.id);
         return pending === null
           ? html(
               devicePage(
@@ -924,7 +1025,14 @@ export function webHandler(
               404
             )
           : html(
-              devicePage(user, teams, code.toUpperCase(), pending.client, null)
+              devicePage(
+                user,
+                teams,
+                code.toUpperCase(),
+                pending.client,
+                null,
+                pending.invite
+              )
             );
       }
       const fields = await form(req);
@@ -933,23 +1041,19 @@ export function webHandler(
         db.denyDevice(code);
         return html(messagePage(user, 'Denied', 'That sign-in was refused.'));
       }
-      return db.approveDevice(code, user.id, fields.get('team') ?? '')
+      const approved = db.approveDeviceFor(
+        code,
+        user.id,
+        fields.get('team') ?? ''
+      );
+      return approved.ok
         ? html(
             signedInPage(
               user,
               db.team(fields.get('team') ?? '')?.name ?? 'your team'
             )
           )
-        : html(
-            devicePage(
-              user,
-              teams,
-              code,
-              null,
-              'That code is not waiting for a sign-in, or you are not in that team.'
-            ),
-            400
-          );
+        : html(devicePage(user, teams, code, null, approved.reason), 400);
     }
     return null;
   };

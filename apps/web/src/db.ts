@@ -38,6 +38,10 @@ CREATE TABLE IF NOT EXISTS devices (
   team_id TEXT NOT NULL, client TEXT NOT NULL, created_at TEXT NOT NULL,
   last_seen TEXT, revoked INTEGER NOT NULL DEFAULT 0, hub_replica TEXT
 );
+CREATE TABLE IF NOT EXISTS linear_orgs (
+  user_id TEXT NOT NULL, org_id TEXT NOT NULL, org_name TEXT NOT NULL,
+  seen_at TEXT NOT NULL, PRIMARY KEY (user_id, org_id)
+);
 CREATE TABLE IF NOT EXISTS oauth_clients (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, redirect_uris TEXT NOT NULL,
   created_at TEXT NOT NULL
@@ -123,6 +127,21 @@ export class TeamDb {
     this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec(SCHEMA);
     this.addLinearIdentity();
+    this.addInviteColumns();
+  }
+
+  // Columns added after the tables shipped: the address an invite was
+  // emailed to, and the invite a device sign-in carries (`dispatch-mcp join`).
+  private addInviteColumns(): void {
+    const has = (table: string, column: string) =>
+      this.db
+        .query<{ name: string }, []>(`PRAGMA table_info(${table})`)
+        .all()
+        .some((c) => c.name === column);
+    if (!has('invites', 'email'))
+      this.db.exec('ALTER TABLE invites ADD COLUMN email TEXT');
+    if (!has('device_codes', 'invite_hash'))
+      this.db.exec('ALTER TABLE device_codes ADD COLUMN invite_hash TEXT');
   }
 
   // Databases written before Linear sign-in have no linear_user_id. SQLite
@@ -365,37 +384,83 @@ export class TeamDb {
       }));
   }
 
-  /** An invite link's secret, for an admin of the team. */
-  createInvite(teamId: string, by: string): string {
+  /** An invite link's secret, for an admin of the team; `email` is where it
+   *  was sent, kept so the team page can list who is still to join. */
+  createInvite(
+    teamId: string,
+    by: string,
+    email: string | null = null
+  ): string {
     const token = secret();
     this.db
       .query(
-        'INSERT INTO invites (token_hash, team_id, created_by, expires_at) VALUES (?, ?, ?, ?)'
+        'INSERT INTO invites (token_hash, team_id, created_by, expires_at, email) VALUES (?, ?, ?, ?, ?)'
       )
-      .run(hashOf(token), teamId, by, this.iso(INVITE_DAYS * 86_400_000));
+      .run(
+        hashOf(token),
+        teamId,
+        by,
+        this.iso(INVITE_DAYS * 86_400_000),
+        email
+      );
     return token;
   }
 
   /** The team an unused, unexpired invite is for. */
   inviteTeam(token: string): Team | null {
+    return this.inviteTeamByHash(hashOf(token), null);
+  }
+
+  // The team an invite (by its hash) admits `userId` to: unused and
+  // unexpired, or already used by that same person, so following the link
+  // and then running `dispatch-mcp join` with it both work.
+  private inviteTeamByHash(hash: string, userId: string | null): Team | null {
     const row = this.db
       .query<
         { team_id: string; expires_at: string; used_by: string | null },
         [string]
       >('SELECT team_id, expires_at, used_by FROM invites WHERE token_hash = ?')
-      .get(hashOf(token));
-    if (row === null || row.used_by !== null || row.expires_at < this.iso())
-      return null;
+      .get(hash);
+    if (row === null || row.expires_at < this.iso()) return null;
+    if (row.used_by !== null && row.used_by !== userId) return null;
     return this.team(row.team_id);
   }
 
-  /** Uses an invite to join its team; why not, when it cannot. */
+  /** Invites not yet used or expired, newest first, for the team page. */
+  openInvites(
+    teamId: string
+  ): { email: string | null; expiresAt: string; createdAt: string }[] {
+    return this.db
+      .query<{ email: string | null; expires_at: string }, [string, string]>(
+        `SELECT email, expires_at FROM invites
+         WHERE team_id = ? AND used_by IS NULL AND expires_at >= ?
+         ORDER BY expires_at DESC`
+      )
+      .all(teamId, this.iso())
+      .map((r) => ({
+        email: r.email,
+        expiresAt: r.expires_at,
+        createdAt: new Date(
+          new Date(r.expires_at).getTime() - INVITE_DAYS * 86_400_000
+        ).toISOString(),
+      }));
+  }
+
+  /** Uses an invite to join its team; why not, when it cannot. Using it a
+   *  second time, as the person who already did, is a no-op success. */
   acceptInvite(
     token: string,
     userId: string
   ): { ok: true; team: Team } | { ok: false; reason: string } {
+    return this.acceptInviteByHash(hashOf(token), userId);
+  }
+
+  private acceptInviteByHash(
+    hash: string,
+    userId: string
+  ): { ok: true; team: Team } | { ok: false; reason: string } {
     return this.db.transaction(() => {
-      const team = this.inviteTeam(token);
+      const team = this.inviteTeamByHash(hash, userId);
       if (team === null)
         return {
           ok: false as const,
@@ -410,12 +475,58 @@ export class TeamDb {
         };
       this.db
         .query('UPDATE invites SET used_by = ? WHERE token_hash = ?')
-        .run(userId, hashOf(token));
+        .run(userId, hash);
       this.db
         .query(
           "INSERT INTO members (team_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)"
         )
         .run(team.id, userId, this.iso());
+      return { ok: true as const, team };
+    })();
+  }
+
+  /** Records that the person signed in to Linear as a member of `org`, so a
+   *  team linked to that workspace can offer them a Join button. */
+  noteLinearOrg(userId: string, org: { id: string; name: string }): void {
+    this.db
+      .query(
+        `INSERT INTO linear_orgs (user_id, org_id, org_name, seen_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT (user_id, org_id) DO UPDATE SET org_name = excluded.org_name, seen_at = excluded.seen_at`
+      )
+      .run(userId, org.id, org.name, this.iso());
+  }
+
+  /** The Linear workspaces the person was seen in within `withinDays`. */
+  linearOrgsOf(userId: string, withinDays = 30): string[] {
+    return this.db
+      .query<{ org_id: string }, [string, string]>(
+        'SELECT org_id FROM linear_orgs WHERE user_id = ? AND seen_at >= ?'
+      )
+      .all(userId, this.iso(-withinDays * 86_400_000))
+      .map((r) => r.org_id);
+  }
+
+  /** Adds a member without an invite: a person the caller has checked may
+   *  join (a member of the Linear workspace the team is linked to). */
+  addMember(
+    teamId: string,
+    userId: string
+  ): { ok: true; team: Team } | { ok: false; reason: string } {
+    return this.db.transaction(() => {
+      const team = this.team(teamId);
+      if (team === null) return { ok: false as const, reason: 'no such team' };
+      if (this.role(teamId, userId) !== null)
+        return { ok: true as const, team };
+      if (this.members(teamId).length >= FREE_SEATS)
+        return {
+          ok: false as const,
+          reason: `${team.name} has all ${FREE_SEATS} free seats taken`,
+        };
+      this.db
+        .query(
+          "INSERT INTO members (team_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)"
+        )
+        .run(teamId, userId, this.iso());
       return { ok: true as const, team };
     })();
   }
@@ -436,7 +547,10 @@ export class TeamDb {
 
   // ---- device sign-in (RFC 8628) ----
 
-  startDeviceCode(client: string): {
+  startDeviceCode(
+    client: string,
+    invite: string | null = null
+  ): {
     deviceCode: string;
     userCode: string;
     expiresIn: number;
@@ -451,19 +565,24 @@ export class TeamDb {
     }
     this.db
       .query(
-        'INSERT INTO device_codes (device_hash, user_code, client, expires_at) VALUES (?, ?, ?, ?)'
+        'INSERT INTO device_codes (device_hash, user_code, client, expires_at, invite_hash) VALUES (?, ?, ?, ?, ?)'
       )
       .run(
         hashOf(deviceCode),
         userCode,
         client.slice(0, 100),
-        this.iso(DEVICE_CODE_MINUTES * 60_000)
+        this.iso(DEVICE_CODE_MINUTES * 60_000),
+        invite === null ? null : hashOf(invite)
       );
     return { deviceCode, userCode, expiresIn: DEVICE_CODE_MINUTES * 60 };
   }
 
-  /** A pending sign-in by the code its person typed, for the approval page. */
-  pendingDevice(userCode: string): { client: string } | null {
+  /** A pending sign-in by the code its person typed, for the approval page;
+   *  `invite` is the team the sign-in's invite (if any) lets `userId` join. */
+  pendingDevice(
+    userCode: string,
+    userId: string | null = null
+  ): { client: string; invite: Team | null } | null {
     const row = this.db
       .query<
         {
@@ -471,10 +590,11 @@ export class TeamDb {
           expires_at: string;
           user_id: string | null;
           denied: number;
+          invite_hash: string | null;
         },
         [string]
       >(
-        'SELECT client, expires_at, user_id, denied FROM device_codes WHERE user_code = ?'
+        'SELECT client, expires_at, user_id, denied, invite_hash FROM device_codes WHERE user_code = ?'
       )
       .get(normalCode(userCode));
     if (
@@ -484,22 +604,49 @@ export class TeamDb {
       row.denied === 1
     )
       return null;
-    return { client: row.client };
+    return {
+      client: row.client,
+      invite:
+        row.invite_hash === null
+          ? null
+          : this.inviteTeamByHash(row.invite_hash, userId),
+    };
   }
 
-  /** The signed-in person approves a code for one of their teams. */
+  /** The signed-in person approves a code for one of their teams. A code
+   *  that carries an invite to `teamId` joins them to it first, so a
+   *  teammate's one command (`dispatch-mcp join <link>`) and one click in
+   *  the browser both join the team and sign the machine in. */
   approveDevice(userCode: string, userId: string, teamId: string): boolean {
-    if (
-      this.role(teamId, userId) === null ||
-      this.pendingDevice(userCode) === null
-    )
-      return false;
+    return this.approveDeviceFor(userCode, userId, teamId).ok;
+  }
+
+  /** approveDevice, saying why not when it cannot. */
+  approveDeviceFor(
+    userCode: string,
+    userId: string,
+    teamId: string
+  ): { ok: true } | { ok: false; reason: string } {
+    const pending = this.pendingDevice(userCode, userId);
+    if (pending === null)
+      return { ok: false, reason: 'That code is not waiting for a sign-in.' };
+    if (this.role(teamId, userId) === null) {
+      const hash = this.db
+        .query<{ invite_hash: string | null }, [string]>(
+          'SELECT invite_hash FROM device_codes WHERE user_code = ?'
+        )
+        .get(normalCode(userCode))?.invite_hash;
+      if (pending.invite?.id !== teamId || hash == null)
+        return { ok: false, reason: 'You are not in that team.' };
+      const joined = this.acceptInviteByHash(hash, userId);
+      if (!joined.ok) return joined;
+    }
     this.db
       .query(
         'UPDATE device_codes SET user_id = ?, team_id = ? WHERE user_code = ?'
       )
       .run(userId, teamId, normalCode(userCode));
-    return true;
+    return { ok: true };
   }
 
   denyDevice(userCode: string): void {
