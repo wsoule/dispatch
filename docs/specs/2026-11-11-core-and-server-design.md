@@ -41,6 +41,11 @@ design takes its shape and adds the part a team needs.
    run it.
 7. **A rewrite is acceptable**, and the core, server and app may end up in
    separate repositories.
+8. **The core is fully open source**, runner included. Today's daemon is
+   source-available (FSL), so this opens code that was not open before.
+9. **The core is written in Rust.**
+10. **A team hosts its own server or pays about $10 a seat for a hosted one.**
+11. **The sealed relay is retired** once this design covers what it does.
 
 ## The shape
 
@@ -138,10 +143,32 @@ per-project `dispatchd` and the machine hub.
 | `mirror`    | Keeps each machine's sessions and runs readable while it is away      | no      | yes       |
 | `integrate` | Linear and GitHub                                                     | solo    | team      |
 
-`packages/hub` on this branch is a working first version of `home`: the ordered
-log, per-field revs, claims and session leases, with 19 tests. It was written as
-a server-only Elastic-2.0 package. Under this design every core runs it, so its
-place and license change (see "Open decisions").
+`packages/hub` on this branch is a working TypeScript version of `home`: the
+ordered log, per-field revs, claims and session leases, with 19 tests. Under
+decisions 8 and 9 it does not ship. It stays as the reference the Rust `home` is
+written against, and its tests become that module's acceptance tests.
+
+### Rust, and what stays TypeScript
+
+The core binary is Rust: `kernel`, `home`, `link`, `tasks`, `sessions`,
+`messages`, `docs` and `memory`. The server is the same crates plus `identity`
+and `mirror`.
+
+Two things stay TypeScript at first and run as **workers**: separate processes
+that are ordinary clients of the core's API.
+
+- **The runner.** Agents are driven through the Claude Agent SDK, which is
+  published for TypeScript and Python. _Unverified:_ I know of no Rust SDK. A
+  worker also holds the orchestrator's review, verify and merge logic (36,705
+  lines), which is the part most worth porting instead of rewriting.
+- **Integrations.** Linear and GitHub sync are API glue with many edge cases.
+
+This makes the language line the module line: state and order are Rust, things
+that drive an outside program are workers. It has one cost for decision 6: the
+Rust binary alone gives you the board, sessions and messaging, and dispatching
+agents also needs the runner worker installed (a second binary the installer
+fetches, with no app involved). A worker can be rewritten in Rust later without
+touching the core, because it only uses the public API.
 
 ### The API
 
@@ -182,9 +209,13 @@ A holder is a small process that owns one running agent and outlives the core.
 The core restarts or updates, then reattaches. This removes "cannot restart
 while a run is live".
 
-_Unverified, and the riskiest piece in the core:_ runs use the Claude Agent SDK
-inside the daemon today, and I have not established how much of a run's state
-lives in that process. The holder plan needs that answered first.
+With the runner as a worker, the holder is the worker process for one run: it
+owns the agent and reports to the core over the API, so a core restart only
+drops a connection the worker reopens.
+
+_Unverified, and the riskiest piece:_ runs use the Claude Agent SDK inside the
+daemon today, and I have not established how much of a run's state lives in that
+process. The runner plan needs that answered first.
 
 ### Install and state
 
@@ -229,6 +260,27 @@ hosted at app.dispatch.foo or self-hosted.
 - **The Overseer agent comes last.** First the state exists; then an agent with
   read tools over the whole team connects as one more session, running on a
   member's machine with that member's key.
+
+### Hosting
+
+A team either runs the server itself or pays per seat for a hosted one. Both are
+the same binary.
+
+Isolation for hosted teams, in the order to build it:
+
+1. **One database file per team.** A request's team comes from its sign-in, and
+   every query goes through a handle opened on that team's file, so no query can
+   name another team's data. This is cheap and is where hosting starts.
+2. **One encryption key per team** for that file at rest, so a leaked disk or
+   backup does not expose every team.
+3. **A dedicated instance** for a team that asks for it or grows large: its own
+   process and volume. Because hosted and self-hosted are the same binary, this
+   is self-hosting run by us.
+
+The server never runs an agent or a team's code, so the risk to isolate is one
+team reading another's data, not one team's code escaping. Seats are counted by
+the server; billing per seat needs a payment provider and is its own piece of
+work.
 
 ### Who owns what
 
@@ -327,11 +379,12 @@ Source lines, tests excluded.
 | `packages/remote`, `apps/remote-relay`                    | ~2,000  | Kept; the phone link becomes one more binding of the same API          |
 | `apps/desktop`, `packages/ui`, `packages/planning`        | —       | Kept; only the data layer changes                                      |
 
-**Rewrite the spine, port the behavior.** The kernel, `home`, `link` and the
-server are new code. The orchestrator, docs, memory and Linear hold years of
-edge cases and their tests; those are moved behind the new API, not rewritten
-from nothing. herdr-core's "fresh code only" rule suits a 22,000-line runtime,
-not a product this size.
+**Rewrite the state in Rust, port the workers.** Everything that holds or orders
+state is new Rust code, written against today's behavior and tests: the kernel,
+`home`, `link`, tasks, sessions, messages, docs and memory. The orchestrator and
+the integrations move into TypeScript workers with their tests, behind the new
+API. Rows above that say "ported" mean rewritten in Rust for state modules and
+moved for workers.
 
 ## Costs, stated plainly
 
@@ -348,6 +401,13 @@ not a product this size.
 - **The server is a single point of failure for claims and dispatch.**
   Everything else queues.
 - **Holders are new and unproven** for agent runs.
+- **Rust turns most of the port into a rewrite.** Roughly 85,000 lines of
+  TypeScript state logic (the task model, messaging, docs, memory and the
+  daemon's wiring) are rewritten, not moved. I recommended against this for that
+  reason; it is decided, and the worker split above is how the design limits the
+  cost.
+- **Opening the core gives up the FSL protection** on the orchestrator. What is
+  left to sell is the server and hosting.
 
 ## Build order
 
@@ -371,24 +431,32 @@ Phases 3, 5 and 8 can run in parallel once 2 lands.
 
 ## Open decisions
 
-1. **Licenses.** Today the daemon is FSL, the libraries are MIT and the team
-   tier is Elastic-2.0. `home` must be in the core, so it cannot stay
-   Elastic-2.0. Which license does the core repository carry, and is the server
-   the only Elastic-2.0 part?
-2. **Language.** Stay on TypeScript and Bun, compiled to one binary
-   (recommended: the orchestrator and the Claude Agent SDK are TypeScript, and
-   the port depends on keeping them), or move the kernel to Rust as herdr did.
-3. **A2A.** About 23,700 lines serve agent-to-agent links with outside agents
-   and teammates. Keep as a module, or cut for now.
-4. **Run logs on the server.** Stream every entry live (proposed) or upload at
-   the end. Needs a retention default (proposed: 30 days).
-5. **The free tier.** Layer 2 gives one person many machines with no server.
-   What does a small team pay for a hosted one?
-6. **The sealed relay** (`wsoule/dispatch-relay`, not visible from this
-   session). Retired with federation, or kept for something.
-7. **herdr interop.** Emitting herdr's status code (OSC 7501) from Dispatch runs
-   is cheap and makes them show correctly inside herdr. Running Dispatch's
-   terminals on herdr-core itself is a larger question, not proposed here.
+1. **Which open license for the core**: MIT (what the libraries use today) or
+   Apache-2.0 (what the protocol spec and herdr use; it adds a patent grant).
+   And the server: Elastic-2.0 fits "host it yourself or pay us", because it
+   allows self-hosting and forbids reselling it as a service.
+2. **A2A, the bridge to outside agents.** This is not how Dispatch agents talk
+   to each other. That is the `messages` module (the `msg_*` tools, inboxes,
+   channels and gates), which stays and is a main point of the design: any
+   session reaches any other through its core and, across people, the server.
+   A2A is a separate bridge that speaks Google's Agent2Agent protocol, so an
+   agent that does not use Dispatch at all can send work in and get results
+   back. It is about 23,700 lines. The question is only whether that outside
+   bridge is in the first build or added later as a worker.
+3. **Run logs on the server.** A run log is the live transcript of an agent:
+   what it said and each tool it called. The machine running the agent always
+   has it. The question is how a teammate, or you on another machine, sees it:
+   - streamed to the server as it happens, so anyone can watch any run live and
+     it is still there when the laptop sleeps (proposed), or
+   - uploaded once when the run ends, which is cheaper but means no watching.
+     Either way the server needs a rule for how long it keeps them (proposed: 30
+     days), because transcripts are large.
+4. **Showing up inside herdr.** herdr learns whether an agent is working, done
+   or blocked from a short status signal the program prints. If Dispatch's
+   runner prints that signal, a person who runs Dispatch agents inside herdr
+   sees their state in herdr's list for free. It is a few lines and optional.
+5. **Billing.** Which payment provider, and whether self-hosting is free at
+   every size or needs a license key past some number of seats, as today.
 
 ## Taken from herdr-core, and not
 
