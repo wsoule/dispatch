@@ -53,6 +53,7 @@ design takes its shape and adds the part a team needs.
 14. **Run logs stream to the server live** and are kept for 30 days.
 15. **Billing is Stripe, and self-hosting is free at every size.** No license
     key gates a self-hosted server.
+16. **The server is Elastic-2.0.**
 
 ## The shape
 
@@ -439,13 +440,16 @@ Phases 3, 5 and 8 can run in parallel once 2 lands.
 
 ## Open decisions
 
-1. **The server's license.** Proposed and not yet confirmed: Elastic-2.0, which
-   allows self-hosting and forbids reselling the server as a service. With
-   self-hosting free, this is the only thing that protects paid hosting.
-2. **Showing up inside herdr.** herdr learns whether an agent is working, done
-   or blocked from a short status signal the program prints. If Dispatch's
-   runner prints that signal, a person who runs Dispatch agents inside herdr
-   sees their state in herdr's list for free. It is a few lines and optional.
+None. Two smaller points were settled last:
+
+- **The server is Elastic-2.0** (Wyat left the choice open; this is the pick).
+  Anyone may run the server for their own team for free. Nobody may sell it to
+  others as a hosted service. With self-hosting free and no license key, this is
+  what keeps paid hosting ours.
+- **The herdr status signal is not in the first build.** herdr is a separate
+  tool some people run their agents inside. Dispatch could print a short signal
+  so those agents show as working or blocked in herdr's own list. Nothing in
+  Dispatch needs it, so it waits until someone asks.
 
 ## Notes on decided points
 
