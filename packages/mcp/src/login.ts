@@ -123,6 +123,17 @@ export async function startDeviceLogin(
     writePendingCode(started);
   }
   const code = started;
+  // A sign-in another process finishes shows up as a new team file; the
+  // one this machine already had (when switching teams) does not count.
+  const before = readTeamFile()?.token;
+  const finishedElsewhere = (): TeamFile | null => {
+    const joined = readTeamFile();
+    return joined !== null &&
+      joined.server === server &&
+      joined.token !== before
+      ? joined
+      : null;
+  };
   const interval = (code.interval ?? DEFAULT_INTERVAL_SEC) * 1000;
   const deadline = code.expires_at;
   const finish = <T>(result: T): T => {
@@ -135,9 +146,8 @@ export async function startDeviceLogin(
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, interval));
       // Another process polling the same code may have finished first.
-      const joined = readTeamFile();
-      if (joined !== null && joined.server === server)
-        return finish({ ok: true, team: joined });
+      const joined = finishedElsewhere();
+      if (joined !== null) return finish({ ok: true, team: joined });
       let body: {
         error?: string;
         token?: string;
@@ -159,9 +169,8 @@ export async function startDeviceLogin(
       if (body.error === 'authorization_pending') continue;
       if (body.error !== undefined) {
         // The other process may have taken the token and finished.
-        const joined = readTeamFile();
-        if (joined !== null && joined.server === server)
-          return finish({ ok: true, team: joined });
+        const joined = finishedElsewhere();
+        if (joined !== null) return finish({ ok: true, team: joined });
         return finish({
           ok: false,
           error:
@@ -231,34 +240,75 @@ function restartHub(): void {
   }
 }
 
+/** An account-team invite link (`https://<server>/join/<token>`): the team
+ *  service it is on and its secret. A project-team link (`dispatch-team:`,
+ *  dispatch.foo/join#…) is a different kind and is named as such. */
+export function parseJoinLink(
+  link: string
+): { server: string; token: string } | { error: string } {
+  const text = link.trim();
+  if (
+    text.startsWith('dispatch-team:') ||
+    text.startsWith('di1.') ||
+    text.includes('/join#')
+  )
+    return {
+      error:
+        'that is a project-team invite (team.yml); join it from the repo with `dispatch team join`',
+    };
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    return {
+      error: 'expected an invite link like https://app.dispatch.foo/join/…',
+    };
+  }
+  const match = /^\/join\/([\w-]{16,128})\/?$/.exec(url.pathname);
+  const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  if (
+    match === null ||
+    (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback))
+  )
+    return {
+      error: 'expected an invite link like https://app.dispatch.foo/join/…',
+    };
+  return { server: url.origin, token: match[1] ?? '' };
+}
+
 /** Signs this machine in from a terminal: opens the browser at the code,
- *  waits, and says how it went. Already signed in, it says so and stops. */
+ *  waits, and says how it went. Already signed in, it says so and stops,
+ *  unless an invite asks to join (or switch to) a team. */
 export async function interactiveLogin(
-  say: (line: string) => void
+  say: (line: string) => void,
+  join?: { server: string; token: string }
 ): Promise<boolean> {
   const current = readTeamFile();
-  if (current !== null) {
+  if (current !== null && join === undefined) {
     say(`Signed in to ${current.team.name} as ${current.handle}.`);
     return true;
   }
-  const started = await startDeviceLogin();
+  const server = join?.server ?? teamServer();
+  const started = await startDeviceLogin(server, undefined, join?.token);
   if ('error' in started) {
     say(`Could not start signing in: ${started.error}`);
     return false;
   }
   const opened =
-    safeToOpen(started.verificationUriComplete, teamServer()) &&
+    safeToOpen(started.verificationUriComplete, server) &&
     openBrowser(started.verificationUriComplete);
   say(
-    `${opened ? 'Your browser opened' : `Open ${started.verificationUriComplete}`}: confirm the code ${started.userCode} there.`
+    `${opened ? 'Your browser opened' : `Open ${started.verificationUriComplete}`}: confirm the code ${started.userCode} there${join === undefined ? '' : ' (that also joins the team)'}.`
   );
   const result = await started.done;
   if (!result.ok) {
     say(`Not signed in: ${result.error}`);
     return false;
   }
+  if (current !== null && current.team.id !== result.team.team.id)
+    say(`Left ${current.team.name} on this machine.`);
   say(
-    `Signed in to ${result.team.team.name} as ${result.team.handle}. Your agents can reach your teammates' agents now.`
+    `Signed in to ${result.team.team.name} as ${result.team.handle}. Restart open agent sessions (Claude Code, Codex, …) and they can reach your teammates' agents.`
   );
   return true;
 }

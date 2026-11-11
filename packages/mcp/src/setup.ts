@@ -521,3 +521,146 @@ export function openBrowser(url: string): boolean {
     return false;
   }
 }
+
+/** Whether one agent client on this machine can reach Dispatch. */
+export interface ClientHealth {
+  client: string;
+  state: 'connected' | 'not connected' | 'broken';
+  /** Why it is not connected, and what fixes it. */
+  detail?: string;
+}
+
+const RERUN = 'run `npx -y @dispatch-foo/mcp setup`';
+
+// The program a shell command line starts: its first word, unquoted.
+function firstWord(line: string): string {
+  const quoted = /^'((?:[^']|'\\'')*)'/.exec(line);
+  if (quoted !== null) return (quoted[1] ?? '').replaceAll("'\\''", "'");
+  return line.split(' ')[0] ?? '';
+}
+
+// Whether a configured command can start: an absolute path that exists, or
+// a bare name on PATH (npx). A launch whose Node a version manager removed
+// fails here, before every client and hook does.
+function runnable(env: SetupEnv, command: string): boolean {
+  if (command === '') return false;
+  return command.includes('/') || command.includes('\\')
+    ? existsSync(command)
+    : env.has(command);
+}
+
+function entryHealth(
+  client: string,
+  entry: unknown,
+  env: SetupEnv
+): ClientHealth {
+  if (entry === undefined || entry === null)
+    return { client, state: 'not connected', detail: RERUN };
+  const command = (entry as { command?: unknown }).command;
+  if (typeof command !== 'string' || !runnable(env, command))
+    return {
+      client,
+      state: 'broken',
+      detail: `${typeof command === 'string' ? command : 'its command'} no longer exists (was Node upgraded?); ${RERUN}`,
+    };
+  return { client, state: 'connected' };
+}
+
+function jsonServer(path: string, name: string): unknown {
+  const config = readJson(path);
+  if (config === null || config === 'unparseable') return undefined;
+  const servers = config.mcpServers as Record<string, unknown> | undefined;
+  return servers?.[name];
+}
+
+// A TOML basic string's escapes (setup writes JSON.stringify's, a subset).
+function unescapeToml(text: string): string {
+  try {
+    return JSON.parse(`"${text}"`) as string;
+  } catch {
+    return text;
+  }
+}
+
+/** Each agent client found on this machine and whether it reaches Dispatch:
+ *  configured, and with a command that still exists. */
+export function clientHealth(env: SetupEnv): ClientHealth[] {
+  const home = env.home;
+  const out: ClientHealth[] = [];
+  if (env.has('claude') || existsSync(join(home, '.claude'))) {
+    // `claude mcp add -s user` keeps user-scope servers in ~/.claude.json.
+    out.push(
+      entryHealth(
+        'Claude Code',
+        jsonServer(join(home, '.claude.json'), 'dispatch'),
+        env
+      )
+    );
+    const settings = readJson(join(home, '.claude', 'settings.json'));
+    const hooks =
+      settings !== null && settings !== 'unparseable'
+        ? (settings.hooks as Record<string, unknown[]> | undefined)
+        : undefined;
+    const ours = (hooks?.Stop ?? []).find(dispatchEntry) as
+      | { hooks: { command: string }[] }
+      | undefined;
+    const command = ours?.hooks[0]?.command;
+    out.push(
+      command === undefined
+        ? {
+            client: 'Claude Code hooks',
+            state: 'not connected',
+            detail: `idle sessions will not wake for mail; ${RERUN}`,
+          }
+        : entryHealth('Claude Code hooks', { command: firstWord(command) }, env)
+    );
+  }
+  if (env.has('codex') || existsSync(join(home, '.codex'))) {
+    const path = join(home, '.codex', 'config.toml');
+    const table = existsSync(path)
+      ? CODEX_TABLE.exec(readFileSync(path, 'utf8'))
+      : null;
+    const command =
+      table === null
+        ? undefined
+        : /^command\s*=\s*"((?:[^"\\]|\\.)*)"/m.exec(table[0])?.[1];
+    out.push(
+      entryHealth(
+        'Codex',
+        table === null
+          ? undefined
+          : { command: command === undefined ? '' : unescapeToml(command) },
+        env
+      )
+    );
+  }
+  const json: [string, boolean, string, string][] = [
+    [
+      'Cursor',
+      existsSync(join(home, '.cursor')),
+      join(home, '.cursor', 'mcp.json'),
+      'dispatch',
+    ],
+    [
+      'Gemini CLI',
+      env.has('gemini') || existsSync(join(home, '.gemini')),
+      join(home, '.gemini', 'settings.json'),
+      'dispatch',
+    ],
+    [
+      'Claude Desktop',
+      existsSync(dirname(claudeDesktopConfig(env))),
+      claudeDesktopConfig(env),
+      CLAUDE_DESKTOP_SERVER,
+    ],
+    [
+      'Windsurf',
+      existsSync(join(home, '.codeium', 'windsurf')),
+      join(home, '.codeium', 'windsurf', 'mcp_config.json'),
+      'dispatch',
+    ],
+  ];
+  for (const [client, present, path, name] of json)
+    if (present) out.push(entryHealth(client, jsonServer(path, name), env));
+  return out;
+}

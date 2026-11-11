@@ -86,9 +86,20 @@ if (argv[0] === 'hooks') {
 
 // `login` signs this machine in to a team; `setup` first connects every
 // agent client on the machine, then signs in.
-if (argv[0] === 'login' || argv[0] === 'setup') {
-  const { interactiveLogin } = await import('./login.js');
-  if (argv[0] === 'setup') {
+// `join <link>` is setup plus a sign-in that carries the invite, so one
+// approval in the browser joins the team and signs this machine in.
+if (argv[0] === 'login' || argv[0] === 'setup' || argv[0] === 'join') {
+  const { interactiveLogin, parseJoinLink } = await import('./login.js');
+  let join: { server: string; token: string } | undefined;
+  if (argv[0] === 'join') {
+    const parsed = parseJoinLink(argv[1] ?? '');
+    if ('error' in parsed) {
+      console.error(`dispatch-mcp join: ${parsed.error}`);
+      process.exit(1);
+    }
+    join = parsed;
+  }
+  if (argv[0] === 'setup' || argv[0] === 'join') {
     const { connectClients, defaultSetupEnv, installRuntime } =
       await import('./setup.js');
     const setupEnv = defaultSetupEnv();
@@ -112,7 +123,34 @@ if (argv[0] === 'login' || argv[0] === 'setup') {
           : `  ✓  ${r.client}: ${r.status === 'added' ? 'connected' : r.status === 'updated' ? 'updated' : 'already connected'}`
       );
   }
-  process.exit((await interactiveLogin(console.log)) ? 0 : 1);
+  process.exit((await interactiveLogin(console.log, join)) ? 0 : 1);
+}
+
+// `status`: the team this machine is signed in to and whether each agent
+// client can reach Dispatch, with the fix for any that cannot.
+if (argv[0] === 'status') {
+  const { readTeamFile } = await import('./hub/team.js');
+  const { clientHealth, defaultSetupEnv } = await import('./setup.js');
+  const team = readTeamFile();
+  console.log(
+    team === null
+      ? 'Team: not signed in. Agents here reach only each other; run `npx -y @dispatch-foo/mcp login`, or `join <invite link>`.'
+      : `Team: ${team.team.name} as ${team.handle} (${team.server})`
+  );
+  const health = clientHealth(defaultSetupEnv());
+  if (health.length === 0)
+    console.log(
+      'No agent clients found (Claude Code, Codex, Cursor, Gemini CLI, Claude Desktop, Windsurf).'
+    );
+  for (const h of health)
+    console.log(
+      h.state === 'connected'
+        ? `  ✓  ${h.client}: connected`
+        : `  ✗  ${h.client}: ${h.state}${h.detail === undefined ? '' : ` (${h.detail})`}`
+    );
+  process.exit(
+    team !== null && health.every((h) => h.state === 'connected') ? 0 : 1
+  );
 }
 
 if (argv[0] === 'logout') {
