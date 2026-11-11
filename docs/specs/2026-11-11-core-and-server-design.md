@@ -1,8 +1,8 @@
 # Dispatch core and Dispatch server — design
 
-2026-11-11. Status: **draft for discussion.** No code is to be written from this
-until Wyat agrees it; agents build it afterwards, phase by phase. It replaces
-the same day's central-hub draft, whose content is folded in here.
+2026-11-11. Status: **agreed (Wyat, 2026-11-11).** Agents build it phase by
+phase, each phase from its own plan; no plan is written yet. It replaces the
+same day's central-hub draft, whose content is folded in here.
 
 Sections marked _unverified_ rest on a reading of headers, docs and line counts,
 not on a full read of the code.
