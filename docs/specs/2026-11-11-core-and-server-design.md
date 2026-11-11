@@ -46,6 +46,13 @@ design takes its shape and adds the part a team needs.
 9. **The core is written in Rust.**
 10. **A team hosts its own server or pays about $10 a seat for a hosted one.**
 11. **The sealed relay is retired** once this design covers what it does.
+12. **The core is Apache-2.0.**
+13. **A2A comes later.** The bridge to outside agents is not in the first build.
+    It returns as a worker. Messaging between Dispatch agents is in the first
+    build.
+14. **Run logs stream to the server live** and are kept for 30 days.
+15. **Billing is Stripe, and self-hosting is free at every size.** No license
+    key gates a self-hosted server.
 
 ## The shape
 
@@ -279,8 +286,9 @@ Isolation for hosted teams, in the order to build it:
 
 The server never runs an agent or a team's code, so the risk to isolate is one
 team reading another's data, not one team's code escaping. Seats are counted by
-the server; billing per seat needs a payment provider and is its own piece of
-work.
+the server and billed through Stripe for hosted teams. A self-hosted server is
+free at every size, so the license-key check in
+`packages/federation/src/license.ts` goes away with the rest of that package.
 
 ### Who owns what
 
@@ -370,7 +378,7 @@ Source lines, tests excluded.
 | `packages/server/src/messaging`, `packages/protocol`      | ~12,000 | Ported into `messages`; the delivery engine loses its federation hooks |
 | `packages/server/src/docs`, `memory`, `packages/memory`   | ~23,500 | Ported into `docs` and `memory`                                        |
 | `packages/server/src/linear`                              | 10,435  | Ported into `integrate`; the server becomes a team's one Linear writer |
-| `packages/server/src/a2a`, `packages/a2a`                 | ~23,700 | Undecided (see "Open decisions")                                       |
+| `packages/server/src/a2a`, `packages/a2a`                 | ~23,700 | Left out of the first build; returns later as a worker                 |
 | `packages/mcp/src/hub`                                    | 1,634   | Deleted; the core is the machine hub                                   |
 | `packages/mcp`, `packages/cli`                            | ~22,000 | Thinned to clients generated from the method table                     |
 | `packages/core`                                           | 21,309  | Kept; it is the task model and storage the kernel builds on            |
@@ -431,32 +439,25 @@ Phases 3, 5 and 8 can run in parallel once 2 lands.
 
 ## Open decisions
 
-1. **Which open license for the core**: MIT (what the libraries use today) or
-   Apache-2.0 (what the protocol spec and herdr use; it adds a patent grant).
-   And the server: Elastic-2.0 fits "host it yourself or pay us", because it
-   allows self-hosting and forbids reselling it as a service.
-2. **A2A, the bridge to outside agents.** This is not how Dispatch agents talk
-   to each other. That is the `messages` module (the `msg_*` tools, inboxes,
-   channels and gates), which stays and is a main point of the design: any
-   session reaches any other through its core and, across people, the server.
-   A2A is a separate bridge that speaks Google's Agent2Agent protocol, so an
-   agent that does not use Dispatch at all can send work in and get results
-   back. It is about 23,700 lines. The question is only whether that outside
-   bridge is in the first build or added later as a worker.
-3. **Run logs on the server.** A run log is the live transcript of an agent:
-   what it said and each tool it called. The machine running the agent always
-   has it. The question is how a teammate, or you on another machine, sees it:
-   - streamed to the server as it happens, so anyone can watch any run live and
-     it is still there when the laptop sleeps (proposed), or
-   - uploaded once when the run ends, which is cheaper but means no watching.
-     Either way the server needs a rule for how long it keeps them (proposed: 30
-     days), because transcripts are large.
-4. **Showing up inside herdr.** herdr learns whether an agent is working, done
+1. **The server's license.** Proposed and not yet confirmed: Elastic-2.0, which
+   allows self-hosting and forbids reselling the server as a service. With
+   self-hosting free, this is the only thing that protects paid hosting.
+2. **Showing up inside herdr.** herdr learns whether an agent is working, done
    or blocked from a short status signal the program prints. If Dispatch's
    runner prints that signal, a person who runs Dispatch agents inside herdr
    sees their state in herdr's list for free. It is a few lines and optional.
-5. **Billing.** Which payment provider, and whether self-hosting is free at
-   every size or needs a license key past some number of seats, as today.
+
+## Notes on decided points
+
+- **A2A is not how Dispatch agents talk to each other.** That is the `messages`
+  module (the `msg_*` tools, inboxes, channels and gates): any session reaches
+  any other through its core and, across people, the server. A2A is a separate
+  bridge that speaks Google's Agent2Agent protocol, so an agent that does not
+  use Dispatch at all can send work in and get results back.
+- **A run log** is the live transcript of an agent: what it said and each tool
+  it called. The machine running the agent always has it. Streaming it to the
+  server lets anyone on the team watch any run live, and keeps it readable when
+  the laptop sleeps.
 
 ## Taken from herdr-core, and not
 
