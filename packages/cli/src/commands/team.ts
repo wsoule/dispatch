@@ -1,4 +1,5 @@
 import { loadConfig, syncPlace, syncSettings } from '@dispatch-foo/core';
+import { clientHealth, defaultSetupEnv, readTeamFile } from '@dispatch-foo/mcp';
 import { Command, Option } from 'commander';
 import { createInterface } from 'node:readline';
 
@@ -22,6 +23,7 @@ import {
   attachToRunningDaemon,
   optionalAppToken,
 } from './appToken.js';
+import { describeMachine } from './machineTeam.js';
 import { readSecret } from './secret.js';
 
 const TIERS: readonly TeamTier[] = ['request', 'decide', 'operator'];
@@ -504,8 +506,37 @@ function registerTeamEssentials(team: Command, ctx: CliContext): void {
         baseUrl,
         appToken ?? agentToken
       ).getTeamStatus();
-      if (opts.json === true) ctx.log(JSON.stringify(status, null, 2));
-      else for (const line of describeTeamStatus(status)) ctx.log(line);
+      const machine = {
+        team: readTeamFile(),
+        clients: clientHealth(defaultSetupEnv()),
+      };
+      if (opts.json === true)
+        ctx.log(
+          JSON.stringify(
+            {
+              ...status,
+              machine: {
+                team:
+                  machine.team === null
+                    ? null
+                    : {
+                        name: machine.team.team.name,
+                        handle: machine.team.handle,
+                        server: machine.team.server,
+                      },
+                clients: machine.clients,
+              },
+            },
+            null,
+            2
+          )
+        );
+      else
+        for (const line of [
+          ...describeTeamStatus(status),
+          ...describeMachine(machine.team, machine.clients),
+        ])
+          ctx.log(line);
     });
 
   team
