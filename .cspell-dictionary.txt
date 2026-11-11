@@ -242,6 +242,7 @@ healthcheck
 healthz
 hexdigit
 herdr
+herdrdev
 HIDEABLE
 hjkmnp
 hookable
