@@ -382,6 +382,7 @@ oneline
 ONLCR
 opencode
 openharmony
+openrpc
 opping
 organised
 osascript
@@ -516,6 +517,7 @@ Sätteri
 scandir
 scannability
 schedulable
+schemars
 scim
 screenful
 screenshotted

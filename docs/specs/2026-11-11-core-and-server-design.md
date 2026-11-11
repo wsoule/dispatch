@@ -77,6 +77,8 @@ design takes its shape and adds the part a team needs.
     with each agent's CLI.
 27. **Dispatch keeps its own task board** and syncs it with GitHub Issues and
     Linear.
+28. **The core starts in a fresh repository**, `dispatch-core`, not inside this
+    one.
 
 ## The shape
 
@@ -655,12 +657,13 @@ Proposed end state:
 The contract between repositories is the published schema and client package,
 not source imports.
 
-**Recommendation: split last.** "No app download to run the core" is a packaging
-requirement, and a single binary meets it from inside the monorepo. Splitting
-while the API still changes daily turns every change into a publish and three
-pull requests. Build in this repo with the boundaries enforced (a lint that
-forbids imports across the three), and move directories out once the schema has
-gone a few releases without a break. The move is then mechanical.
+**Fresh repositories from the start** (decision 28). An earlier draft said to
+build inside this repo and split last, because the new code would share code
+with the old. It no longer does: the core is a Rust rewrite and nothing carries
+over as code. So `dispatch-core` begins as its own repository, Apache-2.0 from
+its first commit. This repository keeps running and is the reference for
+behavior until the new one replaces it. The server and app repositories are
+created when their phases start.
 
 ## What happens to today's code
 
