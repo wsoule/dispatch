@@ -47,7 +47,7 @@ design takes its shape and adds the part a team needs.
 11. **The sealed relay is retired** once this design covers what it does.
 12. **The core is Apache-2.0.**
 13. **A2A comes later.** The bridge to outside agents is not in the first build.
-    It returns as a worker. Messaging between Dispatch agents is in the first
+    It returns as a module. Messaging between Dispatch agents is in the first
     build.
 14. **Run logs stream to the server live** and are kept for 30 days.
 15. **Billing is Stripe, and self-hosting is free at every size.** No license
@@ -72,6 +72,11 @@ design takes its shape and adds the part a team needs.
     stays as the always-on line and store, and nothing else.
 25. **The server names the lead Overseer.** Every machine can oversee; one at a
     time does it for the team.
+26. **Agents run as their own command-line programs, in terminals the core
+    holds**, the way herdr runs them and the way Dispatch already integrates
+    with each agent's CLI.
+27. **Dispatch keeps its own task board** and syncs it with GitHub Issues and
+    Linear.
 
 ## The shape
 
@@ -156,21 +161,22 @@ per-project `dispatchd` and the machine hub.
 
 ### Modules
 
-| Module      | Does                                                                  | In core | In server |
-| ----------- | --------------------------------------------------------------------- | ------- | --------- |
-| `kernel`    | Method table, schema, event log, subscriptions, storage               | yes     | yes       |
-| `home`      | The rules: per-field revs, appends, creates, claims                   | yes     | no        |
-| `sequence`  | Gives each change its place in line and keeps the log                 | yes     | yes       |
-| `link`      | Connects to a home: snapshot, events, outbox, offline rules           | yes     | accepts   |
-| `keys`      | Team keys, device admission, sealing and opening content              | yes     | no        |
-| `tasks`     | The task model and its views                                          | yes     | no        |
-| `sessions`  | The session registry and reported status                              | yes     | no        |
-| `messages`  | Mail, channels, gates                                                 | yes     | no        |
-| `docs`      | Docs and their revisions                                              | yes     | no        |
-| `memory`    | Memory entries and proposals                                          | yes     | no        |
-| `runner`    | Runs agents in worktrees through holders; review, verify, merge queue | yes     | no        |
-| `identity`  | Accounts, devices, teams, seats, billing                              | no      | yes       |
-| `integrate` | Linear and GitHub                                                     | yes     | no        |
+| Module      | Does                                                         | In core | In server |
+| ----------- | ------------------------------------------------------------ | ------- | --------- |
+| `kernel`    | Method table, schema, event log, subscriptions, storage      | yes     | yes       |
+| `home`      | The rules: per-field revs, appends, creates, claims          | yes     | no        |
+| `sequence`  | Gives each change its place in line and keeps the log        | yes     | yes       |
+| `link`      | Connects to a home: snapshot, events, outbox, offline rules  | yes     | accepts   |
+| `keys`      | Team keys, device admission, sealing and opening content     | yes     | no        |
+| `tasks`     | The task model and its views                                 | yes     | no        |
+| `sessions`  | The session registry and reported status                     | yes     | no        |
+| `terminals` | Holds programs in terminals; attach, read, send              | yes     | no        |
+| `messages`  | Mail, channels, gates                                        | yes     | no        |
+| `docs`      | Docs and their revisions                                     | yes     | no        |
+| `memory`    | Memory entries and proposals                                 | yes     | no        |
+| `runner`    | Starts agent CLIs in worktrees; review, verify, merge queue  | yes     | no        |
+| `identity`  | Accounts, devices, teams, seats, billing                     | no      | yes       |
+| `integrate` | Syncs the board with Linear and GitHub Issues; pull requests | yes     | no        |
 
 The server is small: `kernel`, `sequence` and `identity`. It stores what cores
 send and understands none of it.
@@ -180,38 +186,56 @@ ordered log, per-field revs, claims and session leases, with 19 tests. Under
 decisions 8 and 9 it does not ship. It stays as the reference the Rust `home` is
 written against, and its tests become that module's acceptance tests.
 
-### Rust, and what stays TypeScript
+### How agents run
 
-The core binary is Rust: `kernel`, `home`, `link`, `tasks`, `sessions`,
-`messages`, `docs`, `memory`, `keys` and `sequence`. The server is `kernel` and
-`sequence` plus `identity`.
+Up to the server, the core is meant to feel like herdr-core with a task board:
+it runs programs in terminals, keeps them alive, and lets a person attach and
+take over.
 
-Two things stay TypeScript at first and run as **workers**: separate processes
-that are ordinary clients of the core's API.
+**Every agent is its own CLI, started by the core in a held terminal.** There is
+no agent SDK inside Dispatch. An agent can be started three ways, and all three
+are that agent's own program:
 
-- **The runner.** Agents are driven through the Claude Agent SDK, which is
-  published for TypeScript and Python. _Unverified:_ I know of no Rust SDK. A
-  worker also holds the orchestrator's review, verify and merge logic (36,705
-  lines), which is the part most worth porting instead of rewriting.
-- **Integrations.** Linear and GitHub sync are API glue with many edge cases.
+| Way                  | What the core starts                                    | What Dispatch gets                          |
+| -------------------- | ------------------------------------------------------- | ------------------------------------------- |
+| Interactive          | The agent's normal screen, in a terminal you can attach | A live terminal; status the program reports |
+| The agent's protocol | The same CLI in its machine-readable mode               | Approvals, cost, turns, a session to resume |
+| One-shot             | The CLI's "run this prompt and exit" form               | Output and a diff to review                 |
 
-This makes the language line the module line: state and order are Rust, things
-that drive an outside program are workers. It has one cost for decision 6: the
-Rust binary alone gives you the board, sessions and messaging, and dispatching
-agents also needs the runner worker installed (a second binary the installer
-fetches, with no app involved). A worker can be rewritten in Rust later without
-touching the core, because it only uses the public API.
+This is what Dispatch does today, kept and made uniform:
+
+- **Claude Code and Codex speak a protocol.** Today Dispatch reaches Claude
+  through the Agent SDK, which itself starts the `claude` CLI, and reaches Codex
+  through `codex app-server`. The core starts those same programs and speaks to
+  them directly.
+- **Every other agent runs one-shot** from a preset (`gemini`, `opencode`,
+  `aider`, `goose` and others, in `executors/cliPresets.ts`), with the limits
+  today's code states: no approval gate, no cost reporting, no resumable
+  session.
+- **Hand-driven sessions** still join through the MCP, whether or not the core
+  started their terminal.
+
+_Unverified, and to settle by a spike before the runner is planned:_ that the
+`claude` CLI's machine-readable mode gives everything Dispatch uses the SDK for
+today (approvals at a tool call, hooks, cost, resuming a session). I believe the
+SDK is a wrapper over it and have not confirmed the coverage.
+
+**One binary.** With no SDK there is no reason for a TypeScript part. The whole
+core is Rust: `kernel`, `home`, `link`, `tasks`, `sessions`, `terminals`,
+`runner`, `messages`, `docs`, `memory`, `keys`, `sequence` and `integrate`. The
+server is `kernel` and `sequence` plus `identity`. Installing the core is one
+binary, as decision 6 asks.
 
 ### The API
 
 - **Methods** are JSON-RPC 2.0. One call per line in plain mode, so any language
   can talk to it.
 - **Three bindings of the same method table**: a local socket (Unix socket or
-  named pipe) for the app, the CLI, the MCP and workers; `dispatch connect`,
-  which carries the protocol over stdin and stdout so `ssh box dispatch connect`
-  is a remote core; and a WebSocket over TLS, which is how a core links to the
-  server and how the phone reaches a core through its relay. With a native app
-  and no web dashboard, nothing needs a plain HTTP API.
+  named pipe) for the app, the CLI, and the MCP; `dispatch connect`, which
+  carries the protocol over stdin and stdout so `ssh box dispatch connect` is a
+  remote core; and a WebSocket over TLS, which is how a core links to the server
+  and how the phone reaches a core through its relay. With a native app and no
+  web dashboard, nothing needs a plain HTTP API.
 - **Events**: `subscribe` answers with a snapshot and a sequence number, then
   sends events in order, a heartbeat when quiet, and a `missed` notice when the
   client fell too far behind and must take a fresh snapshot. The docs carry a
@@ -253,10 +277,11 @@ A report can also carry a progress number and a short message.
 
 - **One status, everywhere.** The core's session records, the app and the events
   all use these words. A blocked session names the gate it waits on.
-- **It works with herdr.** The runner prints the signal for every run, and the
-  MCP does for a hand-driven session where the client allows it. A Dispatch
-  agent running inside herdr then shows its state in herdr with no extra setup,
-  and Dispatch reads the same signal from any program that prints it.
+- **It works with herdr.** The core reads the signal from any program in its
+  terminals. For an agent that does not print it, the protocol or the MCP
+  reports the same states, and the core prints the signal on the agent's behalf.
+  A Dispatch agent running inside herdr then shows its state there with no extra
+  setup.
 - **Two more states are observed, never reported**: `stalled` (the core stopped
   hearing from the session) and `ended`. These are Dispatch's own and are not
   sent to herdr.
@@ -264,19 +289,17 @@ A report can also carry a progress number and a short message.
 `packages/hub` uses `working`, `waiting` and `idle` today; the Rust `home` takes
 the words above, with `waiting` becoming `blocked`.
 
-### Holders
+### Holders and terminals
 
-A holder is a small process that owns one running agent and outlives the core.
-The core restarts or updates, then reattaches. This removes "cannot restart
-while a run is live".
+A holder is a small process that owns one terminal and the program in it, and
+outlives the core. The core restarts or updates, then reattaches. This removes
+"cannot restart while a run is live".
 
-With the runner as a worker, the holder is the worker process for one run: it
-owns the agent and reports to the core over the API, so a core restart only
-drops a connection the worker reopens.
-
-_Unverified, and the riskiest piece:_ runs use the Claude Agent SDK inside the
-daemon today, and I have not established how much of a run's state lives in that
-process. The runner plan needs that answered first.
+This is herdr-core's design, taken as it is: a running agent is a program in a
+held terminal, whichever of the three ways started it. A person can list
+terminals, read one without attaching, attach and take over, and detach without
+ending the program. Today's terminal host (`terminalHost.ts`, `terminals.ts`) is
+the starting point for what a holder keeps.
 
 ### Install and state
 
@@ -646,13 +669,13 @@ Source lines, tests excluded.
 | Today                                                     | Lines   | Fate                                                                   |
 | --------------------------------------------------------- | ------- | ---------------------------------------------------------------------- |
 | `packages/server` routes, events, wiring                  | ~29,000 | Rewritten as the kernel and the method table                           |
-| `packages/server/src/orchestrator`                        | 36,705  | Ported into `runner`, behavior and tests kept, behind the new API      |
+| `packages/server/src/orchestrator`                        | 36,705  | Rewritten in Rust as `runner`, with today's tests as the reference     |
 | `packages/server/src/team`, `sync`, `packages/federation` | ~24,000 | Deleted                                                                |
 | `packages/protocol/src/federation`                        | 1,472   | Deleted as code; its key, epoch and sealing design carries into `keys` |
 | `packages/server/src/messaging`, `packages/protocol`      | ~12,000 | Ported into `messages`; the delivery engine loses its federation hooks |
 | `packages/server/src/docs`, `memory`, `packages/memory`   | ~23,500 | Ported into `docs` and `memory`                                        |
-| `packages/server/src/linear`                              | 10,435  | Ported into `integrate`; for a team it runs on one core the team picks |
-| `packages/server/src/a2a`, `packages/a2a`                 | ~23,700 | Left out of the first build; returns later as a worker                 |
+| `packages/server/src/linear`                              | 10,435  | Rewritten as `integrate`; a team runs it on one core it picks          |
+| `packages/server/src/a2a`, `packages/a2a`                 | ~23,700 | Left out of the first build; returns later as a module                 |
 | `packages/mcp/src/hub`                                    | 1,634   | Deleted; the core is the machine hub                                   |
 | `packages/mcp`, `packages/cli`                            | ~22,000 | Thinned to clients generated from the method table                     |
 | `packages/core`                                           | 21,309  | Kept; it is the task model and storage the kernel builds on            |
@@ -661,12 +684,14 @@ Source lines, tests excluded.
 | `packages/remote`, `apps/remote-relay`                    | ~2,000  | Kept; the phone link becomes one more binding of the same API          |
 | `apps/desktop`, `packages/ui`, `packages/planning`        | —       | Replaced by the native app; kept as the reference until then           |
 
-**Rewrite the state in Rust, port the workers.** Everything that holds or orders
-state is new Rust code, written against today's behavior and tests: the kernel,
-`home`, `link`, tasks, sessions, messages, docs and memory. The orchestrator and
-the integrations move into TypeScript workers with their tests, behind the new
-API. Rows above that say "ported" mean rewritten in Rust for state modules and
-moved for workers.
+**Everything is rewritten in Rust.** Today's code and its tests are the
+reference for behavior, not something that is moved. Rows above that say
+"ported" mean rewritten against that reference.
+
+**GitHub Issues sync is new.** Today Dispatch syncs tasks with Linear and works
+with GitHub pull requests; it does not sync GitHub issues. `integrate` adds it
+on the same model as Linear: Dispatch's board is the source, and each side's
+changes are mapped to the other.
 
 ## Costs, stated plainly
 
@@ -694,12 +719,18 @@ moved for workers.
   spec's federation appendix need a breaking version.
 - **The server is a single point of failure for claims and dispatch.**
   Everything else queues.
-- **Holders are new and unproven** for agent runs.
-- **Rust turns most of the port into a rewrite.** Roughly 85,000 lines of
-  TypeScript state logic (the task model, messaging, docs, memory and the
-  daemon's wiring) are rewritten, not moved. I recommended against this for that
-  reason; it is decided, and the worker split above is how the design limits the
-  cost.
+- **Holders are new to Dispatch.** herdr proves the design; Dispatch still has
+  to build it.
+- **Rust makes the whole core a rewrite.** Roughly 130,000 lines of TypeScript
+  (the task model, messaging, docs, memory, the orchestrator, Linear sync and
+  the daemon's wiring) are rewritten, not moved. I recommended against Rust for
+  that reason; it is decided, and one language and one binary is what it buys.
+- **Dropping the SDK means owning the agent protocols.** When the `claude` or
+  `codex` CLI changes its machine-readable mode, Dispatch adapts, where today
+  the SDK absorbs some of that.
+- **A synced board is not fully private.** Tasks a team syncs to GitHub Issues
+  or Linear are readable by those services. The encryption covers what stays in
+  Dispatch.
 - **Opening the core gives up the FSL protection** on the orchestrator. What is
   left to sell is the server and hosting.
 
@@ -708,20 +739,20 @@ moved for workers.
 Each phase is a unit an agent team can take, with a check that says it is done.
 The old daemon and today's app keep running until phase 9.
 
-| #   | Phase                | Done when                                                                                                      | After    |
-| --- | -------------------- | -------------------------------------------------------------------------------------------------------------- | -------- |
-| 1   | Kernel               | A method table yields the socket, stdio and WebSocket bindings, the schema and the only-grows test             | —        |
-| 2   | Home and tasks       | One core per machine serves several projects; the board works through the new API                              | 1        |
-| 3   | Sessions and mail    | The MCP is a client of the core; hand-driven sessions register, report status and message                      | 1        |
-| 4   | Runner               | A dispatched run survives a core restart; review, verify and merge pass the ported tests                       | 2, 3     |
-| 5   | Link                 | Two of your machines share a project over SSH; the offline rules pass with the link cut                        | 2        |
-| 6   | Keys                 | Two devices share a team key through an invite link; a removed device cannot open later changes                | 5        |
-| 7   | Server               | Two people see each other's sessions and cannot both claim a task; the server's files hold no readable content | 6        |
-| 8   | App spike            | A native window lists live sessions from the core, and one JavaScript mod redraws when its file is saved       | 1        |
-| 9   | App core and mods    | The board, task page and sessions list run as native mods; a layout file rearranges the window live            | 2–4, 8   |
-| 10  | Docs, memory, Linear | Ported modules pass their existing tests behind the new API                                                    | 2        |
-| 11  | Teardown and split   | Federation, board sync, the machine hub, the old daemon and the old app are deleted; repositories separate     | 7, 9, 10 |
-| 12  | Overseer agent       | The lead acts once on a stalled task; when its machine drops, the server names another and it takes over       | 7        |
+| #   | Phase               | Done when                                                                                                      | After    |
+| --- | ------------------- | -------------------------------------------------------------------------------------------------------------- | -------- |
+| 1   | Kernel              | A method table yields the socket, stdio and WebSocket bindings, the schema and the only-grows test             | —        |
+| 2   | Home and tasks      | One core per machine serves several projects; the board works through the new API                              | 1        |
+| 3   | Sessions, terminals | A program runs in a held terminal and survives a core restart; you attach, read and send; sessions message     | 1        |
+| 4   | Runner              | A Claude Code run and a Codex run each start from a task, ask for approval, and pass review, verify and merge  | 2, 3     |
+| 5   | Link                | Two of your machines share a project over SSH; the offline rules pass with the link cut                        | 2        |
+| 6   | Keys                | Two devices share a team key through an invite link; a removed device cannot open later changes                | 5        |
+| 7   | Server              | Two people see each other's sessions and cannot both claim a task; the server's files hold no readable content | 6        |
+| 8   | App spike           | A native window lists live sessions from the core, and one JavaScript mod redraws when its file is saved       | 1        |
+| 9   | App core and mods   | The board, task page and sessions list run as native mods; a layout file rearranges the window live            | 2–4, 8   |
+| 10  | Docs, memory, sync  | Docs and memory work; a task changed in Linear or GitHub Issues changes on the board, and the reverse          | 2        |
+| 11  | Teardown and split  | Federation, board sync, the machine hub, the old daemon and the old app are deleted; repositories separate     | 7, 9, 10 |
+| 12  | Overseer agent      | The lead acts once on a stalled task; when its machine drops, the server names another and it takes over       | 7        |
 
 Phases 3, 5 and 10 can run in parallel once 2 lands. The app spike (8) can start
 as soon as the kernel exists, and it decides the toolkit before phase 9 commits
