@@ -58,7 +58,7 @@ Dispatch is open core (`LICENSING.md`) — license is per package, not uniform:
   `packages/protocol`, `packages/memory`, `packages/a2a` are MIT.
 - `packages/protocol-spec` is Apache-2.0: the published protocol text and its
   conformance kit.
-- `packages/federation`, `packages/server/src/team/`,
+- `packages/federation`, `packages/hub`, `packages/server/src/team/`,
   `packages/server/test/team/` and `apps/web` (the hosted service at
   app.dispatch.foo) are Elastic-2.0 (their own `LICENSE` files): the team tier.
   Federation spans three of the four: its wire format and the engine's receive

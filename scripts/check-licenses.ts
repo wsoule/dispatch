@@ -26,6 +26,8 @@ const EXPECTED: Record<string, string> = {
   '@dispatch-foo/a2a': 'MIT',
   // Shared with the relay: log verification and the license check.
   '@dispatch-foo/federation': 'Elastic-2.0',
+  // The team hub's core: the one authority a team's machines sync through.
+  '@dispatch/hub': 'Elastic-2.0',
   // The hosted service at app.dispatch.foo: the team tier.
   '@dispatch/web': 'Elastic-2.0',
   // The daemon is FSL, except its team features (see LICENSED_DIRS).

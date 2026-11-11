@@ -1,0 +1,27 @@
+{
+  "name": "@dispatch/hub",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The team hub's core: one ordered event log per team, with tasks, sessions and claims.",
+  "license": "Elastic-2.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsdown --clean",
+    "test": "bun test",
+    "tsc": "tsgo --noEmit --pretty"
+  },
+  "dependencies": {
+    "@dispatch-foo/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:"
+  }
+}
