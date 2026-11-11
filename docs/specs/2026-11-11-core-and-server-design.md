@@ -70,6 +70,8 @@ design takes its shape and adds the part a team needs.
     invites and billing. Team content is only ever opened by a core.
 24. **Every machine runs the Overseer.** There is no central brain. The server
     stays as the always-on line and store, and nothing else.
+25. **The server names the lead Overseer.** Every machine can oversee; one at a
+    time does it for the team.
 
 ## The shape
 
@@ -341,34 +343,51 @@ machine.
 
 **The agent, on each person's machine.** An agent with read tools over the whole
 team's state, using its operator's own model key. It is the same on every
-machine and differs only in whom it works for.
+machine. What differs is its scope:
 
-| What it does                                               | Needs a turn in line? |
-| ---------------------------------------------------------- | --------------------- |
-| Tells its operator what needs them, across the team        | No. Reading is free.  |
-| Looks after its own machine's sessions                     | No. They are its own. |
-| Changes something shared: reassign, re-queue, split a task | Yes                   |
+| Duty                                                        | Who does it            |
+| ----------------------------------------------------------- | ---------------------- |
+| Tell its operator what needs them, across the team          | Every Overseer         |
+| Look after its own machine's sessions                       | Every Overseer         |
+| Team-wide: notice stalled work, collisions, re-queue, split | The lead Overseer only |
 
-**Why several Overseers do not collide.** Ten machines all see the same stalled
-task. If each acted, the task would be reassigned ten times. So a shared action
-is taken the same way a task is: the Overseer first claims the thing it means to
-act on. The claims land in the line, every core agrees which came first, and the
-rest see that it is handled and do nothing.
+**The server names the lead.** Each core tells the server, in the clear, whether
+its Overseer agent is on and willing to lead. The server picks one of the
+connected, willing machines and writes "the lead is this device" into the line.
+It needs to read nothing to do that; it already knows who is connected.
+
+- **Order of preference.** The team sets it: for example the team's always-on
+  core first, then people in a chosen order. With none set, the server takes the
+  machine that has been connected longest.
+- **Handover.** When the lead goes silent for two minutes, the server names the
+  next and writes that into the line.
+- **Everyone agrees who leads.** The lead is a fact in the line with a sequence
+  number, so every core knows who led at each point. A team-wide action from a
+  machine that was not the lead at that point is refused by the rules, which
+  covers a machine that went offline still believing it led.
+- **No extra power.** The lead reads nothing the others cannot and holds no
+  special key. Leading only means its agent is the one that thinks about
+  team-wide events, so the team pays for that thinking once, not once per
+  machine.
 
 ```text
-t-15's session has been stalled for 20 minutes; three Overseers notice.
+alice's laptop and the team's always-on core are connected; the team prefers the core.
 
-alice's overseer   claim act:t-15   → seq 5001   wins, re-queues t-15
-bob's overseer     claim act:t-15   → seq 5002   refused: alice's overseer has it
-carol's overseer   claim act:t-15   → seq 5003   refused: alice's overseer has it
+server → line   seq 5000  lead = team-core
+t-15 stalls     team-core's Overseer re-queues it; alice's Overseer only tells alice
+team-core drops server → line   seq 5040  lead = alice-mbp
 ```
+
+With one person and several machines, the project's home core does the naming.
+With one machine there is nothing to name.
 
 **What stays human.** Today's gates carry over: an Overseer action that today
 needs a person's approval still asks its own operator first.
 
-**Cost.** Each person's Overseer spends that person's tokens, and several may
-think about the same event before one wins the claim. An operator can turn their
-agent off; the rules layer keeps running.
+**Cost.** Team-wide thinking is spent on the lead's operator's tokens. A team
+that wants that shared runs an always-on core with a team key for the model and
+puts it first. An operator can turn their agent off or decline to lead; the
+rules layer keeps running.
 
 **The server is still needed.** Decentralized here means no machine is in charge
 and none can read more than another. The server remains as the one always-on
@@ -702,7 +721,7 @@ The old daemon and today's app keep running until phase 9.
 | 9   | App core and mods    | The board, task page and sessions list run as native mods; a layout file rearranges the window live            | 2–4, 8   |
 | 10  | Docs, memory, Linear | Ported modules pass their existing tests behind the new API                                                    | 2        |
 | 11  | Teardown and split   | Federation, board sync, the machine hub, the old daemon and the old app are deleted; repositories separate     | 7, 9, 10 |
-| 12  | Overseer agent       | Three machines notice one stalled task and exactly one Overseer acts on it                                     | 7        |
+| 12  | Overseer agent       | The lead acts once on a stalled task; when its machine drops, the server names another and it takes over       | 7        |
 
 Phases 3, 5 and 10 can run in parallel once 2 lands. The app spike (8) can start
 as soon as the kernel exists, and it decides the toolkit before phase 9 commits
