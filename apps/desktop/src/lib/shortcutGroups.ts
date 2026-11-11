@@ -37,7 +37,7 @@ export function buildShortcutGroups(mod: string): ShortcutGroup[] {
       rows: [
         { label: 'Command menu', keys: [mod, 'K'] },
         { label: 'Go to file', keys: [mod, 'P'] },
-        { label: 'New task', keys: ['C'] },
+        { label: 'New issue', keys: ['C'] },
         { label: 'Drop a thought', keys: [mod, 'D'] },
         { label: 'Keyboard shortcuts', keys: ['?'] },
         { label: 'Close / back out', keys: ['Esc'] },

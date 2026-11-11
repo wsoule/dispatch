@@ -126,13 +126,11 @@ describe('WeekView', () => {
     expect(attention.textContent).toContain('1 unassigned');
   });
 
-  test('with nothing dated ahead the deadlines are one line, not four empty buckets', () => {
+  test('with nothing dated ahead there is no deadlines block; the heading says nothing is due', () => {
     mount('human:dev');
-    const deadlines = screen.getByRole('region', {
-      name: 'Upcoming deadlines',
-    });
-    expect(deadlines.textContent).toContain('Nothing due in the next 7 days');
-    expect(deadlines.textContent).not.toContain('Overdue');
+    expect(
+      screen.queryByRole('region', { name: 'Upcoming deadlines' })
+    ).toBeNull();
   });
 
   test('says when the window does not know its person or anyone else', () => {

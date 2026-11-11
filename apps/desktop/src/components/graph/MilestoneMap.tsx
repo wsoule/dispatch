@@ -1360,11 +1360,14 @@ export function MilestoneMapView({
     : prefs.inspector || (inspectorOnSelect && active !== null);
   const summary = !views.includes('milestones')
     ? taskSummary
-    : `${map.nodes.length} ${map.nodes.length === 1 ? unit.one : unit.many} · ${
-        waits === 0
-          ? 'no waits between them'
-          : `${waits} ${waits === 1 ? 'wait' : 'waits'} between them`
-      } · ${landed}/${total} landed`;
+    : [
+        `${map.nodes.length} ${map.nodes.length === 1 ? unit.one : unit.many}`,
+        // "no waits between them" is no news; a count of waits is.
+        ...(waits === 0
+          ? []
+          : [`${waits} ${waits === 1 ? 'wait' : 'waits'} between them`]),
+        `${landed}/${total} landed`,
+      ].join(' · ');
 
   const viewSwitch =
     modes.length > 1 ? (
@@ -1433,13 +1436,13 @@ export function MilestoneMapView({
                 .filter((id) => findableSet.has(id)).length;
               const pressed =
                 active?.kind === 'preset' && active.id === preset.id;
+              // An empty highlight has nothing to show; a pressed one stays so it can be let go.
+              if (count === 0 && !pressed) return null;
               return (
                 <ChipButton
                   key={preset.id}
                   data-testid={`chart-preset-${preset.id}`}
                   selected={pressed}
-                  // A pressed preset stays clickable even once it empties, so it can be let go.
-                  disabled={count === 0 && !pressed}
                   onClick={() => {
                     if (pressed) clear();
                     else showSet({ kind: 'preset', id: preset.id }, view);
@@ -1620,7 +1623,6 @@ export function MilestoneMapView({
                   ? 'Task dependencies'
                   : `${capital(unit.one)} map`
               }
-              zoomHint={embedded ? 'pinch to zoom' : undefined}
             />
           )}
           <div role="status" className={styles.srOnly}>

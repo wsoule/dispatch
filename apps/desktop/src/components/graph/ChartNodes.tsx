@@ -141,8 +141,6 @@ export const MilestoneChartNode = memo(function MilestoneChartNode({
   onOpen: (id: string) => void;
 }) {
   const health = HEALTH[status.health];
-  const pct =
-    status.total === 0 ? 0 : Math.round((status.done / status.total) * 100);
   const finished = status.total > 0 && status.done === status.total;
   return (
     <button
@@ -172,13 +170,13 @@ export const MilestoneChartNode = memo(function MilestoneChartNode({
       <span className={styles.counts}>
         <span>
           <span className={styles.strong}>{status.done}</span>
-          <span className={styles.quiet}>
-            /{status.total} landed · {pct}%
-          </span>
+          <span className={styles.quiet}>/{status.total} landed</span>
         </span>
         <span className={styles.spacer} />
         {CELLS.map((cell) => {
           const n = status[cell.key];
+          // A zero counter is a glyph to decode for nothing: only what is there shows.
+          if (n === 0) return null;
           return (
             <span
               key={cell.key}

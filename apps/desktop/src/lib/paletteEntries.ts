@@ -118,7 +118,7 @@ export function buildPaletteEntries(
     entries.push(
       {
         id: 'action-new-task',
-        label: 'New task',
+        label: 'New issue',
         kind: 'action',
         section: 'actions',
         shortcut: 'C',

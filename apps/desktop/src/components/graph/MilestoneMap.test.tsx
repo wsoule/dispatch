@@ -115,10 +115,13 @@ function showTasks() {
 beforeEach(() => localStorage.clear());
 
 describe('MilestoneMapView milestones', () => {
-  test('a node shows landed over total and the four urgent counts', async () => {
+  test('a node shows landed over total and only the urgent counts it has', async () => {
     mount();
     const checkout = await node('Checkout');
-    expect(checkout.textContent).toContain('1/3 landed · 33%');
+    expect(checkout.textContent).toContain('1/3 landed');
+    expect(checkout.textContent).not.toContain('%');
+    // A zero counter is left out rather than drawn as "◐ 0".
+    expect(within(checkout).queryByTestId('milestone-node-working')).toBeNull();
     expect(
       within(checkout).getByTestId('milestone-node-failed').textContent
     ).toBe('✕ 1');
@@ -460,7 +463,7 @@ describe('MilestoneMapView with live data', () => {
     expect(screen.getByTestId('chart-inspector-overview')).toBeTruthy();
   });
 
-  test('a preset follows the data, and stays pressed (and releasable) once it empties', async () => {
+  test('a preset follows the data, stays pressed (and releasable) once it empties, then hides', async () => {
     remember('tasks');
     const view = live(board());
     await taskNode('a2');
@@ -476,7 +479,8 @@ describe('MilestoneMapView with live data', () => {
     expect(moving.hasAttribute('disabled')).toBe(false);
     expect(inspector().getByText('In progress · 0')).toBeTruthy();
     fireEvent.click(moving);
-    expect(moving.getAttribute('aria-pressed')).toBe('false');
+    // Let go while empty, the chip leaves the toolbar with the other empty ones.
+    expect(screen.queryByTestId('chart-preset-moving')).toBeNull();
     expect(screen.getByTestId('chart-inspector-overview')).toBeTruthy();
   });
 

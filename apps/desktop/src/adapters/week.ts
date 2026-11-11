@@ -76,7 +76,6 @@ export interface WeekPageModel {
   emptyMessage: string;
   deadlines: DeadlineGroup[];
   attention: WeekAttentionItem[];
-  attentionEmpty: string;
 }
 
 export interface WeekPageInput {
@@ -303,7 +302,11 @@ function toTaskGroup(
   };
   return {
     id: milestoneId,
-    eyebrow: section.projectName ?? undefined,
+    // The planner's stand-in lane for milestones outside any project isn't a name to read.
+    eyebrow:
+      section.projectName === null || section.projectName === 'No project'
+        ? undefined
+        : section.projectName,
     title: section.milestoneName ?? 'Untitled milestone',
     href: taskHref(milestoneId),
     status: mark?.status,
@@ -406,16 +409,11 @@ function buildSections(
     (section.thisWeek ? thisWeek : later).push(group);
   }
   if (thisWeek.length + later.length + noMilestone.length === 0) return [];
-  const sections: TaskSectionData[] = [
-    {
-      id: 'this-week',
-      label: 'This week',
-      emptyLabel: copy.isSelf
-        ? 'Nothing of yours is due this week.'
-        : `Nothing of ${copy.name}'s is due this week.`,
-      groups: thisWeek,
-    },
-  ];
+  // An empty This week is already said by the heading's "Nothing due this week".
+  const sections: TaskSectionData[] =
+    thisWeek.length === 0
+      ? []
+      : [{ id: 'this-week', label: 'This week', groups: thisWeek }];
   if (later.length > 0) {
     sections.push({ id: 'later', label: 'Later', groups: later });
   }
@@ -709,33 +707,6 @@ function leadsAnyProject(timeline: TimelineView, userId: string): boolean {
   );
 }
 
-// The empty line, naming inactive projects that were left out so a paused
-// project is not mistaken for one that was missed.
-function attentionEmptyLine(
-  timeline: TimelineView,
-  userId: string,
-  copy: WeekCopy,
-  leadsProjects: boolean
-): string {
-  if (!leadsProjects) {
-    return copy.isSelf
-      ? 'You lead no projects'
-      : `${copy.name} leads no projects`;
-  }
-  const base = copy.isSelf
-    ? 'Nothing needs attention in the projects you lead'
-    : `Nothing needs attention in the projects ${copy.name} leads`;
-  const inactive = timeline.groups.flatMap((group) =>
-    group.lanes
-      .filter((lane) => lane.leadId === userId && !lane.active)
-      .map((lane) => lane.name)
-  );
-  if (inactive.length === 0) return base;
-  return inactive.length === 1
-    ? `${base}. ${inactive[0]} is inactive, so it is left out`
-    : `${base}. ${inactive.length} inactive projects are left out`;
-}
-
 /** Everything the My week page draws, from the two planning views. */
 export function buildWeekPage(input: WeekPageInput): WeekPageModel {
   const { week, timeline } = input;
@@ -788,11 +759,5 @@ export function buildWeekPage(input: WeekPageInput): WeekPageModel {
       : `Nothing assigned to ${week.userName === '' ? 'this person' : week.userName} is open.`,
     deadlines: buildDeadlines(week, timeline, bars),
     attention: buildAttention(timeline, week.userId),
-    attentionEmpty: attentionEmptyLine(
-      timeline,
-      week.userId,
-      copy,
-      leadsProjects
-    ),
   };
 }

@@ -395,7 +395,11 @@ export function toTaskRow(
       out.dueNote = due.note;
     }
   }
-  const chips = rowChips(doc, bucket, ctx, archived);
+  // A chip that repeats the Status column ("Review" beside Review) says nothing new.
+  const state = out.state?.toLowerCase();
+  const chips = rowChips(doc, bucket, ctx, archived).filter(
+    (chip) => chip.label.toLowerCase() !== state
+  );
   if (chips.length > 0) out.chips = chips;
   if (!archived) {
     const saveError = ctx.saveErrorByTaskId?.get(id);
@@ -736,15 +740,19 @@ export function presetTabs(
   counts: TaskStatusCounts,
   extra: PresetTabsExtra
 ): NavTabItem[] {
-  return TASKS_PRESETS.filter(({ id }) => id !== 'needs-you').map(
-    ({ id, label }) => {
-      const item: NavTabItem = { id, label, current: id === extra.current };
-      const count = presetCount(id, counts, extra);
-      if (count !== undefined) item.count = count;
-      if (extra.hrefFor !== undefined) item.href = extra.hrefFor(id);
-      return item;
-    }
-  );
+  const tabs: NavTabItem[] = [];
+  for (const { id, label } of TASKS_PRESETS) {
+    if (id === 'needs-you') continue;
+    const count = presetCount(id, counts, extra);
+    const current = id === extra.current;
+    // An empty preset is a tab with nothing behind it: All and the open one stay.
+    if (count === 0 && id !== 'all' && !current) continue;
+    const item: NavTabItem = { id, label, current };
+    if (count !== undefined) item.count = count;
+    if (extra.hrefFor !== undefined) item.href = extra.hrefFor(id);
+    tabs.push(item);
+  }
+  return tabs;
 }
 
 /** One applied filter as FilterChips draws it, without the callbacks (the

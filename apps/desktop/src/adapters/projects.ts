@@ -173,9 +173,11 @@ function nextMilestone(
     id: bar.milestoneId,
     name: bar.name,
     dueLabel: dueLabel(bar.end, bar.daysLeft, today, bar.status),
-    dueTone: loud
-      ? dueTone(bar.status, bar.daysLeft, bar.end === null)
-      : 'muted',
+    // A missing date is a fact, not an alarm: amber is for due soon or late.
+    dueTone:
+      loud && bar.end !== null
+        ? dueTone(bar.status, bar.daysLeft, false)
+        : 'muted',
     status: mark.status,
     statusLabel: loud ? mark.label : `${mark.label} · inactive project`,
     done: bar.progress.completed,
@@ -284,7 +286,8 @@ export function buildProjectsPage(input: ProjectsPageInput): ProjectsPageModel {
     const synthetic = noProjectId(group.initiativeId);
     const rows = group.lanes
       .filter((lane) => lane.projectId !== synthetic)
-      .map((lane) => toRow(lane, group.name, input));
+      // With no initiatives anywhere, "No initiative" under every name says nothing.
+      .map((lane) => toRow(lane, hasInitiatives ? group.name : '', input));
     if (rows.length === 0) continue;
     groups.push({
       id,
@@ -308,7 +311,7 @@ export function buildProjectsPage(input: ProjectsPageInput): ProjectsPageModel {
     initiatives === 0
       ? plural(rows.length, 'project')
       : `${plural(rows.length, 'project')} in ${plural(initiatives, 'initiative')}`,
-    `${count('at_risk')} at risk`,
+    ...(count('at_risk') > 0 ? [`${count('at_risk')} at risk`] : []),
   ].join(' · ');
   return {
     groups,
@@ -320,4 +323,126 @@ export function buildProjectsPage(input: ProjectsPageInput): ProjectsPageModel {
     total: rows.length,
     receipts,
   };
+}
+
+/* ---- the Initiatives and Milestones levels ------------------------------- */
+
+/** Which list the Projects page shows: the levels above and below a project. */
+export type ProjectsLevel = 'initiatives' | 'projects' | 'milestones';
+
+export interface InitiativeRowModel {
+  id: string;
+  name: string;
+  /** "3 projects". */
+  projects: string;
+  /** Issues landed over issues in scope, across every milestone in it. */
+  done: number;
+  total: number;
+  /** Active milestones overdue or at risk; 0 draws no flag. */
+  atRisk: number;
+  openHref: string;
+  graphHref: string;
+  searchText: string;
+}
+
+export interface MilestoneRowModel {
+  id: string;
+  name: string;
+  project: string;
+  status: UiStatus;
+  statusLabel: string;
+  /** "Nov 22 · in 12 days", "No target date". */
+  dueLabel: string;
+  dueTone: UiTone;
+  done: number;
+  total: number;
+  progressTone: ProgressTone;
+  muted: boolean;
+  openHref: string;
+  searchText: string;
+}
+
+const RISKY: ReadonlySet<string> = new Set(['overdue', 'at_risk']);
+
+/** One row per initiative, rolled up from its projects' milestones. */
+export function buildInitiativeRows(
+  timeline: TimelineView
+): InitiativeRowModel[] {
+  const rows: InitiativeRowModel[] = [];
+  for (const group of timeline.groups) {
+    if (group.initiativeId === null) continue;
+    const lanes = group.lanes.filter(
+      (lane) => lane.projectId !== noProjectId(group.initiativeId)
+    );
+    let done = 0;
+    let total = 0;
+    let atRisk = 0;
+    for (const lane of lanes) {
+      for (const bar of [...lane.bars, ...lane.undated]) {
+        done += bar.progress.completed;
+        total += bar.progress.scope;
+        if (lane.active && RISKY.has(bar.status)) atRisk += 1;
+      }
+    }
+    rows.push({
+      id: group.initiativeId,
+      name: group.name,
+      projects: plural(lanes.length, 'project'),
+      done,
+      total,
+      atRisk,
+      openHref: taskHref(group.initiativeId),
+      graphHref: graphHref(
+        graphScopeFor({ kind: 'initiative', id: group.initiativeId })
+      ),
+      searchText: group.name.toLowerCase(),
+    });
+  }
+  return rows;
+}
+
+/** Every milestone of an open project, soonest first and undated last. */
+export function buildMilestoneRows(
+  timeline: TimelineView
+): MilestoneRowModel[] {
+  const rows: { row: MilestoneRowModel; sortKey: string }[] = [];
+  for (const group of timeline.groups) {
+    for (const lane of group.lanes) {
+      const synthetic = lane.projectId === noProjectId(group.initiativeId);
+      for (const bar of [...lane.bars, ...lane.undated]) {
+        const mark = assessmentMark(bar);
+        const loud = lane.active;
+        rows.push({
+          sortKey: bar.end ?? '9999-99-99',
+          row: {
+            id: bar.milestoneId,
+            name: bar.name,
+            project: synthetic ? '' : lane.name,
+            status: mark.status,
+            statusLabel: loud ? mark.label : `${mark.label} · inactive project`,
+            dueLabel: dueLabel(
+              bar.end,
+              bar.daysLeft,
+              timeline.today,
+              bar.status
+            ),
+            dueTone:
+              loud && bar.end !== null
+                ? dueTone(bar.status, bar.daysLeft, false)
+                : 'muted',
+            done: bar.progress.completed,
+            total: bar.progress.scope,
+            progressTone: progressTone(bar, !loud),
+            muted: !loud,
+            openHref: taskHref(bar.milestoneId),
+            searchText:
+              `${bar.name} ${synthetic ? '' : lane.name}`.toLowerCase(),
+          },
+        });
+      }
+    }
+  }
+  return rows
+    .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
+    .map((entry) => entry.row);
 }

@@ -345,8 +345,12 @@ export function addressLabel(
       const title = lookups.taskTitle(rest);
       return title === null || title === '' ? rest : `${rest} · ${title}`;
     }
-    case 'channel':
-      return `#${rest}`;
+    case 'channel': {
+      // A channel named for an issue ("milestone/e-4a19c2") reads as its title.
+      const slash = rest.lastIndexOf('/');
+      const title = slash < 0 ? null : lookups.taskTitle(rest.slice(slash + 1));
+      return title === null || title === '' ? `#${rest}` : `#${title}`;
+    }
     case 'human':
     case 'agent':
     case 'run':

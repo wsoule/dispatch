@@ -309,7 +309,7 @@ function ComposerPanel({
           .title ?? parent);
   // Drop a thought files nothing as a task: it keeps the old quick capture's own name and
   // its Notes crumb, so a screen reader hears what ⌘D opened.
-  const heading = mode === 'capture' ? 'Quick capture' : 'New task';
+  const heading = mode === 'capture' ? 'Quick capture' : 'New issue';
   const crumbRoot = mode === 'capture' ? 'Notes' : projectName;
 
   let body: ReactNode;

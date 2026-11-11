@@ -509,6 +509,20 @@ export function TimelineChart({
   const [message, setMessage] = useState<LiveMessage | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
 
+  // The default legend keys only the statuses on the chart: six keys for a
+  // chart that shows one of them is reading for nothing.
+  const shownLegend = useMemo(() => {
+    if (legend !== DEFAULT_LEGEND) return legend;
+    const present = new Set<string>();
+    for (const group of groups) {
+      for (const lane of group.lanes) {
+        for (const bar of lane.bars) present.add(bar.status);
+        for (const chip of lane.undated) present.add(chip.status);
+      }
+    }
+    return legend.filter((item) => present.has(item.status));
+  }, [legend, groups]);
+
   // Prop due dates and names by bar id: the base every override is
   // checked against, and the words for the live messages.
   const index = useMemo(() => {
@@ -825,12 +839,14 @@ export function TimelineChart({
           visually hidden rather than an empty bordered row. */}
       <div
         className={
-          legend === false && message === null ? 'srOnly' : styles.legendRow
+          shownLegend === false && message === null
+            ? 'srOnly'
+            : styles.legendRow
         }
       >
-        {legend === false ? null : (
+        {shownLegend === false ? null : (
           <ul className={styles.legend} aria-label="Legend">
-            {legend.map((item) => (
+            {shownLegend.map((item) => (
               <li key={item.status} className={styles.legendItem}>
                 {/* The mark is drawing: the label beside it says it. */}
                 <span className={styles.legendMark} aria-hidden="true">

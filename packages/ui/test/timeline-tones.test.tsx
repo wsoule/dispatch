@@ -318,6 +318,20 @@ const GROUPS: TimelineGroup[] = [
   },
 ];
 
+// The statuses a fixture draws, in the legend's order: the default legend keys only those.
+function legendStatuses(groups: TimelineGroup[]): string[] {
+  const present = new Set<string>();
+  for (const group of groups) {
+    for (const lane of group.lanes) {
+      for (const bar of lane.bars) present.add(bar.status);
+      for (const chip of lane.undated) present.add(chip.status);
+    }
+  }
+  return ['overdue', 'at_risk', 'on_track', 'done', 'missing'].filter((s) =>
+    present.has(s)
+  );
+}
+
 function renderChart(overrides: Partial<TimelineChartProps> = {}) {
   const props: TimelineChartProps = {
     today: '2026-10-21',
@@ -385,12 +399,12 @@ describe('the chart emits its tones', () => {
     expect(paused?.querySelector('header [data-tone]')).toBeNull();
   });
 
-  test('the legend shows the five status marks in order', () => {
+  test('the legend shows the status marks on the chart, in order', () => {
     const { container } = renderChart();
     expect(
       [
         ...container.querySelectorAll('[aria-label="Legend"] [data-status]'),
       ].map((el) => el.getAttribute('data-status'))
-    ).toEqual(['overdue', 'at_risk', 'on_track', 'done', 'missing']);
+    ).toEqual(legendStatuses(GROUPS));
   });
 });

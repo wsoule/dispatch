@@ -122,9 +122,9 @@ function fakeClient(log: FakeLog, refuse: string[] = []): ApiClient {
   } as unknown as ApiClient;
 }
 
-function planningInput(): PlanningInput {
+function planningInput(tasks: TaskListItem[] = fixture()): PlanningInput {
   return {
-    tasks: fixture(),
+    tasks,
     config: null,
     people: [{ ref: 'human:ana', name: 'Ana' }],
     executors: null,
@@ -142,7 +142,11 @@ function Host({ data }: { data: DispatchProjectData }) {
   );
 }
 
-function mount(log: FakeLog, tier: 'operator' | 'request' = 'operator') {
+function mount(
+  log: FakeLog,
+  tier: 'operator' | 'request' = 'operator',
+  tasks: TaskListItem[] = fixture()
+) {
   const data = {
     client: fakeClient(log),
     myTier: tier,
@@ -150,7 +154,7 @@ function mount(log: FakeLog, tier: 'operator' | 'request' = 'operator') {
   return render(
     <QueryClientProvider client={new QueryClient()}>
       <ToastProvider>
-        <PlanningProvider data={planningInput()}>
+        <PlanningProvider data={planningInput(tasks)}>
           <Host data={data} />
         </PlanningProvider>
       </ToastProvider>
@@ -163,6 +167,20 @@ function newLog(): FakeLog {
 }
 
 describe('AssignMilestones', () => {
+  test('with nothing to assign there is no button', () => {
+    // Only the lead-less project: every candidate is skipped, so nothing assigns.
+    mount(
+      newLog(),
+      'operator',
+      fixture().filter(
+        (t) => t.meta.id !== 'p-store' && t.meta.parent !== 'p-store'
+      )
+    );
+    expect(
+      screen.queryByRole('button', { name: /^Assign next milestones/ })
+    ).toBeNull();
+  });
+
   test('the button previews the count; the dialog lists what is assigned and what is skipped', () => {
     mount(newLog());
     fireEvent.click(

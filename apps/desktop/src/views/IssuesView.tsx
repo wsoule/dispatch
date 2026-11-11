@@ -585,7 +585,7 @@ export function IssuesView({
                 icon={<Plus {...ICON} />}
                 onClick={onNewTask}
               >
-                New task
+                New issue
               </Button>
             }
           />

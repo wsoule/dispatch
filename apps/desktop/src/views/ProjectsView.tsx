@@ -12,17 +12,22 @@ import {
   Tooltip,
   ViewToolbar,
 } from '@dispatch/ui';
-import { ArrowUpRight, ListTodo, Network } from 'lucide-react';
+import { CalendarRange, ListTodo, Network } from 'lucide-react';
 import { memo, useMemo, useRef, useState } from 'react';
 
 import { plural } from '../adapters/planningFormat';
 import {
+  buildInitiativeRows,
+  buildMilestoneRows,
   buildProjectsPage,
   countProjectRows,
   filterProjectGroups,
+  type InitiativeRowModel,
+  type MilestoneRowModel,
   parseProjectFilter,
   type ProjectFilterId,
   type ProjectRowModel,
+  type ProjectsLevel,
 } from '../adapters/projects';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { useShellActions } from '../components/shell/ShellActionsContext';
@@ -67,6 +72,46 @@ const HEADER = [
   { id: 'links', label: 'Links', align: 'end' as const },
 ];
 
+// The page's three levels: what sits above a project, the projects, what sits below.
+const LEVELS: { id: ProjectsLevel; label: string }[] = [
+  { id: 'initiatives', label: 'Initiatives' },
+  { id: 'projects', label: 'Projects' },
+  { id: 'milestones', label: 'Milestones' },
+];
+const LEVEL_TITLE: Record<ProjectsLevel, string> = {
+  initiatives: 'Initiatives',
+  projects: 'Projects',
+  milestones: 'Milestones',
+};
+const LEVEL_KIND: Record<
+  ProjectsLevel,
+  'initiative' | 'project' | 'milestone'
+> = { initiatives: 'initiative', projects: 'project', milestones: 'milestone' };
+const LEVEL_NEW: Record<ProjectsLevel, string> = {
+  initiatives: 'New initiative',
+  projects: 'New project',
+  milestones: 'New milestone',
+};
+
+function parseLevel(value: unknown): ProjectsLevel {
+  return value === 'initiatives' || value === 'milestones' ? value : 'projects';
+}
+
+const INITIATIVE_COLUMNS = 'minmax(180px, 1.6fr) minmax(120px, 1fr) 96px 40px';
+const INITIATIVE_HEADER = [
+  { id: 'name', label: 'Initiative' },
+  { id: 'progress', label: 'Progress' },
+  { id: 'risk', label: '' },
+  { id: 'links', label: '', align: 'end' as const },
+];
+const MILESTONE_COLUMNS =
+  'minmax(180px, 1.6fr) minmax(130px, 1fr) minmax(110px, 1fr)';
+const MILESTONE_HEADER = [
+  { id: 'name', label: 'Milestone' },
+  { id: 'target', label: 'Target' },
+  { id: 'progress', label: 'Progress' },
+];
+
 export interface ProjectsViewProps {
   data: DispatchProjectData;
 }
@@ -106,6 +151,15 @@ function ProjectsLoaded({
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<ProjectFilterId>('all');
   const searchRef = useRef<HTMLInputElement>(null);
+  const [level, setLevel] = useState<ProjectsLevel>('projects');
+  const initiatives = useMemo(
+    () => buildInitiativeRows(planning.timeline),
+    [planning]
+  );
+  const milestones = useMemo(
+    () => buildMilestoneRows(planning.timeline),
+    [planning]
+  );
 
   // The page model is rebuilt only with the planning: typing in the search
   // never rebuilds the rows.
@@ -136,106 +190,148 @@ function ProjectsLoaded({
   return (
     <div className={styles.root} data-testid="projects-view">
       <header className={styles.head}>
-        <h1 className={styles.title}>Projects</h1>
-        <p className={styles.receipts}>{page.receipts}</p>
-        {page.total > 0 ? (
-          <span className={styles.headActions}>
+        <h1 className={styles.title}>{LEVEL_TITLE[level]}</h1>
+        <p className={styles.receipts}>
+          {level === 'projects'
+            ? page.receipts
+            : level === 'initiatives'
+              ? plural(initiatives.length, 'initiative')
+              : plural(milestones.length, 'milestone')}
+        </p>
+        <span className={styles.headActions}>
+          {/* Initiatives shows once there are some: an empty level is a tab to nothing. */}
+          <SegmentedControl
+            label="Level"
+            size="sm"
+            options={LEVELS.filter(
+              (option) =>
+                option.id !== 'initiatives' ||
+                initiatives.length > 0 ||
+                level === 'initiatives'
+            )}
+            value={level}
+            onChange={(id) => setLevel(parseLevel(id))}
+          />
+          {level === 'projects' && page.total > 0 && (
             <AssignMilestones data={data} planning={planning} />
-            <Button size="sm" onClick={newProject}>
-              New project
+          )}
+          {/* With no projects the empty state offers New project itself. */}
+          {(level !== 'projects' || page.total > 0) && (
+            <Button
+              size="sm"
+              onClick={() => shell.openCreateTask({ kind: LEVEL_KIND[level] })}
+            >
+              {LEVEL_NEW[level]}
             </Button>
-          </span>
-        ) : null}
+          )}
+        </span>
       </header>
 
-      {page.total === 0 ? (
-        <EmptyState
-          label="No projects yet"
-          action={
-            <Button variant="primary" size="sm" onClick={newProject}>
-              New project
-            </Button>
-          }
-        >
-          Initiatives, projects and milestones, made here or synced from Linear,
-          are listed here with their next milestone, lead and what the agents
-          are doing.
-        </EmptyState>
+      {level === 'initiatives' ? (
+        <InitiativesList rows={initiatives} query={query} onQuery={setQuery} />
+      ) : level === 'milestones' ? (
+        <MilestonesList rows={milestones} query={query} onQuery={setQuery} />
       ) : (
         <>
-          <ViewToolbar
-            label="Project view options"
-            search={{
-              value: query,
-              onChange: setQuery,
-              placeholder: 'Search projects',
-              label: 'Search projects',
-              inputRef: searchRef,
-            }}
-            controls={
-              <SegmentedControl
-                label="Project status"
-                options={page.filters}
-                value={filter}
-                onChange={(id) => setFilter(parseProjectFilter(id))}
-                size="sm"
-              />
-            }
-            end={
-              <p className={styles.count} aria-live="polite">
-                {narrowed
-                  ? `${shownCount} of ${plural(page.total, 'project')}`
-                  : plural(page.total, 'project')}
-              </p>
-            }
-          />
-          {shown.length === 0 ? (
+          {page.total === 0 ? (
             <EmptyState
+              label="No projects yet"
               action={
-                <Button size="sm" onClick={showAll}>
-                  Show all projects
+                <Button variant="primary" size="sm" onClick={newProject}>
+                  New project
                 </Button>
               }
             >
-              No projects match
-              {query.trim() === '' ? ' this filter' : ` "${query.trim()}"`}
+              Initiatives, projects and milestones, made here or synced from
+              Linear, are listed here with their next milestone, lead and what
+              the agents are doing.
             </EmptyState>
           ) : (
-            shown.map((group) => (
-              <section
-                key={group.id}
-                className={styles.group}
-                aria-label={group.name}
-              >
-                {group.headless ? null : (
-                  <BlockBar
-                    title={group.name}
-                    meta={plural(group.rows.length, 'project')}
-                  >
-                    <Button
-                      href={group.graphHref}
-                      variant="quiet"
-                      size="sm"
-                      icon={<Network {...ICON} />}
-                      aria-label={`Dependency graph of ${group.name}`}
-                    >
-                      Graph
+            <>
+              <ViewToolbar
+                label="Project view options"
+                search={{
+                  value: query,
+                  onChange: setQuery,
+                  placeholder: 'Search projects',
+                  label: 'Search projects',
+                  inputRef: searchRef,
+                }}
+                controls={
+                  <SegmentedControl
+                    label="Project status"
+                    // An empty filter is a tab with nothing behind it; All and the open one stay.
+                    options={page.filters.filter(
+                      (option) =>
+                        option.count > 0 ||
+                        option.id === 'all' ||
+                        option.id === filter
+                    )}
+                    value={filter}
+                    onChange={(id) => setFilter(parseProjectFilter(id))}
+                    size="sm"
+                  />
+                }
+                // The header already counts them; the toolbar says so only when narrowed.
+                end={
+                  narrowed ? (
+                    <p className={styles.count} aria-live="polite">
+                      {`${shownCount} of ${plural(page.total, 'project')}`}
+                    </p>
+                  ) : undefined
+                }
+              />
+              {shown.length === 0 ? (
+                <EmptyState
+                  action={
+                    <Button size="sm" onClick={showAll}>
+                      Show all projects
                     </Button>
-                  </BlockBar>
-                )}
-                <Register
-                  label={group.headless ? 'Projects' : `${group.name} projects`}
-                  columns={COLUMNS}
-                  header={HEADER}
-                  stackWithin={900}
-                  stackedColumns={STACKED_COLUMNS}
+                  }
                 >
-                  {group.rows.map((row) => (
-                    <ProjectRow key={row.id} row={row} />
-                  ))}
-                </Register>
-              </section>
-            ))
+                  No projects match
+                  {query.trim() === '' ? ' this filter' : ` "${query.trim()}"`}
+                </EmptyState>
+              ) : (
+                shown.map((group) => (
+                  <section
+                    key={group.id}
+                    className={styles.group}
+                    aria-label={group.name}
+                  >
+                    {group.headless ? null : (
+                      <BlockBar
+                        title={group.name}
+                        meta={plural(group.rows.length, 'project')}
+                      >
+                        <Button
+                          href={group.graphHref}
+                          variant="quiet"
+                          size="sm"
+                          icon={<Network {...ICON} />}
+                          aria-label={`Dependency graph of ${group.name}`}
+                        >
+                          Graph
+                        </Button>
+                      </BlockBar>
+                    )}
+                    <Register
+                      label={
+                        group.headless ? 'Projects' : `${group.name} projects`
+                      }
+                      columns={COLUMNS}
+                      header={HEADER}
+                      stackWithin={900}
+                      stackedColumns={STACKED_COLUMNS}
+                    >
+                      {group.rows.map((row) => (
+                        <ProjectRow key={row.id} row={row} />
+                      ))}
+                    </Register>
+                  </section>
+                ))
+              )}
+            </>
           )}
         </>
       )}
@@ -249,11 +345,13 @@ const ProjectRow = memo(function ProjectRow({ row }: { row: ProjectRowModel }) {
   const { next } = row;
   return (
     <RegisterRow
-      href={row.timelineHref}
-      rowLabel={`${row.name} on the timeline`}
+      // The row opens the project, as every other list's row opens its item.
+      href={row.openHref}
+      rowLabel={`Open ${row.name}`}
       tone={row.rowTone}
     >
-      <RegisterCell label="Project" variant="name" sub={row.initiative}>
+      {/* The initiative is the group's heading, so the row doesn't repeat it. */}
+      <RegisterCell label="Project" variant="name">
         {row.name}
       </RegisterCell>
       {/* An inactive project's status is muted (no status hue in the row)
@@ -306,7 +404,7 @@ const ProjectRow = memo(function ProjectRow({ row }: { row: ProjectRowModel }) {
       <RegisterCell
         label="Lead"
         variant={row.lead === null ? 'mono' : 'value'}
-        tone={row.lead !== null ? 'default' : row.active ? 'warning' : 'muted'}
+        tone={row.lead === null ? 'muted' : 'default'}
       >
         {row.lead ?? 'No lead'}
       </RegisterCell>
@@ -330,13 +428,13 @@ const ProjectRow = memo(function ProjectRow({ row }: { row: ProjectRowModel }) {
               aria-label={`Graph of ${row.name}`}
             />
           </Tooltip>
-          <Tooltip content="Open project">
+          <Tooltip content="Timeline">
             <Button
-              href={row.openHref}
+              href={row.timelineHref}
               variant="quiet"
               size="sm"
-              icon={<ArrowUpRight {...ICON} />}
-              aria-label={`Open ${row.name}`}
+              icon={<CalendarRange {...ICON} />}
+              aria-label={`${row.name} on the timeline`}
             />
           </Tooltip>
         </span>
@@ -344,3 +442,183 @@ const ProjectRow = memo(function ProjectRow({ row }: { row: ProjectRowModel }) {
     </RegisterRow>
   );
 });
+
+// The search box shared by the Initiatives and Milestones levels.
+function LevelSearch({
+  query,
+  onQuery,
+  noun,
+}: {
+  query: string;
+  onQuery: (value: string) => void;
+  noun: string;
+}) {
+  return (
+    <ViewToolbar
+      label={`${noun} view options`}
+      search={{
+        value: query,
+        onChange: onQuery,
+        placeholder: `Search ${noun.toLowerCase()}`,
+        label: `Search ${noun.toLowerCase()}`,
+      }}
+      controls={null}
+    />
+  );
+}
+
+function matches(text: string, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  return q === '' || text.includes(q);
+}
+
+/** The initiatives, each with its projects and the issues landed across them. */
+function InitiativesList({
+  rows,
+  query,
+  onQuery,
+}: {
+  rows: readonly InitiativeRowModel[];
+  query: string;
+  onQuery: (value: string) => void;
+}) {
+  if (rows.length === 0) {
+    return (
+      <EmptyState label="No initiatives yet">
+        An initiative groups projects toward one goal.
+      </EmptyState>
+    );
+  }
+  const shown = rows.filter((row) => matches(row.searchText, query));
+  return (
+    <>
+      <LevelSearch query={query} onQuery={onQuery} noun="Initiatives" />
+      {shown.length === 0 ? (
+        <EmptyState>No initiatives match "{query.trim()}"</EmptyState>
+      ) : (
+        <Register
+          label="Initiatives"
+          columns={INITIATIVE_COLUMNS}
+          header={INITIATIVE_HEADER}
+          stackWithin={600}
+          stackedColumns={STACKED_COLUMNS}
+        >
+          {shown.map((row) => (
+            <RegisterRow
+              key={row.id}
+              href={row.openHref}
+              rowLabel={`Open ${row.name}`}
+            >
+              <RegisterCell
+                label="Initiative"
+                variant="name"
+                sub={row.projects}
+              >
+                {row.name}
+              </RegisterCell>
+              <RegisterCell label="Progress">
+                <ProgressRule
+                  done={row.done}
+                  total={row.total}
+                  aria-label={`${row.name} progress`}
+                />
+              </RegisterCell>
+              <RegisterCell label="Risk">
+                {row.atRisk > 0 ? (
+                  <Chip tone="warning">{row.atRisk} at risk</Chip>
+                ) : null}
+              </RegisterCell>
+              <RegisterCell align="end">
+                <Tooltip content="Dependency graph">
+                  <Button
+                    href={row.graphHref}
+                    variant="quiet"
+                    size="sm"
+                    icon={<Network {...ICON} />}
+                    aria-label={`Graph of ${row.name}`}
+                  />
+                </Tooltip>
+              </RegisterCell>
+            </RegisterRow>
+          ))}
+        </Register>
+      )}
+    </>
+  );
+}
+
+/** Every milestone of the open projects, soonest first, undated last. */
+function MilestonesList({
+  rows,
+  query,
+  onQuery,
+}: {
+  rows: readonly MilestoneRowModel[];
+  query: string;
+  onQuery: (value: string) => void;
+}) {
+  if (rows.length === 0) {
+    return (
+      <EmptyState label="No milestones yet">
+        A milestone is a dated step of a project.
+      </EmptyState>
+    );
+  }
+  const shown = rows.filter((row) => matches(row.searchText, query));
+  return (
+    <>
+      <LevelSearch query={query} onQuery={onQuery} noun="Milestones" />
+      {shown.length === 0 ? (
+        <EmptyState>No milestones match "{query.trim()}"</EmptyState>
+      ) : (
+        <Register
+          label="Milestones"
+          columns={MILESTONE_COLUMNS}
+          header={MILESTONE_HEADER}
+          stackWithin={600}
+          stackedColumns={STACKED_COLUMNS}
+        >
+          {shown.map((row) => (
+            <RegisterRow
+              key={row.id}
+              href={row.openHref}
+              rowLabel={`Open ${row.name}`}
+            >
+              <RegisterCell
+                label="Milestone"
+                variant="name"
+                sub={row.project === '' ? undefined : row.project}
+              >
+                <span className={styles.milestone}>
+                  <StatusMark
+                    status={row.status}
+                    label={row.statusLabel}
+                    muted={row.muted}
+                  />
+                  <span className={styles.milestoneName}>{row.name}</span>
+                </span>
+              </RegisterCell>
+              <RegisterCell label="Target">
+                {row.dueTone === 'default' || row.dueTone === 'muted' ? (
+                  row.dueLabel
+                ) : (
+                  <span className={styles.toneText} data-tone={row.dueTone}>
+                    {row.dueLabel}
+                  </span>
+                )}
+              </RegisterCell>
+              <RegisterCell label="Progress">
+                <ProgressRule
+                  done={row.done}
+                  total={row.total}
+                  tone={row.progressTone}
+                  aria-label={`${row.name} progress`}
+                />
+              </RegisterCell>
+            </RegisterRow>
+          ))}
+        </Register>
+      )}
+    </>
+  );
+}

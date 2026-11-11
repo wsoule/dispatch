@@ -232,10 +232,6 @@
   align-items: center;
 }
 
-.legendHint {
-  color: var(--text-3);
-}
-
 .message {
   position: absolute;
   inset: 0;

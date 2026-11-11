@@ -664,7 +664,9 @@ test('a project with no tasks says so instead of blaming a filter', () => {
 
 test('the + on a group pre-fills the creator with its container', () => {
   const { log } = mount();
-  fireEvent.click(screen.getByRole('button', { name: 'New task in Payments' }));
+  fireEvent.click(
+    screen.getByRole('button', { name: 'New issue in Payments' })
+  );
   expect(log.presets).toEqual([{ milestone: 'e-1' }]);
 });
 

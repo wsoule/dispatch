@@ -201,12 +201,12 @@ function mount(options: MountOptions = {}) {
 /** The rows on screen, by their accessible row link name. */
 function rowNames(): string[] {
   return screen
-    .getAllByRole('link', { name: / on the timeline$/ })
+    .getAllByRole('link', { name: /^Open / })
     .map((link) => link.getAttribute('aria-label') ?? '');
 }
 
 function row(name: string): HTMLElement {
-  const link = screen.getByRole('link', { name: `${name} on the timeline` });
+  const link = screen.getByRole('link', { name: `Open ${name}` });
   const item = link.closest('li');
   if (item === null) throw new Error(`no row for ${name}`);
   return item;
@@ -221,10 +221,10 @@ describe('ProjectsView', () => {
       .map((section) => section.getAttribute('aria-label'));
     expect(groups).toEqual(['Growth', 'No initiative']);
     expect(rowNames()).toEqual([
-      'Storefront on the timeline',
-      'Search on the timeline',
-      'Loose ends on the timeline',
-      'Archive on the timeline',
+      'Open Storefront',
+      'Open Search',
+      'Open Loose ends',
+      'Open Archive',
     ]);
     expect(
       screen.getByText('4 projects in 1 initiative · 1 at risk')
@@ -251,7 +251,8 @@ describe('ProjectsView', () => {
     expect(status.closest('[data-tone]')?.getAttribute('data-tone')).toBe(
       'info'
     );
-    expect(within(store).getByText('Growth')).toBeTruthy();
+    // The initiative is the group's heading, not a line under the name.
+    expect(within(store).queryByText('Growth')).toBeNull();
     expect(within(store).getByText('Beta')).toBeTruthy();
     expect(within(store).getByRole('img', { name: 'On track' })).toBeTruthy();
     expect(
@@ -268,9 +269,10 @@ describe('ProjectsView', () => {
     expect(search.getAttribute('data-tone')).toBe('warning');
     expect(within(search).getByRole('img', { name: 'Overdue' })).toBeTruthy();
     expect(within(search).getByText(/days overdue$/)).toBeTruthy();
+    // "No lead" is quiet: the row's own tone and the filter carry the warning.
     const noLead = within(search).getByText('No lead');
     expect(noLead.closest('[data-tone]')?.getAttribute('data-tone')).toBe(
-      'warning'
+      'muted'
     );
     expect(within(search).queryByText('Project has no lead')).toBeNull();
 
@@ -352,25 +354,41 @@ describe('ProjectsView', () => {
         .getAllByRole('radio')
         .map((option) => option.textContent)
     ).toEqual(['All4', 'Blocked1', 'At risk1', 'Inactive1']);
-    expect(screen.getByText('4 projects')).toBeTruthy();
+    // With no filter or search, the header carries the count; the toolbar adds none.
+    expect(screen.queryByText('4 projects')).toBeNull();
 
     fireEvent.click(within(filters).getByRole('radio', { name: /Blocked/ }));
-    expect(rowNames()).toEqual(['Search on the timeline']);
+    expect(rowNames()).toEqual(['Open Search']);
     expect(screen.getByText('1 of 4 projects')).toBeTruthy();
     // Groups left empty are gone with their rows.
     expect(screen.queryByRole('region', { name: 'No initiative' })).toBeNull();
 
     fireEvent.click(within(filters).getByRole('radio', { name: /Inactive/ }));
-    expect(rowNames()).toEqual(['Archive on the timeline']);
+    expect(rowNames()).toEqual(['Open Archive']);
 
     fireEvent.click(within(filters).getByRole('radio', { name: /All/ }));
     const search = screen.getByRole('searchbox', { name: 'Search projects' });
     fireEvent.change(search, { target: { value: 'dev' } });
-    expect(rowNames()).toEqual([
-      'Loose ends on the timeline',
-      'Archive on the timeline',
-    ]);
+    expect(rowNames()).toEqual(['Open Loose ends', 'Open Archive']);
     expect(screen.getByText('2 of 4 projects')).toBeTruthy();
+  });
+
+  test('the level switch shows initiatives and milestones in place of projects', () => {
+    mount();
+    const levels = screen.getByRole('radiogroup', { name: 'Level' });
+    fireEvent.click(within(levels).getByRole('radio', { name: 'Initiatives' }));
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Initiatives' })
+    ).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open Growth' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'New initiative' })).toBeTruthy();
+
+    fireEvent.click(within(levels).getByRole('radio', { name: 'Milestones' }));
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Milestones' })
+    ).toBeTruthy();
+    expect(screen.getByRole('list', { name: 'Milestones' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'New milestone' })).toBeTruthy();
   });
 
   test('no match offers Show all, which clears the search and the filter', () => {

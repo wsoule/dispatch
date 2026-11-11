@@ -145,7 +145,7 @@ export function MilestoneLaneHeader({
       collapsed={!expanded}
       onToggle={onToggle}
       onAdd={onAdd}
-      addLabel={`New task in ${title}`}
+      addLabel={`New issue in ${title}`}
       actions={
         milestone !== null && (
           <FanoutControls

@@ -566,9 +566,17 @@ describe('addressLabel', () => {
     expect(addressLabel('human:wyat', lookups)).toBe('wyat');
     expect(addressLabel('agent:wyat/claude', lookups)).toBe('wyat/claude');
     expect(addressLabel('run:r-9f2c01', lookups)).toBe('r-9f2c01');
+    // A channel named for an issue the window does not know keeps its name.
     expect(addressLabel('channel:milestone/e-c25f9c', lookups)).toBe(
       '#milestone/e-c25f9c'
     );
+  });
+
+  test('a channel named for a known issue reads as its title', () => {
+    expect(addressLabel('channel:milestone/t-1a2b', lookups)).toBe(
+      '#Export pipeline'
+    );
+    expect(addressLabel('channel:release', lookups)).toBe('#release');
   });
 
   test('shows an unrecognized address as written', () => {

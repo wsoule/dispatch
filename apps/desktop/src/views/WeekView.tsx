@@ -175,6 +175,20 @@ function WeekLoaded({
     );
   }
 
+  const hasDeadlines = page.deadlines.some((group) => group.items.length > 0);
+  // A tile reading 0, with a line explaining the 0, is news of nothing.
+  const tiles = page.stats.filter(
+    (cell) => cell.id === 'open' || cell.value !== 0
+  );
+  // Due shows once one of the person's issues has a date.
+  const columns = page.sections.some((section) =>
+    section.groups.some((group) =>
+      group.rows.some((row) => row.due !== undefined)
+    )
+  )
+    ? WEEK_TASK_COLUMNS
+    : WEEK_TASK_COLUMNS.filter((column) => column !== 'due');
+
   return (
     <div className={styles.root} data-testid="week-view">
       <header className={styles.head}>
@@ -191,23 +205,31 @@ function WeekLoaded({
         />
       </header>
 
-      <StatsStrip
-        cells={page.stats.map((cell) => {
-          const Icon = STAT_ICONS[cell.id];
-          return Icon === undefined
-            ? cell
-            : { ...cell, icon: <Icon size={14} strokeWidth={1.8} /> };
-        })}
-        label={page.isSelf ? 'Your week at a glance' : 'Week at a glance'}
-      />
+      {/* Open issues alone would repeat "Your issues · 3 open" below it. */}
+      {tiles.length > 1 && (
+        <StatsStrip
+          cells={tiles.map((cell) => {
+            const Icon = STAT_ICONS[cell.id];
+            return Icon === undefined
+              ? cell
+              : { ...cell, icon: <Icon size={14} strokeWidth={1.8} /> };
+          })}
+          label={page.isSelf ? 'Your week at a glance' : 'Week at a glance'}
+        />
+      )}
 
       <div className={styles.columns}>
-        <div className={styles.grid}>
+        <div
+          className={styles.grid}
+          data-solo={
+            hasDeadlines || page.attention.length > 0 ? undefined : 'true'
+          }
+        >
           <section className={styles.main} aria-label={page.issuesTitle}>
             <BlockBar title={page.issuesTitle} meta={page.issuesMeta} />
             <TaskGroupTable
               sections={page.sections}
-              columns={WEEK_TASK_COLUMNS}
+              columns={columns}
               label={page.isSelf ? 'My issues' : `${page.issuesTitle}`}
               headingLevel={2}
               storageKey="dispatch:week:collapsed"
@@ -215,50 +237,52 @@ function WeekLoaded({
               onOpenRow={(row) => peekTask(row.id)}
             />
           </section>
-          <aside className={styles.side} aria-label="Deadlines and attention">
-            <section aria-label="Upcoming deadlines">
-              <BlockBar title="Upcoming deadlines" meta="Next 7 days" />
-              {page.deadlines.every((group) => group.items.length === 0) ? (
-                <EmptyState>Nothing due in the next 7 days</EmptyState>
-              ) : (
-                <DeadlineList groups={page.deadlines} />
+          {/* The side column holds only what has something in it; empty, the list
+              takes the width. */}
+          {(hasDeadlines || page.attention.length > 0) && (
+            <aside className={styles.side} aria-label="Deadlines and attention">
+              {hasDeadlines && (
+                <section aria-label="Upcoming deadlines">
+                  <BlockBar title="Upcoming deadlines" meta="Next 7 days" />
+                  <DeadlineList groups={page.deadlines} />
+                </section>
               )}
-            </section>
-            <section aria-label="Needs attention">
-              <BlockBar
-                title="Needs attention"
-                meta={page.isSelf ? 'Projects you lead' : 'Projects they lead'}
-              />
-              {page.attention.length === 0 ? (
-                <EmptyState>{page.attentionEmpty}</EmptyState>
-              ) : (
-                <Register
-                  columns="minmax(0, 1fr) auto"
-                  label="Projects that need attention"
-                  stackWithin={480}
-                  stackedColumns="minmax(0, 1fr)"
-                >
-                  {page.attention.map((item) => (
-                    <RegisterRow
-                      key={item.id}
-                      href={item.href}
-                      rowLabel={item.rowLabel}
-                      tone={item.tone}
-                    >
-                      <RegisterCell variant="name" sub={item.detail}>
-                        {item.projectName}
-                      </RegisterCell>
-                      <RegisterCell align="end">
-                        <Chip tone={item.tone} filled>
-                          {item.flag}
-                        </Chip>
-                      </RegisterCell>
-                    </RegisterRow>
-                  ))}
-                </Register>
+              {page.attention.length > 0 && (
+                <section aria-label="Needs attention">
+                  <BlockBar
+                    title="Needs attention"
+                    meta={
+                      page.isSelf ? 'Projects you lead' : 'Projects they lead'
+                    }
+                  />
+                  <Register
+                    columns="minmax(0, 1fr) auto"
+                    label="Projects that need attention"
+                    stackWithin={480}
+                    stackedColumns="minmax(0, 1fr)"
+                  >
+                    {page.attention.map((item) => (
+                      <RegisterRow
+                        key={item.id}
+                        href={item.href}
+                        rowLabel={item.rowLabel}
+                        tone={item.tone}
+                      >
+                        <RegisterCell variant="name" sub={item.detail}>
+                          {item.projectName}
+                        </RegisterCell>
+                        <RegisterCell align="end">
+                          <Chip tone={item.tone} filled>
+                            {item.flag}
+                          </Chip>
+                        </RegisterCell>
+                      </RegisterRow>
+                    ))}
+                  </Register>
+                </section>
               )}
-            </section>
-          </aside>
+            </aside>
+          )}
         </div>
       </div>
     </div>

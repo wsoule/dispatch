@@ -488,7 +488,7 @@ describe('replyPlan', () => {
   it('names where a reply goes: who it answers, or who it is to', () => {
     const q = msg('m-01', { kind: 'question' });
     expect(replyTarget({ kind: 'reply', target: q }, lookups)).toBe(
-      'Answering t-000001 · Checkout · r-000001'
+      'Answering t-000001 · Checkout'
     );
     expect(
       replyTarget(
@@ -899,7 +899,7 @@ describe('refs and labels', () => {
 
   it('labels a run by its task, the daemon as Dispatch, and flags revoked or muted agents', () => {
     expect(participantLabel('run:r-000001', lookups)).toBe(
-      't-000001 · Checkout · r-000001'
+      't-000001 · Checkout'
     );
     expect(participantLabel('agent:dispatch', lookups)).toBe('Dispatch');
     expect(lookups.agentStatus('agent:wyat/old')).toBe('revoked');
