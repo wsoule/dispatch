@@ -237,7 +237,7 @@ describe('setup', () => {
 });
 
 describe('runtime install', () => {
-  it('installs the pinned version into ~/.dispatch/runtime and launches it with this node', () => {
+  it('installs the pinned version into ~/.dispatch/runtime, keeping node + script when the launcher does not run', () => {
     const bin = join(
       home,
       '.dispatch/runtime/node_modules/@dispatch-foo/mcp/dist/bin.js'

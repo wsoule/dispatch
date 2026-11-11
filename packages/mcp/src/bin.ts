@@ -10,14 +10,42 @@ import {
   WAIT_TIMEOUT_SEC,
   waitForMail,
 } from './hook.js';
-import { runStdioServer } from './server.js';
+import { isStandalone, stripScriptArg } from './self.js';
+import { MCP_SERVER_VERSION, runStdioServer } from './server.js';
 
 // Every call to dispatchd carries a bearer token to http://127.0.0.1, and a
 // proxy in the agent's environment (HTTP_PROXY, ALL_PROXY) would otherwise
 // receive it: before any fetch, the loopback addresses join NO_PROXY.
 exemptLoopbackFromProxy();
 
-const argv = process.argv.slice(2);
+const argv = stripScriptArg(process.argv.slice(2), isStandalone());
+
+const USAGE = `dispatch-mcp ${MCP_SERVER_VERSION}: Dispatch's MCP server.
+
+Usage:
+  dispatch-mcp [--root <dir>]   Serve MCP over stdio (what agent clients run)
+  dispatch-mcp setup            Connect every agent client on this machine
+                                (Claude Code, Codex, Cursor, Gemini CLI, Claude
+                                Desktop, Windsurf), then sign in to your team
+  dispatch-mcp join <link>      Accept a team invite: setup, then sign in to
+                                the team the invite is for
+  dispatch-mcp login            Sign this machine in to your team
+  dispatch-mcp logout           Sign this machine out of its team
+  dispatch-mcp status           Show the team, sign-in and client connections
+  dispatch-mcp hub              Run the machine hub in the foreground
+  dispatch-mcp hooks <client>   Print the hook config for a client
+  dispatch-mcp --version        Print the version
+`;
+
+// Help and version never run anything: `setup --help` used to run setup.
+if (argv.includes('--help') || argv.includes('-h') || argv[0] === 'help') {
+  process.stdout.write(USAGE);
+  process.exit(0);
+}
+if (argv[0] === '--version' || argv[0] === '-v' || argv[0] === 'version') {
+  process.stdout.write(`${MCP_SERVER_VERSION}\n`);
+  process.exit(0);
+}
 
 // `hook <client> <event>` runs as an agent client's hook: it must print
 // valid hook output or nothing, and never fail the client's turn.
@@ -63,13 +91,14 @@ if (argv[0] === 'login' || argv[0] === 'setup') {
   if (argv[0] === 'setup') {
     const { connectClients, defaultSetupEnv, installRuntime } =
       await import('./setup.js');
-    const { MCP_SERVER_VERSION } = await import('./server.js');
     const setupEnv = defaultSetupEnv();
     const launch = installRuntime(setupEnv, MCP_SERVER_VERSION);
     console.log(
       launch.command === 'npx'
         ? '  -  Could not install into ~/.dispatch/runtime; clients will start Dispatch with npx'
-        : `  ✓  Dispatch ${MCP_SERVER_VERSION} installed in ~/.dispatch/runtime`
+        : launch.command === setupEnv.standalone
+          ? `  ✓  Clients will start the Dispatch app's own copy (${MCP_SERVER_VERSION})`
+          : `  ✓  Dispatch ${MCP_SERVER_VERSION} installed in ~/.dispatch/runtime`
     );
     const results = connectClients(setupEnv, launch);
     if (results.length === 0)
@@ -101,6 +130,13 @@ if (argv[0] === 'hub') {
   const { runHub } = await import('./hub/main.js');
   await runHub();
   process.exit(0);
+}
+
+// Any other word is a mistake, not a request to serve MCP: serving would wait
+// on stdin and, run with none, exit 0 as though the command had worked.
+if (argv[0] !== undefined && !argv[0].startsWith('-')) {
+  console.error(`dispatch-mcp: unknown command "${argv[0]}"\n\n${USAGE}`);
+  process.exit(1);
 }
 
 const parsed = parseRootArg(argv);

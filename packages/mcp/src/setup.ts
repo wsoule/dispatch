@@ -12,6 +12,8 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
+import { isStandalone } from './self.js';
+
 // `dispatch-mcp setup`: one command that connects every agent client on this
 // machine to Dispatch. It installs the server into ~/.dispatch/runtime, finds
 // the clients installed (Claude Code, Codex, Cursor, Gemini CLI, Claude
@@ -36,6 +38,9 @@ export interface SetupEnv {
   platform: NodeJS.Platform;
   /** The Node binary running setup, which clients will start the server with. */
   node: string;
+  /** This program's own path when it is a standalone executable (the copy
+   *  bundled in the desktop app), which clients can start directly. */
+  standalone?: string;
   /** Whether an executable is on PATH. */
   has(binary: string): boolean;
   /** Runs a command, returning its exit status. */
@@ -53,6 +58,7 @@ export function defaultSetupEnv(): SetupEnv {
     home: homedir(),
     platform: process.platform,
     node,
+    ...(isStandalone() ? { standalone: process.execPath } : {}),
     has: (binary) =>
       spawnSync(process.platform === 'win32' ? 'where' : 'which', [binary], {
         stdio: 'ignore',
@@ -84,13 +90,67 @@ function runtimeBin(env: SetupEnv): string {
   );
 }
 
-/** Installs this version into the runtime folder and returns how clients
- *  start it (absolute node + script); npx when it cannot be installed. */
+/** Where setup writes the launcher clients start: a path that stays put
+ *  when Node is upgraded. */
+export function launcherPath(env: SetupEnv): string {
+  return join(runtimeDir(env), 'bin', 'dispatch-mcp');
+}
+
+// Version-manager shims and system installs that track whichever Node the
+// person uses now, tried after the exact Node that ran setup.
+const NODE_CANDIDATES = [
+  '$HOME/.proto/bin/node',
+  '$HOME/.volta/bin/node',
+  '$HOME/.asdf/shims/node',
+  '$HOME/.local/share/mise/shims/node',
+  '$HOME/.local/state/fnm_multishells/default/bin/node',
+  '$HOME/.local/share/fnm/aliases/default/bin/node',
+  '$HOME/.fnm/aliases/default/bin/node',
+  '/opt/homebrew/bin/node',
+  '/usr/local/bin/node',
+  '/usr/bin/node',
+];
+
+/** The launcher script: runs the installed server with the first Node it
+ *  finds, so a version manager removing the Node that ran setup does not
+ *  break every client config and hook. With no Node at all it says so on
+ *  stderr (which Claude Code shows for a failing hook) and exits 127. */
+export function launcherScript(env: SetupEnv): string {
+  const sh = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
+  const bin = sh(runtimeBin(env));
+  return `#!/bin/sh
+# Written by \`dispatch-mcp setup\`; re-run it to rewrite this file.
+# Starts Dispatch's MCP server with the first Node.js found, so upgrading Node
+# through a version manager (proto, nvm, fnm, volta, asdf, mise) keeps working.
+for node in "$DISPATCH_NODE" ${sh(env.node)} \\
+  ${NODE_CANDIDATES.map((c) => `"${c}"`).join(' \\\n  ')}; do
+  if [ -n "$node" ] && [ -x "$node" ]; then exec "$node" ${bin} "$@"; fi
+done
+if command -v node >/dev/null 2>&1; then exec node ${bin} "$@"; fi
+for node in "$HOME"/.nvm/versions/node/*/bin/node; do
+  [ -x "$node" ] && latest="$node"
+done
+if [ -n "$latest" ]; then exec "$latest" ${bin} "$@"; fi
+echo "dispatch-mcp: no Node.js found. Install Node, or run \\\`npx -y @dispatch-foo/mcp setup\\\` again." >&2
+exit 127
+`;
+}
+
+/** Installs this version and returns how clients start it, having checked
+ *  that the command runs (\`--version\` exits 0):
+ *  - the desktop app's standalone executable, started directly;
+ *  - else ~/.dispatch/runtime with a launcher that survives Node upgrades
+ *    (absolute node + script on Windows, which has no sh);
+ *  - else npx. */
 export function installRuntime(env: SetupEnv, version: string): Launch {
   const npx: Launch = {
     command: 'npx',
     args: ['-y', `@dispatch-foo/mcp@${version}`],
   };
+  if (env.standalone !== undefined) {
+    const direct: Launch = { command: env.standalone, args: [] };
+    if (env.run(direct.command, ['--version']) === 0) return direct;
+  }
   if (!env.has('npm')) return npx;
   const dir = runtimeDir(env);
   mkdirSync(dir, { recursive: true });
@@ -103,9 +163,16 @@ export function installRuntime(env: SetupEnv, version: string): Launch {
     '--loglevel=error',
     `@dispatch-foo/mcp@${version}`,
   ]);
-  return status === 0 && existsSync(runtimeBin(env))
-    ? { command: env.node, args: [runtimeBin(env)] }
-    : npx;
+  if (status !== 0 || !existsSync(runtimeBin(env))) return npx;
+  const pinned: Launch = { command: env.node, args: [runtimeBin(env)] };
+  if (env.platform === 'win32') return pinned;
+  const launcher = launcherPath(env);
+  mkdirSync(dirname(launcher), { recursive: true });
+  writeFileSync(launcher, launcherScript(env), { mode: 0o755 });
+  chmodSync(launcher, 0o755);
+  return env.run(launcher, ['--version']) === 0
+    ? { command: launcher, args: [] }
+    : pinned;
 }
 
 // Whether a server entry or hook command is one setup wrote, so it may be

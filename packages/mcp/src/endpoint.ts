@@ -1,7 +1,5 @@
 import { readHubFile, verifyHub } from '@dispatch-foo/core';
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 
 import {
   daemonAuth,
@@ -9,6 +7,7 @@ import {
   readDaemonFile,
   startDaemonAdvice,
 } from './daemon.js';
+import { selfLaunch } from './self.js';
 
 // Where an MCP session's agent mail goes: the project's dispatchd when one
 // serves this project, else the machine hub, which every session on this
@@ -158,21 +157,14 @@ export function isOlderVersion(a: string, b: string): boolean {
   return false;
 }
 
-// This package's own entry point, built (dist/bin.js) or source (src/bin.ts).
-function binPath(): string | null {
-  for (const name of ['./bin.js', './bin.ts']) {
-    const path = fileURLToPath(new URL(name, import.meta.url));
-    if (existsSync(path)) return path;
-  }
-  return null;
-}
-
 // Starts `dispatch-mcp hub` detached; the hub takes its own start lock, so
-// racing MCP servers that all get here still leave one hub running.
+// racing MCP servers that all get here still leave one hub running. A
+// standalone executable (the desktop app's bundled copy) is started with no
+// script argument; see self.ts.
 function startHubProcess(): void {
-  const bin = binPath();
-  if (bin === null) return;
-  const child = spawn(process.execPath, [bin, 'hub'], {
+  const self = selfLaunch();
+  if (self === null) return;
+  const child = spawn(self.command, [...self.args, 'hub'], {
     detached: true,
     stdio: 'ignore',
     env: process.env,
