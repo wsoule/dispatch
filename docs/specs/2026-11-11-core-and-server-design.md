@@ -31,8 +31,7 @@ design takes its shape and adds the part a team needs.
 ## Decisions so far (Wyat, 2026-11-11)
 
 1. **Every team has a server.** Git-only teams go away.
-2. **The server may read everything**: tasks, sessions, run logs, messages, docs
-   and memory. Sealed mail and `content-e2e` do not survive.
+2. ~~The server may read everything.~~ Reversed by decision 18.
 3. **Offline writes queue** and reconcile on reconnect.
 4. **A clean break.** Nobody but Wyat syncs a team, so nothing is migrated.
 5. **Three layers**: a core on your machine, your own machines joined to each
@@ -56,6 +55,9 @@ design takes its shape and adds the part a team needs.
 16. **The server is Elastic-2.0.**
 17. **Every session has a status, and it works with herdr.** Dispatch uses the
     same status words and the same signal herdr reads, in the first build.
+18. **Everything a team shares is end-to-end encrypted.** Whoever hosts the
+    server, us included, cannot read tasks, sessions, run logs, messages, docs
+    or memory. This reverses decision 2.
 
 ## The shape
 
@@ -74,7 +76,7 @@ design takes its shape and adds the part a team needs.
 ┌──────────────────────────┐
 │ Dispatch server          │  one per team, always on
 │ orders what people share │  never runs an agent
-│ mirrors every machine    │
+│ stores it encrypted      │  cannot read it
 └──────────────────────────┘
 ```
 
@@ -83,7 +85,7 @@ Three products, each usable without the next:
 | Product | What it is                                              | Needs                 |
 | ------- | ------------------------------------------------------- | --------------------- |
 | Core    | The runtime on your machine. Draws nothing.             | Nothing else          |
-| Server  | The team's always-on core, with accounts and no runner. | Cores that link to it |
+| Server  | The team's always-on store and orderer. Cannot read it. | Cores that link to it |
 | App     | Desktop, phone and web. Clients of a core or a server.  | A core or a server    |
 
 ### The one rule: every project has one home
@@ -97,9 +99,11 @@ A project's **home** is the one place that orders changes to it. Everyone else
 | Solo, many machines | One of your cores | A pipe: SSH or any command |
 | A team              | The team's server | A signed-in outbound link  |
 
-This is what makes the server "a big core". Ordering is not a server feature;
-every core orders the projects it is home to. The server is a home that is
-always on and knows who people are.
+Ordering is not a server feature; every core orders the projects it is home to.
+For a team, the server gives each change its place in line without reading it,
+and every core applies the same rules to the same line, so all of them reach the
+same board (see "Encryption"). The server is the part that is always on and
+knows who the members are.
 
 It also removes a problem the earlier draft had. There, the local store was a
 cache of a remote authority, which fought the synchronous task store. Here the
@@ -141,17 +145,21 @@ per-project `dispatchd` and the machine hub.
 | Module      | Does                                                                  | In core | In server |
 | ----------- | --------------------------------------------------------------------- | ------- | --------- |
 | `kernel`    | Method table, schema, event log, subscriptions, storage               | yes     | yes       |
-| `home`      | Orders a project: per-field revs, appends, creates, claims            | yes     | yes       |
+| `home`      | The rules: per-field revs, appends, creates, claims                   | yes     | no        |
+| `sequence`  | Gives each change its place in line and keeps the log                 | yes     | yes       |
 | `link`      | Connects to a home: snapshot, events, outbox, offline rules           | yes     | accepts   |
-| `tasks`     | The task model and its views                                          | yes     | yes       |
-| `sessions`  | The session registry and reported status                              | yes     | mirror    |
-| `messages`  | Mail, channels, gates                                                 | yes     | yes       |
-| `docs`      | Docs and their revisions                                              | yes     | team docs |
-| `memory`    | Memory entries and proposals                                          | yes     | team      |
+| `keys`      | Team keys, device admission, sealing and opening content              | yes     | no        |
+| `tasks`     | The task model and its views                                          | yes     | no        |
+| `sessions`  | The session registry and reported status                              | yes     | no        |
+| `messages`  | Mail, channels, gates                                                 | yes     | no        |
+| `docs`      | Docs and their revisions                                              | yes     | no        |
+| `memory`    | Memory entries and proposals                                          | yes     | no        |
 | `runner`    | Runs agents in worktrees through holders; review, verify, merge queue | yes     | no        |
-| `identity`  | Accounts, devices, teams, seats                                       | no      | yes       |
-| `mirror`    | Keeps each machine's sessions and runs readable while it is away      | no      | yes       |
-| `integrate` | Linear and GitHub                                                     | solo    | team      |
+| `identity`  | Accounts, devices, teams, seats, billing                              | no      | yes       |
+| `integrate` | Linear and GitHub                                                     | yes     | no        |
+
+The server is small: `kernel`, `sequence` and `identity`. It stores what cores
+send and understands none of it.
 
 `packages/hub` on this branch is a working TypeScript version of `home`: the
 ordered log, per-field revs, claims and session leases, with 19 tests. Under
@@ -161,8 +169,8 @@ written against, and its tests become that module's acceptance tests.
 ### Rust, and what stays TypeScript
 
 The core binary is Rust: `kernel`, `home`, `link`, `tasks`, `sessions`,
-`messages`, `docs` and `memory`. The server is the same crates plus `identity`
-and `mirror`.
+`messages`, `docs`, `memory`, `keys` and `sequence`. The server is `kernel` and
+`sequence` plus `identity`.
 
 Two things stay TypeScript at first and run as **workers**: separate processes
 that are ordinary clients of the core's API.
@@ -228,9 +236,8 @@ Every session reports a status, and Dispatch uses herdr's open status signal
 
 A report can also carry a progress number and a short message.
 
-- **One status, everywhere.** The core's session records, the server's mirror,
-  the app and the events all use these words. A blocked session names the gate
-  it waits on.
+- **One status, everywhere.** The core's session records, the app and the events
+  all use these words. A blocked session names the gate it waits on.
 - **It works with herdr.** The runner prints the signal for every run, and the
   MCP does for a hand-driven session where the client allows it. A Dispatch
   agent running inside herdr then shows its state in herdr with no extra setup,
@@ -283,72 +290,142 @@ This is one person's trust domain. It is not a way to share with a teammate.
 
 ## Dispatch server
 
-A core built without the runner and with `identity` and `mirror`. One per team,
-hosted at app.dispatch.foo or self-hosted.
+One per team, hosted at app.dispatch.foo or self-hosted. It is the team's
+always-on line and store, and it cannot read what it holds.
 
-- **It is the home of the team's projects.** It orders tasks, claims, team docs,
-  team memory and messages.
-- **It mirrors every machine.** Each linked core sends its sessions, run
-  lifecycle and run logs, so the team view and the web dashboard work while a
-  laptop sleeps. The machine remains the owner; the mirror is a copy.
-- **It never runs an agent** and never holds code beyond the diff a finished run
-  uploads for review.
-- **It knows who people are.** Accounts, teams, invites and device sign-in
-  already exist in `apps/web` and carry over. Signed rosters, per-machine keys
-  and fingerprints go away with federation.
-- **The Overseer agent comes last.** First the state exists; then an agent with
-  read tools over the whole team connects as one more session, running on a
-  member's machine with that member's key.
+- **It orders.** Every change a core sends gets the next sequence number and a
+  time, and goes out to every other core.
+- **It stores.** The whole encrypted log, encrypted snapshots, and encrypted run
+  logs for 30 days, so a core that was away catches up and a new device starts
+  from the latest snapshot.
+- **It knows who the members are.** Accounts, teams, invites, device sign-in,
+  seats and billing. These already exist in `apps/web` and carry over.
+- **It reports who is connected.** A machine going silent is something the
+  server sees for itself, so it writes that into the line in the clear, and
+  cores turn it into `stalled` sessions and released claims.
+- **It never runs an agent** and never holds a key.
+
+"Knowing everything" therefore lives in the cores. Every member's core holds the
+full, readable team state, kept current by the server. The Overseer agent comes
+last and runs where the state is readable: on a member's machine, with that
+member's key.
+
+**An always-on core of the team's own.** Anything that must read team content
+while every laptop is closed (Linear sync, an always-on Overseer) runs on a core
+the team owns, for example on a small server of theirs. It is a member device
+like any other and holds the key. The Dispatch server never does.
+
+### Encryption
+
+Every core seals what it sends with the team's key before it leaves the machine,
+and opens what it receives.
+
+**What the host can and cannot see**
+
+| Cannot see                                             | Can see                                        |
+| ------------------------------------------------------ | ---------------------------------------------- |
+| Tasks, comments, findings, claims                      | Who is on the team and their devices           |
+| Session records, status, run logs and diffs            | Which device sent a change, when, and its size |
+| Messages, channels, docs, memory                       | Which devices are connected                    |
+| Project and task names (projects are opaque ids to it) | Seat count and billing                         |
+
+**How order works without reading.** The server only lines changes up. Every
+core runs the same `home` rules over the same line, using the server's sequence
+numbers and times and never its own clock, so every core decides the same thing:
+which edit was stale, who got the claim. A core learns whether its own change
+held when it sees where the change landed.
+
+```text
+bob's core    seals claim{t-12} ──► server gives it seq 4102 ──► every core
+every core    opens it, applies the rules to seq 4101 (alice's claim) then 4102
+              → all agree: 4102 is refused, t-12 is held by alice's session
+```
+
+**The rules have a version.** Cores only agree if they run the same rules. The
+line records the team's rules version; a core older than it reads but does not
+write until it updates.
+
+**Keys**
+
+- **A team key per epoch**, held only by member devices. Content is sealed with
+  the current epoch's key.
+- **Joining.** An invite link carries a one-time secret in the part of the URL
+  that is never sent to a server. The team key waits on the server sealed under
+  that secret, so the new device opens it with nobody else online. The link is
+  the key: it expires, works once, and is sent through a channel the team
+  trusts.
+- **Adding your own device.** An existing device of yours approves it and seals
+  the key to it.
+- **The device list is signed.** Each admission is signed by a device already on
+  the list, back to the founding device, and every core checks that chain. The
+  server cannot add a device of its own to read along.
+- **Removing someone** starts a new epoch with a new key the removed devices
+  never get, and the server stops serving them. They keep what they already had;
+  nothing can take that back.
+- **Recovery.** Each person gets a recovery phrase. A person who loses every
+  device and the phrase is invited again by a teammate. A team whose every
+  member loses everything has lost its data; nobody can recover it, us included.
+
+The design for epochs, sealing and its test vectors already exists in the
+federation code (`content.ts`, `teamKeys.ts`, `hpke.ts`, `seal.ts`,
+`packages/federation/vectors`). It is rewritten in Rust as `keys`; the hard part
+of federation, merging without an orderer, is still gone.
+
+**The web dashboard** opens content in the browser. A device of yours approves
+the browser and seals the key to it. One honest limit: the page's code comes
+from the host, so a host that turned hostile could serve code that takes the
+key. The desktop app and the core do not have that limit.
+
+**One mode.** Self-hosted servers are encrypted the same way. Two modes would
+double what has to be tested, and a self-hosted team can run its own always-on
+core for anything that needs to read.
 
 ### Hosting
 
 A team either runs the server itself or pays per seat for a hosted one. Both are
 the same binary.
 
-Isolation for hosted teams, in the order to build it:
+Isolation for hosted teams:
 
-1. **One database file per team.** A request's team comes from its sign-in, and
-   every query goes through a handle opened on that team's file, so no query can
-   name another team's data. This is cheap and is where hosting starts.
-2. **One encryption key per team** for that file at rest, so a leaked disk or
-   backup does not expose every team.
-3. **A dedicated instance** for a team that asks for it or grows large: its own
-   process and volume. Because hosted and self-hosted are the same binary, this
-   is self-hosting run by us.
+1. **Encryption does most of it.** A team's content is sealed with a key the
+   host never has, so one team cannot read another's even if a bug hands it the
+   wrong rows.
+2. **One database file per team**, so account and timing data stay apart and a
+   team can be exported or deleted whole.
+3. **A dedicated instance** for a team that asks for it: its own process and
+   volume. Because hosted and self-hosted are the same binary, this is
+   self-hosting run by us.
 
-The server never runs an agent or a team's code, so the risk to isolate is one
-team reading another's data, not one team's code escaping. Seats are counted by
-the server and billed through Stripe for hosted teams. A self-hosted server is
-free at every size, so the license-key check in
+Seats are counted by the server and billed through Stripe for hosted teams. A
+self-hosted server is free at every size, so the license-key check in
 `packages/federation/src/license.ts` goes away with the rest of that package.
 
 ### Who owns what
 
-| Record                       | Owner                  | Copies                                |
-| ---------------------------- | ---------------------- | ------------------------------------- |
-| Tasks, comments, findings    | The project's home     | Every linked core                     |
-| Claims                       | The project's home     | Every linked core                     |
-| Sessions and their status    | The machine running it | The server's mirror, your other cores |
-| Run logs and transcripts     | The machine running it | The server's mirror                   |
-| Team docs, team memory, mail | The server             | Linked cores                          |
-| Personal docs and memory     | Your core              | None                                  |
-| Code, worktrees, API keys    | Your core              | None                                  |
+| Record                       | Owner                  | Copies                   |
+| ---------------------------- | ---------------------- | ------------------------ |
+| Tasks, comments, findings    | The project's home     | Every linked core        |
+| Claims                       | The project's home     | Every linked core        |
+| Sessions and their status    | The machine running it | Every linked core        |
+| Run logs and transcripts     | The machine running it | Linked cores, on request |
+| Team docs, team memory, mail | The project's home     | Every linked core        |
+| Personal docs and memory     | Your core              | None                     |
+| Code, worktrees, API keys    | Your core              | None                     |
+
+For a team, the server holds a sealed copy of every row above the last two.
 
 ### Claims
 
-A claim is a lease on a task and the paths it declares, held by a session. The
-home admits it when nobody else holds the task and no other live claim declares
+A claim is a lease on a task and the paths it declares, held by a session. It is
+admitted when nobody else holds the task and no other live claim declares
 overlapping paths. A claim with no declared paths holds only its task. A claim
 lives while its session reports in; a session silent for two minutes is stalled,
 and its claims are released 15 minutes later. A lost claim never kills a run:
 the operator is warned and decides.
 
 ```text
-bob → home   claim {task:"t-12", session:"b1", writes:[…]}
-home → bob   refused: held by agent:alice/claude-code-7f3a2c since 17:04
-
-bob → home   claim {task:"t-15", session:"b1", writes:["src/team/routes.ts"]}
-home → bob   refused: overlaps t-12 on src/team/routes.ts
+bob claims t-12   → refused: held by agent:alice/claude-code-7f3a2c since 17:04
+bob claims t-15   → refused: overlaps t-12 on src/team/routes.ts
 ```
 
 ### Offline
@@ -370,8 +447,8 @@ status to review was not applied: Bob set it to done at 16:52."
 
 Desktop, phone and web become clients and nothing else. They use the generated
 client library and hold no logic the API does not expose. The desktop app can
-point at the local core, at one of your other machines, or at the team's server
-with the same code.
+point at the local core or at one of your other machines with the same code. The
+web dashboard talks to the server and opens content in the browser.
 
 The desktop app is the largest part of the tree by far. It is not rewritten: its
 data layer (`packages/client`) is replaced and the views stay.
@@ -383,7 +460,7 @@ Proposed end state:
 | Repository        | Holds                                                               | Depends on              |
 | ----------------- | ------------------------------------------------------------------- | ----------------------- |
 | `dispatch-core`   | The kernel and core modules, the CLI, the MCP, the schema, the spec | Nothing of Dispatch's   |
-| `dispatch-server` | `identity`, `mirror`, the hosted site, the deployment               | Published core packages |
+| `dispatch-server` | `identity`, the hosted site, billing, the deployment                | Published core packages |
 | `dispatch` (app)  | Desktop, phone, web dashboard, the UI library, the marketing site   | The published client    |
 | `dispatch-plugin` | As today                                                            | The published MCP       |
 
@@ -406,16 +483,16 @@ Source lines, tests excluded.
 | `packages/server` routes, events, wiring                  | ~29,000 | Rewritten as the kernel and the method table                           |
 | `packages/server/src/orchestrator`                        | 36,705  | Ported into `runner`, behavior and tests kept, behind the new API      |
 | `packages/server/src/team`, `sync`, `packages/federation` | ~24,000 | Deleted                                                                |
-| `packages/protocol/src/federation`                        | 1,472   | Deleted; a breaking version of the published protocol                  |
+| `packages/protocol/src/federation`                        | 1,472   | Deleted as code; its key, epoch and sealing design carries into `keys` |
 | `packages/server/src/messaging`, `packages/protocol`      | ~12,000 | Ported into `messages`; the delivery engine loses its federation hooks |
 | `packages/server/src/docs`, `memory`, `packages/memory`   | ~23,500 | Ported into `docs` and `memory`                                        |
-| `packages/server/src/linear`                              | 10,435  | Ported into `integrate`; the server becomes a team's one Linear writer |
+| `packages/server/src/linear`                              | 10,435  | Ported into `integrate`; for a team it runs on one core the team picks |
 | `packages/server/src/a2a`, `packages/a2a`                 | ~23,700 | Left out of the first build; returns later as a worker                 |
 | `packages/mcp/src/hub`                                    | 1,634   | Deleted; the core is the machine hub                                   |
 | `packages/mcp`, `packages/cli`                            | ~22,000 | Thinned to clients generated from the method table                     |
 | `packages/core`                                           | 21,309  | Kept; it is the task model and storage the kernel builds on            |
 | `packages/hub`                                            | ~1,050  | Becomes `home`                                                         |
-| `apps/web`                                                | 15,122  | Its accounts and pages move to the server; `hub.ts` is replaced        |
+| `apps/web`                                                | 15,122  | Accounts and pages move to the server; `hub.ts` and `mcp.ts` are cut   |
 | `packages/remote`, `apps/remote-relay`                    | ~2,000  | Kept; the phone link becomes one more binding of the same API          |
 | `apps/desktop`, `packages/ui`, `packages/planning`        | —       | Kept; only the data layer changes                                      |
 
@@ -431,11 +508,20 @@ moved for workers.
 - **The product stops gaining features for the length of the rewrite.** The
   build order below keeps the old daemon working until the new core can replace
   it, but attention is finite.
-- **A privacy promise is withdrawn.** Clients say today that the relay cannot
-  read message contents, and teams can turn on end-to-end encryption. Under
-  decision 2 a team has neither. The site, the privacy policy and the disclosure
-  text need rewriting before any team exists. Self-hosting the server is the
-  answer for a team that will not accept it.
+- **The host can do nothing that needs reading.** No server-side search, no
+  Linear sync on the server, no email that quotes a task. Those run on a
+  member's core or on an always-on core the team owns.
+- **The hosted MCP endpoint for claude.ai does not fit.** Today a claude.ai
+  session joins a team through `app.dispatch.foo/mcp` and lives on the hosted
+  hub (`apps/web/src/mcp.ts`). Such a session runs on our server, so it would
+  have to read team content there. It is left out of the first build. It can
+  return pointed at an always-on core the team owns.
+- **Lost keys are lost data.** There is no reset we can perform.
+- **A person who leaves keeps what they already had.**
+- **Every core must run the same rules.** A rules change is a coordinated
+  update, and an out-of-date core cannot write.
+- **A new device has more to do.** It downloads a sealed snapshot and the line
+  after it, and opens all of it locally.
 - **A published protocol breaks.** `@dispatch-foo/protocol` and the protocol
   spec's federation appendix need a breaking version.
 - **The server is a single point of failure for claims and dispatch.**
@@ -452,22 +538,23 @@ moved for workers.
 ## Build order
 
 Each phase is a unit an agent team can take, with a check that says it is done.
-The old daemon keeps running until phase 7.
+The old daemon keeps running until phase 8.
 
-| #   | Phase                | Done when                                                                                     | After |
-| --- | -------------------- | --------------------------------------------------------------------------------------------- | ----- |
-| 1   | Kernel               | A method table yields the socket, stdio and HTTP bindings, the schema and the only-grows test | —     |
-| 2   | Home and tasks       | One core per machine serves several projects; the board works through the new API             | 1     |
-| 3   | Sessions and mail    | The MCP is a client of the core; hand-driven sessions register, report status and message     | 1     |
-| 4   | Runner               | A dispatched run survives a core restart; review, verify and merge pass the ported tests      | 2, 3  |
-| 5   | Link                 | Two of your machines share a project over SSH; the offline rules pass with the link cut       | 2     |
-| 6   | Server               | Two people on one team see each other's sessions and cannot both claim one task               | 5     |
-| 7   | App on the new API   | Desktop, web and phone run on the generated client; the old daemon is not started             | 2–4   |
-| 8   | Docs, memory, Linear | Ported modules pass their existing tests behind the new API                                   | 2     |
-| 9   | Teardown and split   | Federation, board sync, the machine hub and the old daemon are deleted; repositories separate | 6–8   |
-| 10  | Overseer agent       | An agent answers "who is stuck" and "what collides" across the team                           | 6     |
+| #   | Phase                | Done when                                                                                                      | After  |
+| --- | -------------------- | -------------------------------------------------------------------------------------------------------------- | ------ |
+| 1   | Kernel               | A method table yields the socket, stdio and HTTP bindings, the schema and the only-grows test                  | —      |
+| 2   | Home and tasks       | One core per machine serves several projects; the board works through the new API                              | 1      |
+| 3   | Sessions and mail    | The MCP is a client of the core; hand-driven sessions register, report status and message                      | 1      |
+| 4   | Runner               | A dispatched run survives a core restart; review, verify and merge pass the ported tests                       | 2, 3   |
+| 5   | Link                 | Two of your machines share a project over SSH; the offline rules pass with the link cut                        | 2      |
+| 6   | Keys                 | Two devices share a team key through an invite link; a removed device cannot open later changes                | 5      |
+| 7   | Server               | Two people see each other's sessions and cannot both claim a task; the server's files hold no readable content | 6      |
+| 8   | App on the new API   | Desktop and phone run on the generated client; the web dashboard opens content in the browser                  | 2–4, 7 |
+| 9   | Docs, memory, Linear | Ported modules pass their existing tests behind the new API                                                    | 2      |
+| 10  | Teardown and split   | Federation, board sync, the machine hub and the old daemon are deleted; repositories separate                  | 7–9    |
+| 11  | Overseer agent       | An agent answers "who is stuck" and "what collides" across the team                                            | 7      |
 
-Phases 3, 5 and 8 can run in parallel once 2 lands.
+Phases 3, 5 and 9 can run in parallel once 2 lands.
 
 ## Open decisions
 
@@ -484,9 +571,9 @@ and no license key, this is what keeps paid hosting ours.
   bridge that speaks Google's Agent2Agent protocol, so an agent that does not
   use Dispatch at all can send work in and get results back.
 - **A run log** is the live transcript of an agent: what it said and each tool
-  it called. The machine running the agent always has it. Streaming it to the
-  server lets anyone on the team watch any run live, and keeps it readable when
-  the laptop sleeps.
+  it called. The machine running the agent always has it. Streaming it sealed
+  through the server lets anyone on the team watch any run live, and keeps it
+  readable to them when the laptop sleeps.
 
 ## Taken from herdr-core, and not
 
