@@ -63,6 +63,8 @@ design takes its shape and adds the part a team needs.
     always runs on a machine with a core.
 20. **The app is modular the way herdr's app is.** A small app core, and every
     panel, menu and dialog a mod kept as a file the person can change.
+21. **The app is native, like herdr's**, and is written fresh. Getting it right
+    matters more than keeping today's app.
 
 ## The shape
 
@@ -523,19 +525,26 @@ export default function Blocked({ dispatch, ui }) {
 
 ### What mods are drawn with
 
-herdr's app is native and its mods cannot use HTML or CSS. **Proposed for
-Dispatch: keep the web view (Tauri) and let mods be web code.** Reasons: far
-more people and agents can write it; `packages/ui` already holds the component
-library the views use; and the same shipped mods can run on the phone and in the
-web dashboard. The alternative, a native rewrite like herdr's, discards that
-library and every existing view.
+The app is native: Rust, drawing on the GPU, with no web view. Mods are small
+JavaScript programs that describe native elements; the app draws them. There is
+no HTML or CSS in a mod.
 
-Under the proposal the desktop app is not thrown away. Its views are moved into
-shipped mods one at a time on the new app core, and its data layer
-(`packages/client`) is replaced by the generated client.
+herdr's app is built this way on GPUI (the UI library from the Zed editor) and
+gpui-kit, which runs the JavaScript mods. Both are Apache-licensed.
 
-The phone app and the web dashboard are the same idea with fewer mods. The web
-dashboard talks to the server and opens content in the browser.
+_Unverified, and the riskiest piece in the app:_ herdr ships its own patched
+copies of both libraries, which says they need upkeep. Whether Dispatch builds
+on the same pair is decided by a spike (see "Build order"), not assumed here.
+
+What this means for today's code:
+
+- **The desktop app is replaced**, along with `packages/ui` and
+  `packages/planning`. Today's app stays as the reference for what each view
+  does until its mod exists.
+- **The phone app stays separate.** A native desktop library does not run on a
+  phone, so the phone keeps its own small app as a client of the core.
+- **The web dashboard cannot share mods** with a native app. It would be a
+  separate program written for the browser (see "Open decisions").
 
 ## Repositories
 
@@ -545,7 +554,7 @@ Proposed end state:
 | ----------------- | ------------------------------------------------------------------- | ----------------------- |
 | `dispatch-core`   | The kernel and core modules, the CLI, the MCP, the schema, the spec | Nothing of Dispatch's   |
 | `dispatch-server` | `identity`, the hosted site, billing, the deployment                | Published core packages |
-| `dispatch` (app)  | Desktop, phone, web dashboard, the UI library, the marketing site   | The published client    |
+| `dispatch` (app)  | The native app, its shipped mods, the phone app, the marketing site | The published client    |
 | `dispatch-plugin` | As today                                                            | The published MCP       |
 
 The contract between repositories is the published schema and client package,
@@ -578,7 +587,7 @@ Source lines, tests excluded.
 | `packages/hub`                                            | ~1,050  | Becomes `home`                                                         |
 | `apps/web`                                                | 15,122  | Accounts and pages move to the server; `hub.ts` and `mcp.ts` are cut   |
 | `packages/remote`, `apps/remote-relay`                    | ~2,000  | Kept; the phone link becomes one more binding of the same API          |
-| `apps/desktop`, `packages/ui`, `packages/planning`        | —       | Views become shipped mods on a small app core                          |
+| `apps/desktop`, `packages/ui`, `packages/planning`        | —       | Replaced by the native app; kept as the reference until then           |
 
 **Rewrite the state in Rust, port the workers.** Everything that holds or orders
 state is new Rust code, written against today's behavior and tests: the kernel,
@@ -589,6 +598,11 @@ moved for workers.
 
 ## Costs, stated plainly
 
+- **The desktop app is written again from nothing.** It is the largest part of
+  the tree (roughly 230,000 lines under `apps/desktop`, plus the component
+  library). Every view is rebuilt as a native mod.
+- **Native mods are harder to write than web pages.** Fewer people know the
+  toolkit, and nothing from the web's libraries carries over.
 - **The product stops gaining features for the length of the rewrite.** The
   build order below keeps the old daemon working until the new core can replace
   it, but attention is finite.
@@ -620,28 +634,33 @@ moved for workers.
 ## Build order
 
 Each phase is a unit an agent team can take, with a check that says it is done.
-The old daemon keeps running until phase 8.
+The old daemon and today's app keep running until phase 9.
 
-| #   | Phase                | Done when                                                                                                      | After  |
-| --- | -------------------- | -------------------------------------------------------------------------------------------------------------- | ------ |
-| 1   | Kernel               | A method table yields the socket, stdio and HTTP bindings, the schema and the only-grows test                  | —      |
-| 2   | Home and tasks       | One core per machine serves several projects; the board works through the new API                              | 1      |
-| 3   | Sessions and mail    | The MCP is a client of the core; hand-driven sessions register, report status and message                      | 1      |
-| 4   | Runner               | A dispatched run survives a core restart; review, verify and merge pass the ported tests                       | 2, 3   |
-| 5   | Link                 | Two of your machines share a project over SSH; the offline rules pass with the link cut                        | 2      |
-| 6   | Keys                 | Two devices share a team key through an invite link; a removed device cannot open later changes                | 5      |
-| 7   | Server               | Two people see each other's sessions and cannot both claim a task; the server's files hold no readable content | 6      |
-| 8   | App core and mods    | The board, task page and sessions list run as mods on the new API; editing a mod file changes the window live  | 2–4, 7 |
-| 9   | Docs, memory, Linear | Ported modules pass their existing tests behind the new API                                                    | 2      |
-| 10  | Teardown and split   | Federation, board sync, the machine hub and the old daemon are deleted; repositories separate                  | 7–9    |
-| 11  | Overseer agent       | An agent answers "who is stuck" and "what collides" across the team                                            | 7      |
+| #   | Phase                | Done when                                                                                                      | After    |
+| --- | -------------------- | -------------------------------------------------------------------------------------------------------------- | -------- |
+| 1   | Kernel               | A method table yields the socket, stdio and HTTP bindings, the schema and the only-grows test                  | —        |
+| 2   | Home and tasks       | One core per machine serves several projects; the board works through the new API                              | 1        |
+| 3   | Sessions and mail    | The MCP is a client of the core; hand-driven sessions register, report status and message                      | 1        |
+| 4   | Runner               | A dispatched run survives a core restart; review, verify and merge pass the ported tests                       | 2, 3     |
+| 5   | Link                 | Two of your machines share a project over SSH; the offline rules pass with the link cut                        | 2        |
+| 6   | Keys                 | Two devices share a team key through an invite link; a removed device cannot open later changes                | 5        |
+| 7   | Server               | Two people see each other's sessions and cannot both claim a task; the server's files hold no readable content | 6        |
+| 8   | App spike            | A native window lists live sessions from the core, and one JavaScript mod redraws when its file is saved       | 1        |
+| 9   | App core and mods    | The board, task page and sessions list run as native mods; a layout file rearranges the window live            | 2–4, 8   |
+| 10  | Docs, memory, Linear | Ported modules pass their existing tests behind the new API                                                    | 2        |
+| 11  | Teardown and split   | Federation, board sync, the machine hub, the old daemon and the old app are deleted; repositories separate     | 7, 9, 10 |
+| 12  | Overseer agent       | An agent answers "who is stuck" and "what collides" across the team                                            | 7        |
 
-Phases 3, 5 and 9 can run in parallel once 2 lands.
+Phases 3, 5 and 10 can run in parallel once 2 lands. The app spike (8) can start
+as soon as the kernel exists, and it decides the toolkit before phase 9 commits
+to it.
 
 ## Open decisions
 
-1. **What mods are drawn with.** Web code in the existing web view (proposed),
-   or a native rewrite like herdr's. See "What mods are drawn with".
+1. **The web dashboard.** With a native app it shares nothing and is a separate
+   program. It is also the one place where the host serves the code that handles
+   a team's key. Proposed: leave it out of the first build. The server's site is
+   then sign-in, team setup, invites and billing only.
 
 Settled last: the server's license (Wyat left the choice open; Elastic-2.0 is
 the pick). Anyone may run the server for their own team for free. Nobody may
