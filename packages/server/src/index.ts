@@ -1803,6 +1803,16 @@ async function bootServer(
           messages: () => messaging.store,
           team: mailFederation?.hooks ?? null,
           owner: actorContext.humanRef,
+          autoApprove: () => {
+            try {
+              return (
+                loadConfig(rootDir).messaging.approveMachineAgents === 'auto'
+              );
+            } catch {
+              // An unreadable config asks, as the default does.
+              return false;
+            }
+          },
         })
       : null;
   webForwarding = hubLink;

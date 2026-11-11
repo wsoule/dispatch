@@ -660,6 +660,14 @@ machine in to your team. On claude.ai, add the custom connector
 `https://app.dispatch.foo/mcp`. See the [package README](packages/mcp/README.md)
 for sessions, teammates, Linear and the full tool list.
 
+A teammate who works only in Claude Code joins with the one command their invite
+shows, `npx -y @dispatch-foo/mcp join <invite link>`: it connects their clients,
+and one click in the browser joins the team and signs the machine in
+([details](packages/mcp/README.md#joining-a-team-from-claude-code-alone)).
+`npx -y @dispatch-foo/mcp status` shows what is connected. To skip the approval
+question when your own agents on this machine first message a project, set
+`messaging.approveMachineAgents: auto` in its `.dispatch/config.yml`.
+
 Inside a Dispatch project, `dispatch init` registers a stdio MCP server in the
 project's `.mcp.json` (created or merged — existing servers and keys are
 preserved):

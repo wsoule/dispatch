@@ -51,6 +51,7 @@ describe('TeamDb', () => {
     expect(db.claimDevice(deviceCode).status).toBe('pending');
     expect(db.pendingDevice(userCode.toLowerCase().replace('-', ' '))).toEqual({
       client: 'dispatch-mcp',
+      invite: null,
     });
     expect(db.approveDevice(userCode, ada.id, team.id)).toBe(true);
     const claimed = db.claimDevice(deviceCode);

@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 
+import { mailerFromEnv } from './mailer.js';
 import { startTeamService } from './server.js';
 
 // The production entry for the dispatch-team service: config from the
@@ -29,6 +30,8 @@ const service = startTeamService({
     fileURLToPath(new URL('../../desktop/dist/', import.meta.url)),
   devLogin: env.DEV_LOGIN === '1' && !origin.startsWith('https://'),
   teamSecret: env.TEAM_SECRET ?? null,
+  // Invite emails through Resend: RESEND_API_KEY and INVITE_EMAIL_FROM.
+  mailer: mailerFromEnv(env),
 });
 console.log(
   JSON.stringify({

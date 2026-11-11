@@ -10,14 +10,42 @@ import {
   WAIT_TIMEOUT_SEC,
   waitForMail,
 } from './hook.js';
-import { runStdioServer } from './server.js';
+import { isStandalone, stripScriptArg } from './self.js';
+import { MCP_SERVER_VERSION, runStdioServer } from './server.js';
 
 // Every call to dispatchd carries a bearer token to http://127.0.0.1, and a
 // proxy in the agent's environment (HTTP_PROXY, ALL_PROXY) would otherwise
 // receive it: before any fetch, the loopback addresses join NO_PROXY.
 exemptLoopbackFromProxy();
 
-const argv = process.argv.slice(2);
+const argv = stripScriptArg(process.argv.slice(2), isStandalone());
+
+const USAGE = `dispatch-mcp ${MCP_SERVER_VERSION}: Dispatch's MCP server.
+
+Usage:
+  dispatch-mcp [--root <dir>]   Serve MCP over stdio (what agent clients run)
+  dispatch-mcp setup            Connect every agent client on this machine
+                                (Claude Code, Codex, Cursor, Gemini CLI, Claude
+                                Desktop, Windsurf), then sign in to your team
+  dispatch-mcp join <link>      Accept a team invite: setup, then sign in to
+                                the team the invite is for
+  dispatch-mcp login            Sign this machine in to your team
+  dispatch-mcp logout           Sign this machine out of its team
+  dispatch-mcp status           Show the team, sign-in and client connections
+  dispatch-mcp hub              Run the machine hub in the foreground
+  dispatch-mcp hooks <client>   Print the hook config for a client
+  dispatch-mcp --version        Print the version
+`;
+
+// Help and version never run anything: `setup --help` used to run setup.
+if (argv.includes('--help') || argv.includes('-h') || argv[0] === 'help') {
+  process.stdout.write(USAGE);
+  process.exit(0);
+}
+if (argv[0] === '--version' || argv[0] === '-v' || argv[0] === 'version') {
+  process.stdout.write(`${MCP_SERVER_VERSION}\n`);
+  process.exit(0);
+}
 
 // `hook <client> <event>` runs as an agent client's hook: it must print
 // valid hook output or nothing, and never fail the client's turn.
@@ -58,18 +86,30 @@ if (argv[0] === 'hooks') {
 
 // `login` signs this machine in to a team; `setup` first connects every
 // agent client on the machine, then signs in.
-if (argv[0] === 'login' || argv[0] === 'setup') {
-  const { interactiveLogin } = await import('./login.js');
-  if (argv[0] === 'setup') {
+// `join <link>` is setup plus a sign-in that carries the invite, so one
+// approval in the browser joins the team and signs this machine in.
+if (argv[0] === 'login' || argv[0] === 'setup' || argv[0] === 'join') {
+  const { interactiveLogin, parseJoinLink } = await import('./login.js');
+  let join: { server: string; token: string } | undefined;
+  if (argv[0] === 'join') {
+    const parsed = parseJoinLink(argv[1] ?? '');
+    if ('error' in parsed) {
+      console.error(`dispatch-mcp join: ${parsed.error}`);
+      process.exit(1);
+    }
+    join = parsed;
+  }
+  if (argv[0] === 'setup' || argv[0] === 'join') {
     const { connectClients, defaultSetupEnv, installRuntime } =
       await import('./setup.js');
-    const { MCP_SERVER_VERSION } = await import('./server.js');
     const setupEnv = defaultSetupEnv();
     const launch = installRuntime(setupEnv, MCP_SERVER_VERSION);
     console.log(
       launch.command === 'npx'
         ? '  -  Could not install into ~/.dispatch/runtime; clients will start Dispatch with npx'
-        : `  ✓  Dispatch ${MCP_SERVER_VERSION} installed in ~/.dispatch/runtime`
+        : launch.command === setupEnv.standalone
+          ? `  ✓  Clients will start the Dispatch app's own copy (${MCP_SERVER_VERSION})`
+          : `  ✓  Dispatch ${MCP_SERVER_VERSION} installed in ~/.dispatch/runtime`
     );
     const results = connectClients(setupEnv, launch);
     if (results.length === 0)
@@ -83,7 +123,34 @@ if (argv[0] === 'login' || argv[0] === 'setup') {
           : `  ✓  ${r.client}: ${r.status === 'added' ? 'connected' : r.status === 'updated' ? 'updated' : 'already connected'}`
       );
   }
-  process.exit((await interactiveLogin(console.log)) ? 0 : 1);
+  process.exit((await interactiveLogin(console.log, join)) ? 0 : 1);
+}
+
+// `status`: the team this machine is signed in to and whether each agent
+// client can reach Dispatch, with the fix for any that cannot.
+if (argv[0] === 'status') {
+  const { readTeamFile } = await import('./hub/team.js');
+  const { clientHealth, defaultSetupEnv } = await import('./setup.js');
+  const team = readTeamFile();
+  console.log(
+    team === null
+      ? 'Team: not signed in. Agents here reach only each other; run `npx -y @dispatch-foo/mcp login`, or `join <invite link>`.'
+      : `Team: ${team.team.name} as ${team.handle} (${team.server})`
+  );
+  const health = clientHealth(defaultSetupEnv());
+  if (health.length === 0)
+    console.log(
+      'No agent clients found (Claude Code, Codex, Cursor, Gemini CLI, Claude Desktop, Windsurf).'
+    );
+  for (const h of health)
+    console.log(
+      h.state === 'connected'
+        ? `  ✓  ${h.client}: connected`
+        : `  ✗  ${h.client}: ${h.state}${h.detail === undefined ? '' : ` (${h.detail})`}`
+    );
+  process.exit(
+    team !== null && health.every((h) => h.state === 'connected') ? 0 : 1
+  );
 }
 
 if (argv[0] === 'logout') {
@@ -101,6 +168,13 @@ if (argv[0] === 'hub') {
   const { runHub } = await import('./hub/main.js');
   await runHub();
   process.exit(0);
+}
+
+// Any other word is a mistake, not a request to serve MCP: serving would wait
+// on stdin and, run with none, exit 0 as though the command had worked.
+if (argv[0] !== undefined && !argv[0].startsWith('-')) {
+  console.error(`dispatch-mcp: unknown command "${argv[0]}"\n\n${USAGE}`);
+  process.exit(1);
 }
 
 const parsed = parseRootArg(argv);

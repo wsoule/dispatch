@@ -82,7 +82,61 @@ export class TeamLinear {
     private readonly http: typeof fetch = fetch
   ) {
     db.db.exec(SCHEMA);
+    // Added after the table shipped: the workspace's Linear id, which tells
+    // who may join a linked team (see linkedTeams).
+    if (
+      !db.db
+        .query<{ name: string }, []>('PRAGMA table_info(team_linear)')
+        .all()
+        .some((c) => c.name === 'org_id')
+    )
+      db.db.exec('ALTER TABLE team_linear ADD COLUMN org_id TEXT');
     this.sealer = secret === null || secret === '' ? null : new Sealer(secret);
+  }
+
+  /** The teams linked to any of these Linear workspaces. */
+  linkedTeams(orgIds: string[]): { teamId: string; org: string }[] {
+    if (orgIds.length === 0) return [];
+    return this.db.db
+      .query<{ team_id: string; org: string }, string[]>(
+        `SELECT team_id, org FROM team_linear WHERE org_id IN (${orgIds.map(() => '?').join(', ')})`
+      )
+      .all(...orgIds)
+      .map((r) => ({ teamId: r.team_id, org: r.org }));
+  }
+
+  /** The Linear workspace id a team is linked to, or null. */
+  linkedOrgId(teamId: string): string | null {
+    return (
+      this.db.db
+        .query<{ org_id: string | null }, [string]>(
+          'SELECT org_id FROM team_linear WHERE team_id = ?'
+        )
+        .get(teamId)?.org_id ?? null
+    );
+  }
+
+  /** Fills in the workspace id of teams connected before it was kept, with
+   *  each team's own key; a team whose key no longer works is skipped. */
+  async backfillOrgIds(): Promise<void> {
+    const rows = this.db.db
+      .query<{ team_id: string }, []>(
+        'SELECT team_id FROM team_linear WHERE org_id IS NULL'
+      )
+      .all();
+    for (const row of rows) {
+      try {
+        const who = await this.call<{ organization: { id: string } }>(
+          row.team_id,
+          '{ organization { id } }'
+        );
+        this.db.db
+          .query('UPDATE team_linear SET org_id = ? WHERE team_id = ?')
+          .run(who.organization.id, row.team_id);
+      } catch {
+        // A revoked key: the team's admin reconnects Linear.
+      }
+    }
   }
 
   /** Whether this service can hold Linear keys at all (TEAM_SECRET set). */
@@ -120,10 +174,9 @@ export class TeamLinear {
       throw new LinearError(
         'this server cannot store Linear keys (no TEAM_SECRET)'
       );
-    const who = await this.graphql<{ organization: { name: string } }>(
-      key.trim(),
-      '{ organization { name } }'
-    );
+    const who = await this.graphql<{
+      organization: { id: string; name: string };
+    }>(key.trim(), '{ organization { id name } }');
     await this.disconnect(teamId);
     const webhookSecret = randomBytes(24).toString('base64url');
     let webhookId: string | null = null;
@@ -151,8 +204,8 @@ export class TeamLinear {
     }
     this.db.db
       .query(
-        `INSERT INTO team_linear (team_id, key_enc, org, webhook_id, webhook_secret_enc, connected_by, connected_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO team_linear (team_id, key_enc, org, webhook_id, webhook_secret_enc, connected_by, connected_at, org_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         teamId,
@@ -161,7 +214,8 @@ export class TeamLinear {
         webhookId,
         webhookId === null ? null : this.sealer.seal(webhookSecret),
         by,
-        new Date().toISOString()
+        new Date().toISOString(),
+        typeof who.organization.id === 'string' ? who.organization.id : null
       );
     return { org: who.organization.name, webhook: webhookId !== null };
   }

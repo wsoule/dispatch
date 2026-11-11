@@ -23,6 +23,18 @@ describe('messaging config', () => {
       loadConfig(rootWith('messaging:\n  urgentPerHour: 3\n')).messaging
     ).toEqual({ ...DEFAULT_MESSAGING, urgentPerHour: 3 });
   });
+  it('reads approveMachineAgents, ask or auto only', () => {
+    expect(
+      loadConfig(rootWith('messaging:\n  approveMachineAgents: auto\n'))
+        .messaging.approveMachineAgents
+    ).toBe('auto');
+    expect(
+      loadConfig(rootWith('')).messaging.approveMachineAgents
+    ).toBeUndefined();
+    expect(() =>
+      loadConfig(rootWith('messaging:\n  approveMachineAgents: yes\n'))
+    ).toThrow(/approveMachineAgents/);
+  });
   it('rejects non-positive values', () => {
     expect(() =>
       loadConfig(rootWith('messaging:\n  urgentPerHour: 0\n'))

@@ -12,6 +12,8 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
+import { isStandalone } from './self.js';
+
 // `dispatch-mcp setup`: one command that connects every agent client on this
 // machine to Dispatch. It installs the server into ~/.dispatch/runtime, finds
 // the clients installed (Claude Code, Codex, Cursor, Gemini CLI, Claude
@@ -36,6 +38,9 @@ export interface SetupEnv {
   platform: NodeJS.Platform;
   /** The Node binary running setup, which clients will start the server with. */
   node: string;
+  /** This program's own path when it is a standalone executable (the copy
+   *  bundled in the desktop app), which clients can start directly. */
+  standalone?: string;
   /** Whether an executable is on PATH. */
   has(binary: string): boolean;
   /** Runs a command, returning its exit status. */
@@ -53,6 +58,7 @@ export function defaultSetupEnv(): SetupEnv {
     home: homedir(),
     platform: process.platform,
     node,
+    ...(isStandalone() ? { standalone: process.execPath } : {}),
     has: (binary) =>
       spawnSync(process.platform === 'win32' ? 'where' : 'which', [binary], {
         stdio: 'ignore',
@@ -84,13 +90,67 @@ function runtimeBin(env: SetupEnv): string {
   );
 }
 
-/** Installs this version into the runtime folder and returns how clients
- *  start it (absolute node + script); npx when it cannot be installed. */
+/** Where setup writes the launcher clients start: a path that stays put
+ *  when Node is upgraded. */
+export function launcherPath(env: SetupEnv): string {
+  return join(runtimeDir(env), 'bin', 'dispatch-mcp');
+}
+
+// Version-manager shims and system installs that track whichever Node the
+// person uses now, tried after the exact Node that ran setup.
+const NODE_CANDIDATES = [
+  '$HOME/.proto/bin/node',
+  '$HOME/.volta/bin/node',
+  '$HOME/.asdf/shims/node',
+  '$HOME/.local/share/mise/shims/node',
+  '$HOME/.local/state/fnm_multishells/default/bin/node',
+  '$HOME/.local/share/fnm/aliases/default/bin/node',
+  '$HOME/.fnm/aliases/default/bin/node',
+  '/opt/homebrew/bin/node',
+  '/usr/local/bin/node',
+  '/usr/bin/node',
+];
+
+/** The launcher script: runs the installed server with the first Node it
+ *  finds, so a version manager removing the Node that ran setup does not
+ *  break every client config and hook. With no Node at all it says so on
+ *  stderr (which Claude Code shows for a failing hook) and exits 127. */
+export function launcherScript(env: SetupEnv): string {
+  const sh = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
+  const bin = sh(runtimeBin(env));
+  return `#!/bin/sh
+# Written by \`dispatch-mcp setup\`; re-run it to rewrite this file.
+# Starts Dispatch's MCP server with the first Node.js found, so upgrading Node
+# through a version manager (proto, nvm, fnm, volta, asdf, mise) keeps working.
+for node in "$DISPATCH_NODE" ${sh(env.node)} \\
+  ${NODE_CANDIDATES.map((c) => `"${c}"`).join(' \\\n  ')}; do
+  if [ -n "$node" ] && [ -x "$node" ]; then exec "$node" ${bin} "$@"; fi
+done
+if command -v node >/dev/null 2>&1; then exec node ${bin} "$@"; fi
+for node in "$HOME"/.nvm/versions/node/*/bin/node; do
+  [ -x "$node" ] && latest="$node"
+done
+if [ -n "$latest" ]; then exec "$latest" ${bin} "$@"; fi
+echo "dispatch-mcp: no Node.js found. Install Node, or run \\\`npx -y @dispatch-foo/mcp setup\\\` again." >&2
+exit 127
+`;
+}
+
+/** Installs this version and returns how clients start it, having checked
+ *  that the command runs (\`--version\` exits 0):
+ *  - the desktop app's standalone executable, started directly;
+ *  - else ~/.dispatch/runtime with a launcher that survives Node upgrades
+ *    (absolute node + script on Windows, which has no sh);
+ *  - else npx. */
 export function installRuntime(env: SetupEnv, version: string): Launch {
   const npx: Launch = {
     command: 'npx',
     args: ['-y', `@dispatch-foo/mcp@${version}`],
   };
+  if (env.standalone !== undefined) {
+    const direct: Launch = { command: env.standalone, args: [] };
+    if (env.run(direct.command, ['--version']) === 0) return direct;
+  }
   if (!env.has('npm')) return npx;
   const dir = runtimeDir(env);
   mkdirSync(dir, { recursive: true });
@@ -103,9 +163,16 @@ export function installRuntime(env: SetupEnv, version: string): Launch {
     '--loglevel=error',
     `@dispatch-foo/mcp@${version}`,
   ]);
-  return status === 0 && existsSync(runtimeBin(env))
-    ? { command: env.node, args: [runtimeBin(env)] }
-    : npx;
+  if (status !== 0 || !existsSync(runtimeBin(env))) return npx;
+  const pinned: Launch = { command: env.node, args: [runtimeBin(env)] };
+  if (env.platform === 'win32') return pinned;
+  const launcher = launcherPath(env);
+  mkdirSync(dirname(launcher), { recursive: true });
+  writeFileSync(launcher, launcherScript(env), { mode: 0o755 });
+  chmodSync(launcher, 0o755);
+  return env.run(launcher, ['--version']) === 0
+    ? { command: launcher, args: [] }
+    : pinned;
 }
 
 // Whether a server entry or hook command is one setup wrote, so it may be
@@ -453,4 +520,147 @@ export function openBrowser(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Whether one agent client on this machine can reach Dispatch. */
+export interface ClientHealth {
+  client: string;
+  state: 'connected' | 'not connected' | 'broken';
+  /** Why it is not connected, and what fixes it. */
+  detail?: string;
+}
+
+const RERUN = 'run `npx -y @dispatch-foo/mcp setup`';
+
+// The program a shell command line starts: its first word, unquoted.
+function firstWord(line: string): string {
+  const quoted = /^'((?:[^']|'\\'')*)'/.exec(line);
+  if (quoted !== null) return (quoted[1] ?? '').replaceAll("'\\''", "'");
+  return line.split(' ')[0] ?? '';
+}
+
+// Whether a configured command can start: an absolute path that exists, or
+// a bare name on PATH (npx). A launch whose Node a version manager removed
+// fails here, before every client and hook does.
+function runnable(env: SetupEnv, command: string): boolean {
+  if (command === '') return false;
+  return command.includes('/') || command.includes('\\')
+    ? existsSync(command)
+    : env.has(command);
+}
+
+function entryHealth(
+  client: string,
+  entry: unknown,
+  env: SetupEnv
+): ClientHealth {
+  if (entry === undefined || entry === null)
+    return { client, state: 'not connected', detail: RERUN };
+  const command = (entry as { command?: unknown }).command;
+  if (typeof command !== 'string' || !runnable(env, command))
+    return {
+      client,
+      state: 'broken',
+      detail: `${typeof command === 'string' ? command : 'its command'} no longer exists (was Node upgraded?); ${RERUN}`,
+    };
+  return { client, state: 'connected' };
+}
+
+function jsonServer(path: string, name: string): unknown {
+  const config = readJson(path);
+  if (config === null || config === 'unparseable') return undefined;
+  const servers = config.mcpServers as Record<string, unknown> | undefined;
+  return servers?.[name];
+}
+
+// A TOML basic string's escapes (setup writes JSON.stringify's, a subset).
+function unescapeToml(text: string): string {
+  try {
+    return JSON.parse(`"${text}"`) as string;
+  } catch {
+    return text;
+  }
+}
+
+/** Each agent client found on this machine and whether it reaches Dispatch:
+ *  configured, and with a command that still exists. */
+export function clientHealth(env: SetupEnv): ClientHealth[] {
+  const home = env.home;
+  const out: ClientHealth[] = [];
+  if (env.has('claude') || existsSync(join(home, '.claude'))) {
+    // `claude mcp add -s user` keeps user-scope servers in ~/.claude.json.
+    out.push(
+      entryHealth(
+        'Claude Code',
+        jsonServer(join(home, '.claude.json'), 'dispatch'),
+        env
+      )
+    );
+    const settings = readJson(join(home, '.claude', 'settings.json'));
+    const hooks =
+      settings !== null && settings !== 'unparseable'
+        ? (settings.hooks as Record<string, unknown[]> | undefined)
+        : undefined;
+    const ours = (hooks?.Stop ?? []).find(dispatchEntry) as
+      | { hooks: { command: string }[] }
+      | undefined;
+    const command = ours?.hooks[0]?.command;
+    out.push(
+      command === undefined
+        ? {
+            client: 'Claude Code hooks',
+            state: 'not connected',
+            detail: `idle sessions will not wake for mail; ${RERUN}`,
+          }
+        : entryHealth('Claude Code hooks', { command: firstWord(command) }, env)
+    );
+  }
+  if (env.has('codex') || existsSync(join(home, '.codex'))) {
+    const path = join(home, '.codex', 'config.toml');
+    const table = existsSync(path)
+      ? CODEX_TABLE.exec(readFileSync(path, 'utf8'))
+      : null;
+    const command =
+      table === null
+        ? undefined
+        : /^command\s*=\s*"((?:[^"\\]|\\.)*)"/m.exec(table[0])?.[1];
+    out.push(
+      entryHealth(
+        'Codex',
+        table === null
+          ? undefined
+          : { command: command === undefined ? '' : unescapeToml(command) },
+        env
+      )
+    );
+  }
+  const json: [string, boolean, string, string][] = [
+    [
+      'Cursor',
+      existsSync(join(home, '.cursor')),
+      join(home, '.cursor', 'mcp.json'),
+      'dispatch',
+    ],
+    [
+      'Gemini CLI',
+      env.has('gemini') || existsSync(join(home, '.gemini')),
+      join(home, '.gemini', 'settings.json'),
+      'dispatch',
+    ],
+    [
+      'Claude Desktop',
+      existsSync(dirname(claudeDesktopConfig(env))),
+      claudeDesktopConfig(env),
+      CLAUDE_DESKTOP_SERVER,
+    ],
+    [
+      'Windsurf',
+      existsSync(join(home, '.codeium', 'windsurf')),
+      join(home, '.codeium', 'windsurf', 'mcp_config.json'),
+      'dispatch',
+    ],
+  ];
+  for (const [client, present, path, name] of json)
+    if (present) out.push(entryHealth(client, jsonServer(path, name), env));
+  return out;
 }

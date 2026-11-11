@@ -650,6 +650,11 @@ export interface MessagingConfig {
   agentBlockingTimeoutSec: number;
   /** Mail ops applied per clock hour from any one teammate's machine (federation). */
   remoteMailPerReplicaPerHour: number;
+  /** Agent clients on this machine's own hub (same OS user: Claude Code,
+   *  Codex, … through dispatch-mcp) the first time they message this
+   *  project: `ask` raises the owner's approval question (the default),
+   *  `auto` approves them at once. Absent means `ask`. */
+  approveMachineAgents?: 'ask' | 'auto';
 }
 
 export const DEFAULT_MESSAGING: MessagingConfig = {

@@ -710,6 +710,7 @@ async function agentList(
   const self = own === null || 'error' in own ? null : own.address;
   return toolResult({
     ...teamStatus(),
+    source: rosterSource(endpoint.kind, projectRoot(rootDir)),
     agents: body.agents
       .filter((a) => a.status !== 'revoked')
       .map((a) => ({
@@ -782,6 +783,18 @@ export function registerLoginTool(server: McpServer): void {
     },
     () => dispatchLogin()
   );
+}
+
+// Which roster agent_list read, in words: a machine signed in to an account
+// team and a repo on a project team (team.yml) are different rosters, and
+// an agent (or its person) needs to know which one it is looking at.
+function rosterSource(kind: 'daemon' | 'hub', root: string): string {
+  if (kind === 'daemon')
+    return `The project team of ${root} (its .dispatch/team.yml; \`dispatch team status\` shows it).`;
+  const team = readTeamFile();
+  return team === null
+    ? "This machine's agents only: it is not signed in to a team."
+    : `This machine's agents and the team ${team.team.name} on ${team.server}. A project team in a repo's .dispatch/team.yml is separate: its members show here only if they also joined ${team.team.name}.`;
 }
 
 // Which team this machine is in, or a pointer to joining one: agents learn
@@ -1152,6 +1165,7 @@ export function registerMessagingTools(
       outputSchema: {
         team: z.string().nullable(),
         hint: z.string().optional(),
+        source: z.string().optional(),
         agents: z.array(
           z.object({
             address: z.string(),

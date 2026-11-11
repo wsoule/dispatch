@@ -216,8 +216,16 @@ export function homePage(input: {
   machines?: MachineRow[];
   identities: { github: boolean; linear: boolean };
   available: { github: boolean; linear: boolean };
+  /** Teams linked to a Linear workspace this person is in, not yet joined. */
+  joinable?: { id: string; name: string; org: string }[];
 }): string {
   const { user, teams, identities, available } = input;
+  const joinable = (input.joinable ?? [])
+    .map(
+      (t) =>
+        `<div class="row"><span><span class="ink">${esc(t.name)}</span> <span class="muted">linked to your Linear workspace ${esc(t.org)}</span></span><form method="post" action="/teams/${esc(t.id)}/join" style="margin:0"><button class="small primary">Join</button></form></div>`
+    )
+    .join('');
   const planner = input.planner ?? { workspaces: [], canOpen: false };
   const list =
     teams.length === 0
@@ -235,7 +243,7 @@ export function homePage(input: {
 <p class="lede">Plan your Linear workspaces, reach your own machines, and run your team's agents.</p>
 ${plannerBox(planner)}
 <div class="label" id="machines">Your machines</div>${machinesBox(input.machines ?? [])}
-<div class="label">Teams</div>${list}
+<div class="label">Teams</div>${joinable === '' ? '' : `<div class="box">${joinable}</div>`}${list}
 <div class="box pad"><form method="post" action="/teams" class="inline"><input name="name" required maxlength="80" placeholder="New team name"><button class="primary">Create</button></form></div>
 <div class="label">Account</div><div class="box">${signInLine(identities, available)}</div>`
   );
@@ -257,6 +265,9 @@ export function teamPage(input: {
   devices: (Device & { login: string })[];
   sessions: LiveSession[];
   invite: string | null;
+  /** Invites not yet used (admins only). */
+  openInvites?: { email: string | null; expiresAt: string }[];
+  mail?: { available: boolean; sent: string | null; error: string | null };
   origin: string;
   linear: {
     available: boolean;
@@ -275,22 +286,32 @@ export function teamPage(input: {
     origin,
     linear,
   } = input;
+  const mail = input.mail ?? { available: false, sent: null, error: null };
+  const openInvites = input.openInvites ?? [];
   const mine = devices.filter((d) => d.userId === user.id);
+  const inviteLink = invite === null ? null : `${origin}/join/${invite}`;
+  const inviteForm = `<form method="post" action="/teams/${esc(team.id)}/invites" class="inline"><input name="email" type="email" maxlength="254" placeholder="${mail.available ? 'teammate@example.com (or leave empty for a link)' : 'teammate@example.com (optional)'}" autocomplete="off"><button>${mail.available ? 'Invite' : 'New invite link'}</button></form>`;
+  const inviteResult =
+    inviteLink === null
+      ? ''
+      : `${
+          mail.sent === null
+            ? ''
+            : `<p class="ok">Sent to ${esc(mail.sent)}.</p>`
+        }${mail.error === null ? '' : `<div class="note">${esc(mail.error)}</div>`}
+<p>The link, to join from a browser:</p>${cmd(inviteLink)}
+<p style="margin-top:12px">Or one command that joins and connects their agents:</p>${cmd(`npx -y @dispatch-foo/mcp join ${inviteLink}`)}`;
   const live = sessions.filter((s) => s.online).length;
 
   const steps = `<div class="box">
 <div class="step"><div class="n">1</div><div><h3>On each machine, run one command</h3>
-<p>It connects Claude Code, Codex, Cursor, Gemini CLI, Claude Desktop and Windsurf, sets up wake-ups for idle Claude Code sessions, and signs the machine in to ${esc(team.name)} in your browser.</p>${cmd('npx @dispatch-foo/mcp setup')}</div></div>
+<p>It connects Claude Code, Codex, Cursor, Gemini CLI, Claude Desktop and Windsurf, sets up wake-ups for idle Claude Code sessions, and signs the machine in to ${esc(team.name)} in your browser. Restart open agent sessions afterwards.</p>${cmd('npx -y @dispatch-foo/mcp setup')}</div></div>
 <div class="step"><div class="n">2</div><div><h3>Claude on the web or phone</h3>
 <p>In Claude, open Settings → Connectors → Add custom connector, and use this URL. Sign in and pick ${esc(team.name)}.</p>${cmd(`${origin}/mcp`)}</div></div>
 <div class="step"><div class="n">3</div><div><h3>Bring your team</h3>
 ${
   role === 'admin'
-    ? `<p>Each invite link works once, for 7 days. They sign in, join, and run the same command.</p>${
-        invite === null
-          ? `<form method="post" action="/teams/${esc(team.id)}/invites"><button>New invite link</button></form>`
-          : cmd(`${origin}/join/${invite}`)
-      }`
+    ? '<p>Invite them under People below. They run one command that joins the team and connects their agents.</p>'
     : '<p>Ask an admin of this team for an invite link.</p>'
 }</div></div></div>`;
   // Once a machine of yours is signed in, the setup steps fold away.
@@ -332,18 +353,59 @@ ${
 <form method="post" action="/teams/${esc(team.id)}/linear" class="inline"><input name="key" type="password" required placeholder="lin_api_…" autocomplete="off"><button class="primary">Connect</button></form>
 <p class="muted" style="margin-top:12px">Make a key in Linear under Settings → Security &amp; access → Personal API keys. It is stored encrypted and never shown again. A workspace admin’s key also tells agents when the issues they watch change.</p></div>`;
 
+  // Each person's way to working agents: joined, a machine signed in, an
+  // agent seen. What is missing says how to fix it.
+  const check = (done: boolean, text: string) =>
+    `<span class="${done ? 'ok' : 'muted'}">${done ? '✓' : '○'} ${esc(text)}</span>`;
   const memberRows = members
-    .map(
-      (
-        m
-      ) => `<div class="row"><span class="ink">${esc(m.user.login)}${m.user.name === null ? '' : ` <span class="muted">${esc(m.user.name)}</span>`}</span>
+    .map((m) => {
+      const machines = devices.filter((d) => d.userId === m.user.id);
+      const agents = sessions.filter((s) =>
+        s.address.startsWith(`agent:${m.user.login}/`)
+      );
+      const next =
+        machines.length === 0
+          ? m.user.id === user.id
+            ? 'Next: run npx -y @dispatch-foo/mcp setup on your machine.'
+            : 'Next: they run npx -y @dispatch-foo/mcp setup on their machine.'
+          : agents.length === 0
+            ? 'Next: restart Claude Code (or another agent client) on that machine, then use it once.'
+            : '';
+      return `<div class="row" style="flex-wrap:wrap"><span class="ink">${esc(m.user.login)}${m.user.name === null ? '' : ` <span class="muted">${esc(m.user.name)}</span>`}
+<br><span style="font:400 .78rem/1.6 var(--mono)">${check(true, 'joined')} · ${check(
+        machines.length > 0,
+        machines.length > 1
+          ? `${machines.length} machines signed in`
+          : 'machine signed in'
+      )} · ${check(
+        agents.length > 0,
+        agents.length > 0
+          ? `${agents.length} agent${agents.length === 1 ? '' : 's'} connected`
+          : 'agent connected'
+      )}</span>${next === '' ? '' : `<br><span class="muted" style="font-size:.8rem">${esc(next)}</span>`}</span>
 <span class="meta">${esc(m.role)}${
         role === 'admin' && m.user.id !== user.id
           ? ` <form method="post" action="/teams/${esc(team.id)}/members/${esc(m.user.id)}/remove" style="display:inline"><button class="small">Remove</button></form>`
           : ''
-      }</span></div>`
+      }</span></div>`;
+    })
+    .join('');
+  const inviteRows = openInvites
+    .map(
+      (i) =>
+        `<div class="row"><span><span class="muted">${i.email === null ? 'Invite link' : esc(i.email)}</span><br><span style="font:400 .78rem/1.6 var(--mono)">${check(false, 'not joined yet')}</span></span><span class="meta">expires ${esc(i.expiresAt.slice(0, 10))}</span></div>`
     )
     .join('');
+  // Admins invite here, where the result stays in view (the setup steps
+  // fold away once their own machine is signed in).
+  const invitePanel =
+    role !== 'admin'
+      ? ''
+      : `<div class="pad" style="border-top:1px solid var(--line)"><p class="muted">Each invite works once, for 7 days.${mail.available ? ' Enter an email and Dispatch sends it.' : ''}</p>${
+          inviteLink === null && mail.error !== null
+            ? `<div class="note" style="margin-bottom:12px">${esc(mail.error)}</div>`
+            : ''
+        }${inviteForm}${inviteResult === '' ? '' : `<div style="margin-top:12px">${inviteResult}</div>`}</div>`;
 
   const deviceRows = devices
     .map(
@@ -368,7 +430,7 @@ ${
 ${connect}
 <div class="label">Agent sessions</div>${sessionRows}
 <div class="label">Linear API key for agents</div><div class="box">${linear.error === null ? '' : `<div class="pad"><div class="err">${esc(linear.error)}</div></div>`}${linearBody}</div>
-<div class="label">People</div><div class="box">${memberRows}</div>
+<div class="label">People</div><div class="box">${memberRows}${inviteRows}${invitePanel}</div>
 <div class="label">Signed-in machines</div><div class="box">${deviceRows === '' ? '<div class="pad"><p class="muted">None yet: run the setup command above.</p></div>' : deviceRows}</div>`
   );
 }
@@ -388,23 +450,32 @@ export function devicePage(
   teams: Team[],
   code: string,
   client: string | null,
-  error: string | null
+  error: string | null,
+  /** The team the sign-in's invite lets this person join, if any. */
+  invite: Team | null = null
 ): string {
+  // An invite's team comes first (and is picked), joined on approval.
+  const joining =
+    invite !== null && !teams.some((t) => t.id === invite.id) ? invite : null;
+  const options =
+    invite === null
+      ? teams
+      : [invite, ...teams.filter((t) => t.id !== invite.id)];
   const body =
     client === null
       ? `<p class="lede">Enter the code your terminal or agent shows.</p>
 <form method="get" action="/device" class="inline"><input name="code" value="${esc(code)}" placeholder="ABCD-EFGH" autofocus autocomplete="off"><button class="primary">Continue</button></form>`
-      : teams.length === 0
+      : options.length === 0
         ? `<p class="lede">You are not in a team yet. <a href="/">Make one</a>, or open an invite link, then run the command again.</p>`
         : `<p class="lede"><span class="ink">${esc(client)}</span> is asking to join your team. Check the code matches the one it shows.</p>
 <p><span class="code">${esc(code)}</span></p>
 <form method="post" action="/device"><input type="hidden" name="code" value="${esc(code)}">
 ${
-  teams.length === 1
-    ? `<input type="hidden" name="team" value="${esc(teams[0]?.id ?? '')}"><p>Signs in to <span class="ink">${esc(teams[0]?.name ?? '')}</span>.</p>`
-    : `<p><select name="team">${teams.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}</select></p>`
+  options.length === 1
+    ? `<input type="hidden" name="team" value="${esc(options[0]?.id ?? '')}"><p>${joining === null ? 'Signs in to' : 'Joins you to, and signs this machine in to,'} <span class="ink">${esc(options[0]?.name ?? '')}</span>.</p>`
+    : `<p><select name="team">${options.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}</select></p>`
 }
-<p style="display:flex;gap:8px"><button class="primary" name="decision" value="approve">Sign in</button><button name="decision" value="deny">Deny</button></p></form>
+<p style="display:flex;gap:8px"><button class="primary" name="decision" value="approve">${joining === null ? 'Sign in' : `Join ${esc(joining.name)} and sign in`}</button><button name="decision" value="deny">Deny</button></p></form>
 <p class="muted">Only approve a code you just started yourself.</p>`;
   return page(
     'Sign in an agent',

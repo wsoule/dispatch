@@ -10,6 +10,7 @@ import type { Connection } from './hub.js';
 import { deviceOfRow, TeamHubs } from './hub.js';
 import { LinearError, linearOp, Sealer, TeamLinear } from './linear.js';
 import { machinesHandler } from './machines.js';
+import type { Mailer } from './mailer.js';
 import { mcpHandler } from './mcp.js';
 import { PAGE_CSP, signInPage } from './pages.js';
 import { LinearGrants } from './planner/grants.js';
@@ -39,6 +40,8 @@ export interface TeamServiceConfig extends WebConfig {
   /** The per-workspace daemon's entry (hosting/daemonEntry.ts); null hosts
    * none, and installs are off. */
   daemonEntry?: string | null;
+  /** Sends invite emails (mailer.ts); null or absent sends none. */
+  mailer?: Mailer | null;
 }
 
 export interface TeamService {
@@ -82,6 +85,9 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
     config.origin,
     config.linearFetch
   );
+  // Teams linked before the workspace id was kept get it now, so their
+  // Linear members see the Join button.
+  void linear.backfillOrgIds();
   const sealer =
     config.teamSecret === null || config.teamSecret === ''
       ? null
@@ -147,6 +153,7 @@ export function startTeamService(config: TeamServiceConfig): TeamService {
         }),
     config,
     linear,
+    mailer: config.mailer ?? null,
     sessions: (teamId) => hubs.sessions(teamId),
     deviceRevoked: (deviceId, teamId) => hubs.revoke(deviceId, teamId),
     machines: (user) => machines.list(user),
