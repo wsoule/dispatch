@@ -54,6 +54,8 @@ design takes its shape and adds the part a team needs.
 15. **Billing is Stripe, and self-hosting is free at every size.** No license
     key gates a self-hosted server.
 16. **The server is Elastic-2.0.**
+17. **Every session has a status, and it works with herdr.** Dispatch uses the
+    same status words and the same signal herdr reads, in the first build.
 
 ## The shape
 
@@ -210,6 +212,35 @@ operator's clients hold the operator token, and a run's MCP presents that run's
 own token, which limits what it can read and change. Closing the known gap (a
 run that reads the operator token from disk) still needs sandboxing and is out
 of scope here.
+
+### Status
+
+Every session reports a status, and Dispatch uses herdr's open status signal
+(OSC 7501, the Program Status Protocol) for it instead of inventing its own.
+
+| Reported state | Meaning                                                |
+| -------------- | ------------------------------------------------------ |
+| `working`      | The agent is running.                                  |
+| `blocked`      | It needs a person: `permission`, `question` or `auth`. |
+| `done`         | It finished and nobody has looked yet.                 |
+| `idle`         | It is waiting for input.                               |
+| `error`        | It stopped on a failure.                               |
+
+A report can also carry a progress number and a short message.
+
+- **One status, everywhere.** The core's session records, the server's mirror,
+  the app and the events all use these words. A blocked session names the gate
+  it waits on.
+- **It works with herdr.** The runner prints the signal for every run, and the
+  MCP does for a hand-driven session where the client allows it. A Dispatch
+  agent running inside herdr then shows its state in herdr with no extra setup,
+  and Dispatch reads the same signal from any program that prints it.
+- **Two more states are observed, never reported**: `stalled` (the core stopped
+  hearing from the session) and `ended`. These are Dispatch's own and are not
+  sent to herdr.
+
+`packages/hub` uses `working`, `waiting` and `idle` today; the Rust `home` takes
+the words above, with `waiting` becoming `blocked`.
 
 ### Holders
 
@@ -440,16 +471,10 @@ Phases 3, 5 and 8 can run in parallel once 2 lands.
 
 ## Open decisions
 
-None. Two smaller points were settled last:
-
-- **The server is Elastic-2.0** (Wyat left the choice open; this is the pick).
-  Anyone may run the server for their own team for free. Nobody may sell it to
-  others as a hosted service. With self-hosting free and no license key, this is
-  what keeps paid hosting ours.
-- **The herdr status signal is not in the first build.** herdr is a separate
-  tool some people run their agents inside. Dispatch could print a short signal
-  so those agents show as working or blocked in herdr's own list. Nothing in
-  Dispatch needs it, so it waits until someone asks.
+None. The last point settled was the server's license (Wyat left the choice
+open; Elastic-2.0 is the pick). Anyone may run the server for their own team for
+free. Nobody may sell it to others as a hosted service. With self-hosting free
+and no license key, this is what keeps paid hosting ours.
 
 ## Notes on decided points
 
