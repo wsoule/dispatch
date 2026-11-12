@@ -15,7 +15,7 @@ export interface Mailer {
   send(email: Email): Promise<void>;
 }
 
-export class MailError extends Error {}
+class MailError extends Error {}
 
 const RESEND_API = 'https://api.resend.com/emails';
 
