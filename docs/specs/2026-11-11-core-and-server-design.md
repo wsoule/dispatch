@@ -1,8 +1,8 @@
 # Dispatch core and Dispatch server — design
 
 2026-11-11. Status: **agreed (Wyat, 2026-11-11).** Agents build it phase by
-phase, each phase from its own plan; no plan is written yet. It replaces the
-same day's central-hub draft, whose content is folded in here.
+phase, each phase from its own plan in `docs/plans/`. It replaces the same day's
+central-hub draft, whose content is folded in here.
 
 Sections marked _unverified_ rest on a reading of headers, docs and line counts,
 not on a full read of the code.
@@ -651,7 +651,7 @@ Proposed end state:
 | ----------------- | ------------------------------------------------------------------- | ----------------------- |
 | `dispatch-core`   | The kernel and core modules, the CLI, the MCP, the schema, the spec | Nothing of Dispatch's   |
 | `dispatch-server` | `identity`, the hosted site, billing, the deployment                | Published core packages |
-| `dispatch` (app)  | The native app, its shipped mods, the phone app, the marketing site | The published client    |
+| `dispatch-app`    | The native app, its shipped mods, the phone app                     | The published client    |
 | `dispatch-plugin` | As today                                                            | The published MCP       |
 
 The contract between repositories is the published schema and client package,
@@ -662,8 +662,9 @@ build inside this repo and split last, because the new code would share code
 with the old. It no longer does: the core is a Rust rewrite and nothing carries
 over as code. So `dispatch-core` begins as its own repository, Apache-2.0 from
 its first commit. This repository keeps running and is the reference for
-behavior until the new one replaces it. The server and app repositories are
-created when their phases start.
+behavior until the new one replaces it, and is archived in phase 11. The server
+and app repositories are created when their phases start. One plan per phase is
+in `docs/plans/`.
 
 ## What happens to today's code
 
@@ -699,8 +700,8 @@ changes are mapped to the other.
 ## Costs, stated plainly
 
 - **The desktop app is written again from nothing.** It is the largest part of
-  the tree (roughly 230,000 lines under `apps/desktop`, plus the component
-  library). Every view is rebuilt as a native mod.
+  the tree (about 110,000 lines under `apps/desktop/src` without tests, plus the
+  component library). Every view is rebuilt as a native mod.
 - **Native mods are harder to write than web pages.** Fewer people know the
   toolkit, and nothing from the web's libraries carries over.
 - **The product stops gaining features for the length of the rewrite.** The

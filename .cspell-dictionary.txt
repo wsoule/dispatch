@@ -204,6 +204,7 @@ gesturechange
 gestureend
 gesturestart
 getcwd
+ghostty
 GHSA
 Ghsas
 gifsicle
