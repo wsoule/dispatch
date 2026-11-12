@@ -106,9 +106,10 @@ describe('invite links', () => {
   });
 
   it('points a project-team link at `dispatch team join`', () => {
+    const payload = Buffer.from('{"v":1}').toString('base64url');
     for (const link of [
-      'dispatch-team:eyJ2IjoxfQ',
-      'https://dispatch.foo/join#eyJ2IjoxfQ',
+      `dispatch-team:${payload}`,
+      `https://dispatch.foo/join#${payload}`,
     ])
       expect((parseJoinLink(link) as { error: string }).error).toContain(
         'dispatch team join'

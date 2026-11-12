@@ -50,6 +50,7 @@ bodyless
 braindump
 browserslistrc
 bunfig
+bunfs
 bunx
 bytewise
 cacheinfo
@@ -799,6 +800,7 @@ maría
 middots
 minlen
 multigraph
+multishells
 nandu
 neighbouring
 nodesep
