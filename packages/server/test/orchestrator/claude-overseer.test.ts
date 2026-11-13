@@ -1033,3 +1033,144 @@ describe('ClaudeOverseer live text and narration', () => {
     expect(rows).toEqual(['narration msg_a:0: Let me look.', 'ask Read']);
   });
 });
+
+describe('ClaudeOverseer AskUserQuestion', () => {
+  const ask = {
+    questions: [
+      {
+        question: 'Which library should we use?',
+        header: 'Library',
+        options: [
+          { label: 'date-fns', description: 'Small, functional' },
+          { label: 'moment', description: 'Time zones built in' },
+        ],
+        multiSelect: false,
+      },
+    ],
+  };
+
+  it('asks the human instead of raising a permission card, and returns the answer as the tool input', async () => {
+    const { toolset } = stubToolset();
+    let authorized = 0;
+    const requests: unknown[] = [];
+    const { captured } = await runTurn(successStream(), toolset, undefined, {
+      authorizeTool: () => {
+        authorized += 1;
+        return Promise.resolve({ allow: true });
+      },
+      askHuman: (request) => {
+        requests.push(request);
+        return Promise.resolve({
+          answered: true,
+          answers: { 'Which library should we use?': 'moment' },
+        });
+      },
+    });
+
+    const result = await captured?.canUseTool?.(
+      'AskUserQuestion',
+      ask,
+      callOpts
+    );
+    expect(result).toEqual({
+      behavior: 'allow',
+      updatedInput: {
+        ...ask,
+        answers: { 'Which library should we use?': 'moment' },
+      },
+    });
+    expect(authorized).toBe(0);
+    expect(requests).toEqual([
+      {
+        requestId: 'req-1',
+        questions: [
+          {
+            question: 'Which library should we use?',
+            header: 'Library',
+            options: [
+              { label: 'date-fns', description: 'Small, functional' },
+              { label: 'moment', description: 'Time zones built in' },
+            ],
+            multiSelect: false,
+          },
+        ],
+      },
+    ]);
+    // AskUserQuestion is never pre-approved: an allow rule would skip the answers.
+    expect(captured?.allowedTools).not.toContain('AskUserQuestion');
+  });
+
+  it('refuses with the reason when the question went unanswered', async () => {
+    const { toolset } = stubToolset();
+    const { captured } = await runTurn(successStream(), toolset, undefined, {
+      askHuman: () =>
+        Promise.resolve({ answered: false, reason: 'the turn ended' }),
+    });
+    expect(
+      await captured?.canUseTool?.('AskUserQuestion', ask, callOpts)
+    ).toEqual({ behavior: 'deny', message: 'the turn ended' });
+  });
+
+  it('refuses when nobody can answer, or the input is not a list of questions', async () => {
+    const { toolset } = stubToolset();
+    const { captured } = await runTurn(successStream(), toolset);
+    const nobody = await captured?.canUseTool?.(
+      'AskUserQuestion',
+      ask,
+      callOpts
+    );
+    expect(nobody).toMatchObject({ behavior: 'deny' });
+    const asked: unknown[] = [];
+    const { captured: withHuman } = await runTurn(
+      successStream(),
+      toolset,
+      undefined,
+      {
+        askHuman: (r) => {
+          asked.push(r);
+          return Promise.resolve({ answered: true, answers: {} });
+        },
+      }
+    );
+    expect(
+      await withHuman?.canUseTool?.(
+        'AskUserQuestion',
+        { questions: 'which?' },
+        callOpts
+      )
+    ).toMatchObject({ behavior: 'deny' });
+    expect(asked).toEqual([]);
+  });
+
+  it('never holds a question at the floor, even when its text spells out a floor command', async () => {
+    const { toolset } = stubToolset();
+    let authorized = 0;
+    const { captured } = await runTurn(successStream(), toolset, undefined, {
+      authorizeTool: () => {
+        authorized += 1;
+        return Promise.resolve({ allow: false });
+      },
+    });
+    const risky = {
+      questions: [
+        {
+          question: 'Should I run git push --force origin main?',
+          header: 'Push',
+          options: [
+            { label: 'Yes', description: 'gh release create v2.0.0' },
+            { label: 'No', description: 'Leave it' },
+          ],
+          multiSelect: false,
+        },
+      ],
+    };
+    const decided = await floorDecision(
+      captured?.hooks,
+      'AskUserQuestion',
+      risky
+    );
+    // No decision at all: the call goes on to canUseTool, where its answers come from.
+    expect(decided).toBeUndefined();
+    expect(authorized).toBe(0);
+  });
+});

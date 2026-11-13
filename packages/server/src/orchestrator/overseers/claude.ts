@@ -7,6 +7,7 @@ import type {
   AnyZodRawShape,
   Options,
   PermissionMode,
+  PermissionResult,
   Query,
   SdkMcpToolDefinition,
   SDKUserMessage,
@@ -27,6 +28,8 @@ import type { FloorPolicy } from '../floorHook.js';
 import type {
   OverseerBackend,
   OverseerCommand,
+  OverseerQuestion,
+  OverseerQuestionOption,
   OverseerToolDescriptor,
   OverseerToolset,
   OverseerTurn,
@@ -46,6 +49,73 @@ import {
 // filter below all key off it, and the wiring test asserts on it.
 const SERVER_NAME = 'overseer';
 export const OVERSEER_TOOL_PREFIX = `mcp__${SERVER_NAME}__`;
+
+// Claude Code's ask-the-user tool. Its picker only exists in the interactive
+// CLI, so an SDK session gets its answers only from the permission handler:
+// canUseTool returns the call allowed with `answers` (keyed by question text)
+// merged into its input, which the tool then reports to the model.
+export const ASK_USER_QUESTION = 'AskUserQuestion';
+
+/**
+ * Reads AskUserQuestion's input into OverseerQuestions, or null when it is not
+ * the shape the tool takes (the CLI validates it first; this guards a schema
+ * change). Option descriptions default to empty rather than failing a call.
+ */
+export function askUserQuestionsOf(input: unknown): OverseerQuestion[] | null {
+  const raw = (input as { questions?: unknown } | null)?.questions;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const questions: OverseerQuestion[] = [];
+  for (const q of raw as Record<string, unknown>[]) {
+    if (typeof q?.question !== 'string' || !Array.isArray(q.options)) {
+      return null;
+    }
+    const options: OverseerQuestionOption[] = [];
+    for (const o of q.options as Record<string, unknown>[]) {
+      if (typeof o?.label !== 'string') return null;
+      options.push({
+        label: o.label,
+        description: typeof o.description === 'string' ? o.description : '',
+      });
+    }
+    questions.push({
+      question: q.question,
+      header: typeof q.header === 'string' ? q.header : '',
+      options,
+      multiSelect: q.multiSelect === true,
+    });
+  }
+  return questions;
+}
+
+// Answers one AskUserQuestion call through the manager's askHuman: allowed
+// with the human's answers merged in, or refused with why it went unanswered.
+// No permission card is ever raised for it.
+async function askTheHuman(
+  input: Record<string, unknown>,
+  requestId: string,
+  askHuman: OverseerTurnOptions['askHuman']
+): Promise<PermissionResult> {
+  const questions = askUserQuestionsOf(input);
+  if (questions === null) {
+    return {
+      behavior: 'deny',
+      message: 'AskUserQuestion input was not a list of questions with options',
+    };
+  }
+  if (askHuman === undefined) {
+    return {
+      behavior: 'deny',
+      message:
+        'no one is available to answer questions in this session; say what you need in your reply instead',
+    };
+  }
+  const answer = await askHuman({ requestId, questions });
+  if (!answer.answered) return { behavior: 'deny', message: answer.reason };
+  return {
+    behavior: 'allow',
+    updatedInput: { ...input, answers: answer.answers },
+  };
+}
 
 // The subset of Anthropic content-block fields the transcript needs: an
 // assistant message's `tool_use` blocks name the built-in calls the model is
@@ -285,6 +355,9 @@ export class ClaudeOverseer implements OverseerBackend {
         text.commit();
         if (allowed.has(toolName)) {
           return { behavior: 'allow', updatedInput: input };
+        }
+        if (toolName === ASK_USER_QUESTION) {
+          return askTheHuman(input, callOpts.requestId, opts.askHuman);
         }
         if (approvedInHook.get(callOpts.toolUseID) === JSON.stringify(input)) {
           approvedInHook.delete(callOpts.toolUseID);
@@ -569,6 +642,8 @@ function reportToolUses(
   for (const block of content as AssistantContentBlock[]) {
     if (block.type !== 'tool_use' || block.name === undefined) continue;
     if (block.name.startsWith(OVERSEER_TOOL_PREFIX)) continue;
+    // A question shows as its own card, not as a tool row beside it.
+    if (block.name === ASK_USER_QUESTION) continue;
     if (block.id !== undefined) running.add(block.id);
     onToolUse(block.name, block.input, block.id);
   }

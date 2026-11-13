@@ -278,6 +278,8 @@ export type {
   OverseerActionTier,
   OverseerFieldChange,
   OverseerApproval,
+  OverseerPendingQuestion,
+  OverseerQuestion,
   OverseerAttachment,
   RunAttachment,
   OverseerCommand,
@@ -364,6 +366,7 @@ export {
 } from './useOverseerSession';
 export type {
   OverseerApprovalDecision,
+  OverseerQuestionReply,
   OverseerLive,
   OverseerSession,
   OverseerSessionOptions,

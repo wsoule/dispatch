@@ -37,6 +37,8 @@ import {
 import type { OverseerRecord } from '../../src/orchestrator/overseer.js';
 import type {
   OverseerBackend,
+  OverseerQuestion,
+  OverseerQuestionAnswer,
   OverseerToolset,
   OverseerTurn,
   OverseerTurnOptions,
@@ -1668,6 +1670,129 @@ describe('overseer on the bus', () => {
     });
     messaging.close();
   });
+
+  describe('questions (AskUserQuestion)', () => {
+    const library: OverseerQuestion = {
+      question: 'Which library should we use?',
+      header: 'Library',
+      options: [
+        { label: 'date-fns', description: 'Small, functional' },
+        { label: 'moment', description: 'Time zones built in' },
+      ],
+      multiSelect: false,
+    };
+    const checks: OverseerQuestion = {
+      question: 'Which checks should run?',
+      header: 'Checks',
+      options: [
+        { label: 'lint', description: '' },
+        { label: 'tests', description: '' },
+      ],
+      multiSelect: true,
+    };
+
+    const openQuestions = (messaging: {
+      engine: { openBlocking(): Message[] };
+    }) =>
+      messaging.engine
+        .openBlocking()
+        .filter((m) => m.from === 'agent:wyat/overseer');
+
+    it('asks each question of its owner, and an answer under Needs you reaches the session', async () => {
+      const base = makeHarness();
+      const asking = new AskingBackend([library, checks]);
+      const { messaging, manager } = await openBus(base, asking);
+      const started = manager.start('pick for me', 'fake');
+      await waitFor(() => openQuestions(messaging).length === 2);
+
+      const [single, multi] = openQuestions(messaging);
+      // A single choice offers its options as buttons; no gate, so text answers too.
+      expect(single?.choices).toEqual(['date-fns', 'moment']);
+      expect(single?.body).toContain('moment: Time zones built in');
+      expect(gateOfType(single)).toBeUndefined();
+      expect(single?.data).toEqual({
+        overseerQuestion: {
+          conversation: started.id,
+          requestId: 'ask-1',
+          index: 0,
+        },
+      });
+      // Several at once can only be typed.
+      expect(multi?.choices).toBeUndefined();
+      expect(manager.get(started.id).pendingApprovals).toEqual([]);
+
+      await messaging.engine.reply(
+        single.id,
+        { body: 'moment', choice: 'moment' },
+        WYAT
+      );
+      await waitFor(
+        () =>
+          manager.get(started.id).pendingQuestions?.[0]?.answers[
+            library.question
+          ] === 'moment'
+      );
+      // One of two answered: the call still waits.
+      expect(asking.answers).toEqual([]);
+
+      await messaging.engine.reply(multi.id, { body: 'lint, tests' }, WYAT);
+      await waitFor(() => manager.get(started.id).state === 'ready');
+      expect(asking.answers).toEqual([
+        {
+          answered: true,
+          answers: {
+            [library.question]: 'moment',
+            [checks.question]: 'lint, tests',
+          },
+        },
+      ]);
+      expect(openQuestions(messaging)).toEqual([]);
+      expect(manager.get(started.id).pendingQuestions).toEqual([]);
+    });
+
+    it("counts only the asked human's answer, and asks again after anyone else's", async () => {
+      const base = makeHarness();
+      const asking = new AskingBackend([library]);
+      const { messaging, manager } = await openBus(base, asking);
+      const started = manager.start('pick for me', 'fake');
+      await waitFor(() => openQuestions(messaging).length === 1);
+      const [first] = openQuestions(messaging);
+      // Another human's reply is accepted by the engine and uses up the
+      // message, but it settles nothing: the question is asked again.
+      const SAM: Sender = { address: 'human:sam', canDecide: true };
+      await messaging.engine.reply(first.id, { body: 'moment' }, SAM);
+      await waitFor(() => {
+        const ids = manager.get(started.id).pendingQuestions?.[0]?.messageIds;
+        return ids?.[0] != null && ids[0] !== first.id;
+      });
+      expect(asking.answers).toEqual([]);
+      expect(manager.get(started.id).pendingQuestions?.[0]?.answers).toEqual(
+        {}
+      );
+      const [open] = openQuestions(messaging);
+      await messaging.engine.reply(open.id, { body: 'date-fns' }, WYAT);
+      await waitFor(() => manager.get(started.id).state === 'ready');
+      expect(asking.answers).toEqual([
+        { answered: true, answers: { [library.question]: 'date-fns' } },
+      ]);
+    });
+
+    it('closes the questions it asked when the turn stops unanswered', async () => {
+      const base = makeHarness();
+      const asking = new AskingBackend([library]);
+      const { messaging, manager } = await openBus(base, asking);
+      const started = manager.start('pick for me', 'fake');
+      await waitFor(() => openQuestions(messaging).length === 1);
+      manager.stop(started.id);
+      await waitFor(() => openQuestions(messaging).length === 0);
+      expect(asking.answers).toEqual([
+        {
+          answered: false,
+          reason: 'the turn ended before the human answered',
+        },
+      ]);
+    });
+  });
 });
 
 describe('an answer pinned to its card', () => {
@@ -3050,5 +3175,141 @@ describe('overseer action tiers', () => {
     );
     expect(third?.batch).toBeDefined();
     expect(third?.batch).not.toBe(first.batch);
+  });
+});
+
+// A backend whose every turn asks the human `questions` through askHuman and
+// records how the call ended, the way ClaudeOverseer's AskUserQuestion does.
+class AskingBackend implements OverseerBackend {
+  readonly answers: OverseerQuestionAnswer[] = [];
+  private asked = 0;
+
+  constructor(private readonly questions: OverseerQuestion[]) {}
+
+  start(
+    _prompt: string,
+    _toolset: OverseerToolset,
+    options?: OverseerTurnOptions
+  ): Promise<OverseerTurn> {
+    return this.turn(options);
+  }
+
+  sendMessage(
+    _sessionId: string | undefined,
+    _message: string,
+    _toolset: OverseerToolset,
+    options?: OverseerTurnOptions
+  ): Promise<OverseerTurn> {
+    return this.turn(options);
+  }
+
+  private async turn(options?: OverseerTurnOptions): Promise<OverseerTurn> {
+    this.asked += 1;
+    const answer = (await options?.askHuman?.({
+      requestId: `ask-${this.asked}`,
+      questions: this.questions,
+    })) ?? { answered: false, reason: 'no askHuman' };
+    this.answers.push(answer);
+    return { reply: 'thanks', sessionId: 'sess' };
+  }
+}
+
+describe('OverseerManager questions (AskUserQuestion)', () => {
+  const which: OverseerQuestion = {
+    question: 'Which library should we use?',
+    header: 'Library',
+    options: [
+      { label: 'date-fns', description: 'Small, functional' },
+      { label: 'moment', description: 'Time zones built in' },
+    ],
+    multiSelect: false,
+  };
+
+  function makeAsking(questions: OverseerQuestion[]) {
+    const h = makeManager({ ok: true, reply: 'unused' });
+    const asking = new AskingBackend(questions);
+    h.manager.registerBackend('asking', asking);
+    return { ...h, asking };
+  }
+
+  it('parks the question as a card, never a permission, and hands a typed answer back', async () => {
+    const h = makeAsking([which]);
+    const started = h.manager.start('pick one', 'asking');
+    await waitFor(
+      () => (h.manager.get(started.id).pendingQuestions ?? []).length > 0
+    );
+
+    const parked = h.manager.get(started.id);
+    expect(parked.state).toBe('running');
+    expect(parked.pendingApprovals).toEqual([]);
+    expect(parked.pendingQuestions).toEqual([
+      {
+        requestId: 'ask-1',
+        questions: [which],
+        messageIds: [null],
+        answers: {},
+        askedAt: expect.any(String),
+      },
+    ]);
+    expect(parked.messages.at(-1)).toMatchObject({
+      role: 'question',
+      requestId: 'ask-1',
+      outcome: 'pending',
+      text: 'Which library should we use?',
+    });
+
+    // A free-text "Other" answer is just the human's words.
+    h.manager.answerQuestion(started.id, 'ask-1', {
+      [which.question]: '  neither, use Temporal  ',
+    });
+    await waitFor(() => h.manager.get(started.id).state === 'ready');
+    expect(h.asking.answers).toEqual([
+      {
+        answered: true,
+        answers: { [which.question]: 'neither, use Temporal' },
+      },
+    ]);
+    const settled = h.manager.get(started.id);
+    expect(settled.pendingQuestions).toEqual([]);
+    expect(
+      settled.messages
+        .filter((m) => m.role === 'question')
+        .map((m) => [m.outcome, m.text])
+    ).toEqual([
+      ['pending', 'Which library should we use?'],
+      ['answered', 'Answered: Library → neither, use Temporal'],
+    ]);
+  });
+
+  it('keeps an unanswered question open while the turn runs', async () => {
+    const h = makeAsking([which]);
+    const started = h.manager.start('pick one', 'asking');
+    await waitFor(
+      () => (h.manager.get(started.id).pendingQuestions ?? []).length > 0
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // A blank answer, or one to a question it did not ask, settles nothing.
+    h.manager.answerQuestion(started.id, 'ask-1', {
+      [which.question]: '   ',
+      'Something else?': 'yes',
+    });
+    const still = h.manager.get(started.id);
+    expect(still.state).toBe('running');
+    expect(still.pendingQuestions?.[0]?.answers).toEqual({});
+    expect(h.asking.answers).toEqual([]);
+
+    expect(() =>
+      h.manager.answerQuestion(started.id, 'ask-9', { [which.question]: 'x' })
+    ).toThrow(OrchestratorNotFoundError);
+
+    h.manager.stop(started.id);
+    await waitFor(() => h.manager.get(started.id).state !== 'running');
+    expect(h.asking.answers).toEqual([
+      { answered: false, reason: 'the turn ended before the human answered' },
+    ]);
+    expect(h.manager.get(started.id).messages.at(-2)).toMatchObject({
+      role: 'question',
+      outcome: 'denied',
+    });
   });
 });
