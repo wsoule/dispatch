@@ -21,6 +21,9 @@ import { backendModel, pickAgentBackend } from './agentBackends.js';
 import type {
   OverseerBackend,
   OverseerCommand,
+  OverseerQuestion,
+  OverseerQuestionAnswer,
+  OverseerQuestionRequest,
   OverseerToolDescriptor,
   OverseerToolRequest,
   OverseerToolResult,
@@ -101,7 +104,8 @@ type OverseerState = 'running' | 'ready' | 'failed';
  * from. `action` records a mutating registry call's life: queued at
  * `pending`, then `applied`/`denied`/`failed` once a human decides.
  * `approval` records a built-in tool call's life: parked at `pending`, then
- * `allowed`/`denied`.
+ * `allowed`/`denied`. `question` records an AskUserQuestion call's life: asked
+ * at `pending`, then `answered`, or `denied` when its turn ended unanswered.
  */
 export interface OverseerMessage {
   role:
@@ -111,6 +115,7 @@ export interface OverseerMessage {
     | 'tool'
     | 'action'
     | 'approval'
+    | 'question'
     | 'notice';
   text: string;
   at: string;
@@ -132,7 +137,7 @@ export interface OverseerMessage {
   status?: 'running' | 'done' | 'error';
   /** `action` entries: the OverseerAction this entry reports on. */
   actionId?: string;
-  /** `approval` entries: the OverseerApproval this entry reports on. */
+  /** `approval` and `question` entries: the call this entry reports on. */
   requestId?: string;
   /** Applied `action` entries: the tasks the action created or dispatched,
    *  in order, so a client can show them as a list it links to. */
@@ -140,9 +145,16 @@ export interface OverseerMessage {
   /**
    * `action` and `approval` entries only. `failed` means the human approved
    * an action but the effect itself threw — the action stays pending so it
-   * can be retried. `allowed` is an approval's yes; `applied` an action's.
+   * can be retried. `allowed` is an approval's yes; `applied` an action's;
+   * `answered` a question's.
    */
-  outcome?: 'pending' | 'applied' | 'allowed' | 'denied' | 'failed';
+  outcome?:
+    | 'pending'
+    | 'applied'
+    | 'allowed'
+    | 'denied'
+    | 'failed'
+    | 'answered';
   /** `user` and `assistant` entries posted to the bus: the message there. */
   messageId?: string;
   /** `assistant` entries: what the turn that produced it cost. */
@@ -201,6 +213,24 @@ interface OverseerApproval {
   held?: boolean;
 }
 
+/**
+ * An AskUserQuestion call the running turn is blocked on: the session asked
+ * the human one or more questions and waits for every answer. Each question is
+ * also asked on the bus (`messageIds`, in question order, once raised), so it
+ * can be answered from the chat card, Needs you or a thread alike: whichever
+ * answer lands first settles that question.
+ */
+export interface OverseerPendingQuestion {
+  /** The backend's handle for the call. */
+  requestId: string;
+  questions: OverseerQuestion[];
+  /** Each question's bus message, by index; null until it is raised. */
+  messageIds: (string | null)[];
+  /** The answers given so far, keyed by question text. */
+  answers: Record<string, string>;
+  askedAt: string;
+}
+
 export interface OverseerRecord {
   id: string;
   /** The human who opened it; only they and the operator read it or speak in it. */
@@ -234,6 +264,12 @@ export interface OverseerRecord {
    * ends, denies whatever was still parked.
    */
   pendingApprovals: OverseerApproval[];
+  /**
+   * AskUserQuestion calls the running turn is blocked on, oldest first. Like
+   * `pendingApprovals`, only non-empty while `state` is `running`. Absent on
+   * records written before questions existed.
+   */
+  pendingQuestions?: OverseerPendingQuestion[];
   /**
    * Decisions the human has made since the last turn, not yet shown to the
    * model. Drained into the next turn's prompt so the assistant never claims
@@ -371,6 +407,9 @@ const AUTO_ALLOWED_EDIT_TOOLS = new Set([
 // human decided — the backend threw, or the conversation is gone.
 const TURN_ENDED_DENIAL = 'the turn ended before this call was decided';
 
+// Why a question went unanswered when its turn ended first.
+const TURN_ENDED_UNANSWERED = 'the turn ended before the human answered';
+
 // Why a queued action an earlier daemon left on the record was dropped at boot.
 const RESTART_DENIAL = 'Dispatch restarted before anyone decided';
 
@@ -428,6 +467,31 @@ function describeToolCall(toolName: string, input: unknown): string {
   return `${toolName}: ${capped}`;
 }
 
+// The questions of one call on one line, for the transcript row and the
+// card's search text: each question, flattened like any model-authored text.
+function questionSummary(questions: OverseerQuestion[]): string {
+  const line = questions.map((q) => untrustedInline(q.question)).join(' · ');
+  return line.length <= MAX_CALL_TEXT
+    ? line
+    : `${line.slice(0, MAX_CALL_TEXT)}…`;
+}
+
+// What the human answered, one "question → answer" per question.
+function answeredSummary(
+  questions: OverseerQuestion[],
+  answers: Record<string, string>
+): string {
+  const line = questions
+    .map(
+      (q) =>
+        `${untrustedInline(q.header !== '' ? q.header : q.question)} → ${untrustedInline(answers[q.question] ?? '')}`
+    )
+    .join(' · ');
+  const capped =
+    line.length <= MAX_CALL_TEXT ? line : `${line.slice(0, MAX_CALL_TEXT)}…`;
+  return `Answered: ${capped}`;
+}
+
 // Renders a tool result for the transcript: compact JSON, capped.
 function describeToolResult(data: unknown): string {
   return capToolResult(JSON.stringify(data) ?? String(data));
@@ -481,6 +545,12 @@ export class OverseerManager {
     string,
     (decision: ApprovalDecision) => void
   >();
+  // The resolver for each asked AskUserQuestion call, keyed by requestId —
+  // what the last answer settles and what a turn's end sweeps.
+  private readonly questionResolvers = new Map<
+    string,
+    (answer: OverseerQuestionAnswer) => void
+  >();
   // What the human allowed "for this conversation": per program for Bash, up to
   // four hours or the next rollover. Off the record: a grant, not transcript.
   private readonly grants = new GrantStore();
@@ -523,6 +593,7 @@ export class OverseerManager {
       if (record.state === 'running') this.interrupted(record);
       this.dropOrphanedActions(record.id);
     }
+    ctx.bus?.onAnswer((answer) => this.answeredOnBus(answer));
   }
 
   // Actions an earlier daemon queued: the registry that held them lives in
@@ -574,10 +645,14 @@ export class OverseerManager {
         TURN_ENDED_DENIAL
       );
     }
+    for (const pending of record.pendingQuestions ?? []) {
+      this.closeBusQuestions(pending, TURN_ENDED_UNANSWERED);
+    }
     this.updateRecord(record.id, {
       state: 'failed',
       error: 'Dispatch restarted during this turn',
       pendingApprovals: [],
+      pendingQuestions: [],
       messages: [
         ...settleRunningCalls(record.messages),
         {
@@ -645,6 +720,7 @@ export class OverseerManager {
           config.orchestrator.permissionMode,
           request
         ),
+      askHuman: (request) => this.askHuman(conversationId, request),
       onToolUse: (toolName, input, toolUseId) =>
         this.toolUse(conversationId, turnId, toolName, input, toolUseId),
       onToolResult: (toolUseId, status) =>
@@ -1631,8 +1707,10 @@ export class OverseerManager {
     );
   }
 
-  // Denies every call still parked on a conversation whose turn is over.
+  // Denies every call still parked on a conversation whose turn is over, and
+  // closes every question it asked that nobody answered.
   private sweepApprovals(conversationId: string): void {
+    this.sweepQuestions(conversationId);
     const record = this.conversations.get(conversationId);
     if (record === undefined || record.pendingApprovals.length === 0) return;
     for (const approval of record.pendingApprovals) {
@@ -1653,6 +1731,222 @@ export class OverseerManager {
       );
     }
     this.updateRecord(conversationId, { pendingApprovals: [] });
+  }
+
+  // ---------------------------------------------------------------------
+  // Questions (AskUserQuestion)
+  // ---------------------------------------------------------------------
+
+  // Asks the human an AskUserQuestion call's questions. Never a permission and
+  // never a card that only allows: the call parks on the record as a question
+  // card, each question is also asked on the bus, and the promise resolves
+  // once every question has an answer. No timeout: an unanswered question
+  // stays open for as long as its turn runs.
+  private askHuman(
+    conversationId: string,
+    request: OverseerQuestionRequest
+  ): Promise<OverseerQuestionAnswer> {
+    const record = this.conversations.get(conversationId);
+    if (record === undefined) {
+      return Promise.resolve({
+        answered: false,
+        reason: TURN_ENDED_UNANSWERED,
+      });
+    }
+    const pending: OverseerPendingQuestion = {
+      requestId: request.requestId,
+      questions: request.questions,
+      messageIds: request.questions.map(() => null),
+      answers: {},
+      askedAt: new Date().toISOString(),
+    };
+    return new Promise<OverseerQuestionAnswer>((resolve) => {
+      this.questionResolvers.set(request.requestId, resolve);
+      this.updateRecord(conversationId, {
+        pendingQuestions: [...(record.pendingQuestions ?? []), pending],
+      });
+      this.appendMessage(conversationId, {
+        role: 'question',
+        requestId: request.requestId,
+        outcome: 'pending',
+        text: questionSummary(request.questions),
+      });
+      void this.raiseQuestions(conversationId, pending);
+    });
+  }
+
+  // Asks each question of a parked call on the bus and records its message id.
+  // One the bus cannot ask still waits for an answer from the chat card.
+  private async raiseQuestions(
+    conversationId: string,
+    pending: OverseerPendingQuestion
+  ): Promise<void> {
+    const bus = this.ctx.bus;
+    if (bus === undefined) return;
+    for (const [index, question] of pending.questions.entries()) {
+      let messageId: string;
+      try {
+        messageId = await bus.askQuestion({
+          conversation: conversationId,
+          requestId: pending.requestId,
+          index,
+          question,
+        });
+      } catch (err) {
+        console.error(
+          `overseer: could not ask question ${index} of ${pending.requestId} on ${conversationId}`,
+          err
+        );
+        continue;
+      }
+      const current = this.pendingQuestion(conversationId, pending.requestId);
+      // Settled while it was being asked: nothing waits on this one now.
+      if (current === undefined) {
+        bus.closeQuestion(messageId, 'the question was already answered');
+        continue;
+      }
+      this.replacePendingQuestion(conversationId, {
+        ...current,
+        messageIds: current.messageIds.map((id, i) =>
+          i === index ? messageId : id
+        ),
+      });
+    }
+  }
+
+  /**
+   * Answers questions of a parked AskUserQuestion call: `answers` maps a
+   * question's text to the answer, a chosen label or the human's own words.
+   * Once every question has an answer the call resolves and the turn goes on;
+   * until then the card keeps waiting on the rest.
+   */
+  answerQuestion(
+    conversationId: string,
+    requestId: string,
+    answers: Record<string, string>
+  ): OverseerRecord {
+    const pending = this.pendingQuestion(conversationId, requestId);
+    if (pending === undefined || !this.questionResolvers.has(requestId)) {
+      throw new OrchestratorNotFoundError(
+        `no question awaiting an answer on ${conversationId}: ${requestId}`
+      );
+    }
+    const known = new Set(pending.questions.map((q) => q.question));
+    const merged = { ...pending.answers };
+    for (const [question, answer] of Object.entries(answers)) {
+      const text = answer.trim();
+      if (known.has(question) && text !== '') merged[question] = text;
+    }
+    const updated = { ...pending, answers: merged };
+    if (pending.questions.some((q) => merged[q.question] === undefined)) {
+      this.replacePendingQuestion(conversationId, updated);
+      return this.get(conversationId);
+    }
+    this.settleQuestion(conversationId, updated, {
+      answered: true,
+      answers: merged,
+    });
+    return this.get(conversationId);
+  }
+
+  // An answer on the bus to a question the overseer asked: the chosen option,
+  // or the typed text when there was no choice to pick.
+  private answeredOnBus(answer: {
+    questionId: string;
+    body: string;
+    choice?: string;
+  }): void {
+    for (const record of this.conversations.values()) {
+      for (const pending of record.pendingQuestions ?? []) {
+        const index = pending.messageIds.indexOf(answer.questionId);
+        if (index === -1) continue;
+        const question = pending.questions[index];
+        const text = (answer.choice ?? answer.body).trim();
+        if (question === undefined || text === '') return;
+        try {
+          this.answerQuestion(record.id, pending.requestId, {
+            [question.question]: text,
+          });
+        } catch (err) {
+          console.error('overseer: could not apply an answer', err);
+        }
+        return;
+      }
+    }
+  }
+
+  // Resolves a parked call, takes it off the record, and closes whichever of
+  // its bus questions are still open.
+  private settleQuestion(
+    conversationId: string,
+    pending: OverseerPendingQuestion,
+    answer: OverseerQuestionAnswer
+  ): void {
+    const resolve = this.questionResolvers.get(pending.requestId);
+    this.questionResolvers.delete(pending.requestId);
+    const record = this.conversations.get(conversationId);
+    if (record !== undefined) {
+      this.updateRecord(conversationId, {
+        pendingQuestions: (record.pendingQuestions ?? []).filter(
+          (q) => q.requestId !== pending.requestId
+        ),
+      });
+      this.appendMessage(conversationId, {
+        role: 'question',
+        requestId: pending.requestId,
+        outcome: answer.answered ? 'answered' : 'denied',
+        text: answer.answered
+          ? answeredSummary(pending.questions, answer.answers)
+          : `Not answered: ${questionSummary(pending.questions)} — ${answer.reason}`,
+      });
+    }
+    this.closeBusQuestions(
+      pending,
+      answer.answered ? 'answered in the Overseer' : answer.reason
+    );
+    resolve?.(answer);
+  }
+
+  // Ends every question still asked on a conversation whose turn is over.
+  private sweepQuestions(conversationId: string): void {
+    const record = this.conversations.get(conversationId);
+    for (const pending of record?.pendingQuestions ?? []) {
+      this.settleQuestion(conversationId, pending, {
+        answered: false,
+        reason: TURN_ENDED_UNANSWERED,
+      });
+    }
+  }
+
+  private closeBusQuestions(
+    pending: OverseerPendingQuestion,
+    reason: string
+  ): void {
+    for (const id of pending.messageIds) {
+      if (id !== null) this.ctx.bus?.closeQuestion(id, reason);
+    }
+  }
+
+  private pendingQuestion(
+    conversationId: string,
+    requestId: string
+  ): OverseerPendingQuestion | undefined {
+    return this.conversations
+      .get(conversationId)
+      ?.pendingQuestions?.find((q) => q.requestId === requestId);
+  }
+
+  private replacePendingQuestion(
+    conversationId: string,
+    next: OverseerPendingQuestion
+  ): void {
+    const record = this.conversations.get(conversationId);
+    if (record === undefined) return;
+    this.updateRecord(conversationId, {
+      pendingQuestions: (record.pendingQuestions ?? []).map((q) =>
+        q.requestId === next.requestId ? next : q
+      ),
+    });
   }
 
   // ---------------------------------------------------------------------

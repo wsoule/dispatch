@@ -635,10 +635,11 @@ export class DecisionFeed {
       const run = runId === undefined ? undefined : runs.get(runId);
       const taskId = run?.taskId ?? gateTaskId(message, gate);
       const owner = runId === undefined ? systemGateOwner(message) : undefined;
+      const asked = overseerQuestionOf(message);
       const conversation =
         gate?.type === 'overseer-action' || gate?.type === 'tool-approval'
           ? gate.conversation
-          : undefined;
+          : asked?.conversation;
       const taskTitle =
         run?.taskTitle ??
         (taskId === undefined ? undefined : this.taskTitle(taskId));
@@ -684,6 +685,10 @@ export class DecisionFeed {
           ...base,
           summary: `${taskTitle ?? 'A task'}: an agent proposes an edit to an accepted doc`,
         });
+      } else if (asked !== null) {
+        // The question is the body's first line; its options follow.
+        const question = message.body.split('\n', 1)[0] ?? message.body;
+        items.push({ ...base, summary: `Overseer asks: ${oneLine(question)}` });
       } else {
         items.push({ ...base, summary: oneLine(message.body) });
       }
@@ -809,4 +814,17 @@ export class DecisionFeed {
     }
     return items;
   }
+}
+
+// The conversation an Overseer AskUserQuestion message belongs to, from the
+// `data` overseerBus.askQuestion writes; null for any other message.
+function overseerQuestionOf(message: Message): { conversation: string } | null {
+  const data = message.data;
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    return null;
+  }
+  const asked = (data as Record<string, unknown>)['overseerQuestion'];
+  if (typeof asked !== 'object' || asked === null) return null;
+  const conversation = (asked as Record<string, unknown>)['conversation'];
+  return typeof conversation === 'string' ? { conversation } : null;
 }
