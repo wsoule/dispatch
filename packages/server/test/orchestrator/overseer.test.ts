@@ -1750,6 +1750,33 @@ describe('overseer on the bus', () => {
       expect(manager.get(started.id).pendingQuestions).toEqual([]);
     });
 
+    it("counts only the asked human's answer, and asks again after anyone else's", async () => {
+      const base = makeHarness();
+      const asking = new AskingBackend([library]);
+      const { messaging, manager } = await openBus(base, asking);
+      const started = manager.start('pick for me', 'fake');
+      await waitFor(() => openQuestions(messaging).length === 1);
+      const [first] = openQuestions(messaging);
+      // Another human's reply is accepted by the engine and uses up the
+      // message, but it settles nothing: the question is asked again.
+      const SAM: Sender = { address: 'human:sam', canDecide: true };
+      await messaging.engine.reply(first.id, { body: 'moment' }, SAM);
+      await waitFor(() => {
+        const ids = manager.get(started.id).pendingQuestions?.[0]?.messageIds;
+        return ids?.[0] != null && ids[0] !== first.id;
+      });
+      expect(asking.answers).toEqual([]);
+      expect(manager.get(started.id).pendingQuestions?.[0]?.answers).toEqual(
+        {}
+      );
+      const [open] = openQuestions(messaging);
+      await messaging.engine.reply(open.id, { body: 'date-fns' }, WYAT);
+      await waitFor(() => manager.get(started.id).state === 'ready');
+      expect(asking.answers).toEqual([
+        { answered: true, answers: { [library.question]: 'date-fns' } },
+      ]);
+    });
+
     it('closes the questions it asked when the turn stops unanswered', async () => {
       const base = makeHarness();
       const asking = new AskingBackend([library]);

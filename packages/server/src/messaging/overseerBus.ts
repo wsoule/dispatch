@@ -40,6 +40,8 @@ export function ensureOverseerActor(
 export interface OverseerBus {
   /** The overseer's own address, `agent:<owner>/overseer`. */
   readonly overseer: Address;
+  /** The daemon owner, whom the overseer's gates and questions go to by default. */
+  readonly owner: Address;
   // A human line from `speaker`, or the overseer's reply to that speaker.
   post(
     line:
@@ -77,8 +79,10 @@ export interface OverseerBus {
   revoked(): boolean;
 }
 
-/** One question the overseer asks its owner on the bus. */
+/** One question the overseer asks on the bus, of one human. */
 export interface OverseerBusQuestion {
+  /** Who is asked: the conversation's owner. Only their answer counts. */
+  to: Address;
   conversation: string;
   /** The AskUserQuestion call it belongs to, and its place in that call. */
   requestId: string;
@@ -160,6 +164,7 @@ export function createOverseerBus(
   const asOverseer: Sender = { address: opts.overseer, canDecide: false };
   return {
     overseer: opts.overseer,
+    owner: opts.owner,
     async post(line) {
       if ('overseerTo' in line) {
         const sent = await engine.send(
@@ -238,7 +243,7 @@ export function createOverseerBus(
       const choices = questionChoices(q.question);
       const sent = await engine.send(
         {
-          to: [opts.owner],
+          to: [q.to],
           kind: 'question',
           blocking: true,
           ...(choices !== undefined ? { choices } : {}),

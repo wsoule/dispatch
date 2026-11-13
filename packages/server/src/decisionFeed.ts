@@ -179,6 +179,8 @@ export interface DecisionFeedContext {
    *  landed. Defaults to the built-in model. */
   statusModel?: () => StatusModel;
   /** The batch (the queuing turn) of an action an overseer conversation queued. */
+  /** The conversation a message is an open Overseer question of, if any. */
+  overseerQuestion?: (messageId: string) => string | undefined;
   overseerActionBatch?: (
     conversation: string,
     actionId: string
@@ -635,7 +637,10 @@ export class DecisionFeed {
       const run = runId === undefined ? undefined : runs.get(runId);
       const taskId = run?.taskId ?? gateTaskId(message, gate);
       const owner = runId === undefined ? systemGateOwner(message) : undefined;
-      const asked = overseerQuestionOf(message);
+      // Only a question the Overseer itself has open, never a message's
+      // own say-so in its data.
+      const askedIn = this.ctx.overseerQuestion?.(message.id);
+      const asked = askedIn === undefined ? null : { conversation: askedIn };
       const conversation =
         gate?.type === 'overseer-action' || gate?.type === 'tool-approval'
           ? gate.conversation
@@ -814,17 +819,4 @@ export class DecisionFeed {
     }
     return items;
   }
-}
-
-// The conversation an Overseer AskUserQuestion message belongs to, from the
-// `data` overseerBus.askQuestion writes; null for any other message.
-function overseerQuestionOf(message: Message): { conversation: string } | null {
-  const data = message.data;
-  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-    return null;
-  }
-  const asked = (data as Record<string, unknown>)['overseerQuestion'];
-  if (typeof asked !== 'object' || asked === null) return null;
-  const conversation = (asked as Record<string, unknown>)['conversation'];
-  return typeof conversation === 'string' ? { conversation } : null;
 }

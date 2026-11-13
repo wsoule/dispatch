@@ -1784,34 +1784,53 @@ export class OverseerManager {
     const bus = this.ctx.bus;
     if (bus === undefined) return;
     for (const [index, question] of pending.questions.entries()) {
-      let messageId: string;
-      try {
-        messageId = await bus.askQuestion({
-          conversation: conversationId,
-          requestId: pending.requestId,
-          index,
-          question,
-        });
-      } catch (err) {
-        console.error(
-          `overseer: could not ask question ${index} of ${pending.requestId} on ${conversationId}`,
-          err
-        );
-        continue;
-      }
-      const current = this.pendingQuestion(conversationId, pending.requestId);
-      // Settled while it was being asked: nothing waits on this one now.
-      if (current === undefined) {
-        bus.closeQuestion(messageId, 'the question was already answered');
-        continue;
-      }
-      this.replacePendingQuestion(conversationId, {
-        ...current,
-        messageIds: current.messageIds.map((id, i) =>
-          i === index ? messageId : id
-        ),
-      });
+      await this.raiseQuestion(
+        conversationId,
+        pending.requestId,
+        index,
+        question
+      );
     }
+  }
+
+  // Asks one question of a parked call on the bus, of the conversation's own
+  // human, and records its message id in that question's slot.
+  private async raiseQuestion(
+    conversationId: string,
+    requestId: string,
+    index: number,
+    question: OverseerQuestion
+  ): Promise<void> {
+    const bus = this.ctx.bus;
+    if (bus === undefined) return;
+    let messageId: string;
+    try {
+      messageId = await bus.askQuestion({
+        to: this.askedHuman(conversationId),
+        conversation: conversationId,
+        requestId,
+        index,
+        question,
+      });
+    } catch (err) {
+      console.error(
+        `overseer: could not ask question ${index} of ${requestId} on ${conversationId}`,
+        err
+      );
+      return;
+    }
+    const current = this.pendingQuestion(conversationId, requestId);
+    // Settled while it was being asked: nothing waits on this one now.
+    if (current === undefined) {
+      bus.closeQuestion(messageId, 'the question was already answered');
+      return;
+    }
+    this.replacePendingQuestion(conversationId, {
+      ...current,
+      messageIds: current.messageIds.map((id, i) =>
+        i === index ? messageId : id
+      ),
+    });
   }
 
   /**
@@ -1849,10 +1868,30 @@ export class OverseerManager {
     return this.get(conversationId);
   }
 
+  // Who a conversation's questions are asked of, and whose answer counts:
+  // the human who opened it, else the daemon owner.
+  private askedHuman(conversationId: string): string {
+    const owner = this.conversations.get(conversationId)?.owner;
+    return owner ?? this.ctx.bus?.owner ?? '';
+  }
+
+  /** The conversation a bus message is a still-open question of, if it is one. */
+  questionConversation(messageId: string): string | undefined {
+    for (const record of this.conversations.values()) {
+      for (const pending of record.pendingQuestions ?? []) {
+        if (pending.messageIds.includes(messageId)) return record.id;
+      }
+    }
+    return undefined;
+  }
+
   // An answer on the bus to a question the overseer asked: the chosen option,
-  // or the typed text when there was no choice to pick.
+  // or the typed text when there was no choice to pick. Only the asked human's
+  // answer counts. Anyone else's used up the message, so the question is asked
+  // again for the human it belongs to.
   private answeredOnBus(answer: {
     questionId: string;
+    from: string;
     body: string;
     choice?: string;
   }): void {
@@ -1861,8 +1900,27 @@ export class OverseerManager {
         const index = pending.messageIds.indexOf(answer.questionId);
         if (index === -1) continue;
         const question = pending.questions[index];
+        if (question === undefined) return;
+        if (answer.from !== this.askedHuman(record.id)) {
+          console.error(
+            `overseer: ignored an answer from ${answer.from} to a question asked of ${this.askedHuman(record.id)}`
+          );
+          this.replacePendingQuestion(record.id, {
+            ...pending,
+            messageIds: pending.messageIds.map((id, i) =>
+              i === index ? null : id
+            ),
+          });
+          void this.raiseQuestion(
+            record.id,
+            pending.requestId,
+            index,
+            question
+          );
+          return;
+        }
         const text = (answer.choice ?? answer.body).trim();
-        if (question === undefined || text === '') return;
+        if (text === '') return;
         try {
           this.answerQuestion(record.id, pending.requestId, {
             [question.question]: text,
