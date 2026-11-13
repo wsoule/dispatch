@@ -123,6 +123,18 @@ function committedSegments(record: OverseerRecord): Set<string> {
 
 /** What the human answered to a parked built-in tool call, sent as the answer
  * to its `tool-approval` gate. */
+/** One answer to one question of a parked AskUserQuestion call. */
+export interface OverseerQuestionReply {
+  /** The question's place in the call. */
+  index: number;
+  /**
+   * The answer as text: the chosen label, several joined, or the human's
+   * words. Sent as the reply's body alone: the bus question offers buttons
+   * only when its labels fit, and a choice it does not offer is refused.
+   */
+  body: string;
+}
+
 export interface OverseerApprovalDecision {
   allow: boolean;
   /** 'session' also pre-approves the same tool for the rest of the conversation. */
@@ -260,6 +272,17 @@ export interface OverseerSession {
   ) => Promise<boolean>;
   /** Which parked call `decideApproval` is currently deciding, or `null`. */
   decidingRequestId: string | null;
+  /**
+   * Answers questions of a parked AskUserQuestion call (see
+   * `OverseerRecord.pendingQuestions`): each reply answers the bus question at
+   * `index` with its text. The call resolves server-side once every question has an
+   * answer. Shares `decidingRequestId` and `decideError` with
+   * `decideApproval`; resolves true once every reply was sent.
+   */
+  answerQuestion: (
+    requestId: string,
+    replies: OverseerQuestionReply[]
+  ) => Promise<boolean>;
   /**
    * The model the next conversation opens on: the device's remembered pick
    * for the overseer role, else the project's configured `models.overseer`.
@@ -795,6 +818,52 @@ export function useOverseerSession(
     ]
   );
 
+  const answerQuestion = useCallback(
+    async (
+      requestId: string,
+      replies: OverseerQuestionReply[]
+    ): Promise<boolean> => {
+      if (decidingRequestId !== null) return false;
+      if (client === null || conversationId === null) {
+        setDecideError('no overseer conversation open');
+        return false;
+      }
+      setDecidingRequestId(requestId);
+      setDecideError(null);
+      try {
+        const record = queryClient.getQueryData<OverseerRecord>(
+          overseerKey(port, conversationId)
+        );
+        const pending = record?.pendingQuestions?.find(
+          (q) => q.requestId === requestId
+        );
+        if (pending === undefined) {
+          throw new Error('This question is no longer waiting for you.');
+        }
+        for (const r of replies) {
+          const messageId = pending.messageIds[r.index] ?? null;
+          if (messageId === null) {
+            throw new Error(
+              'This question is still being asked. Try again in a moment.'
+            );
+          }
+          await client.replyToMessage(messageId, { body: r.body });
+        }
+        void queryClient.invalidateQueries({ queryKey: openGatesKey(port) });
+        await queryClient.invalidateQueries({
+          queryKey: overseerKey(port, conversationId),
+        });
+        return true;
+      } catch (err) {
+        setDecideError(err instanceof Error ? err.message : String(err));
+        return false;
+      } finally {
+        setDecidingRequestId(null);
+      }
+    },
+    [client, conversationId, decidingRequestId, port, queryClient]
+  );
+
   const reset = useCallback(() => {
     setConversationId(null);
     setDraft('');
@@ -916,6 +985,7 @@ export function useOverseerSession(
     confirmAction,
     decidingActionId,
     decideApproval,
+    answerQuestion,
     decidingRequestId,
     decideError,
     model,

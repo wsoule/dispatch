@@ -65,6 +65,7 @@ function overseerSession(over: Partial<OverseerSession> = {}): OverseerSession {
     confirmAction: () => Promise.resolve(true),
     decidingActionId: null,
     decideApproval: () => Promise.resolve(true),
+    answerQuestion: () => Promise.resolve(true),
     decidingRequestId: null,
     decideError: null,
     model: 'claude-opus-5',
@@ -1908,4 +1909,106 @@ test('an auto-run receipt shows its diff and opens its task in Tasks', () => {
   );
   fireEvent.click(screen.getByRole('button', { name: 'Open in Tasks →' }));
   expect(opened).toEqual([{ taskId: 't-7' }]);
+});
+
+// An AskUserQuestion call parks as a question card, never an approval card:
+// a single choice is a radio, several are checkboxes with an Other box, and
+// Send answers replies with each question's text.
+function askingSession(
+  replies: unknown[],
+  answers: Record<string, string> = {}
+): OverseerSession {
+  return overseerSession({
+    conversationId: 'w-1',
+    record: overseerRecord({
+      state: 'running',
+      messages: [
+        { role: 'user', text: 'set it up', at: '2026-08-10T00:00:00Z' },
+        {
+          role: 'question',
+          requestId: 'ask-1',
+          outcome: 'pending',
+          text: 'Which library? · Which checks?',
+          at: '2026-08-10T00:00:01Z',
+        },
+      ],
+      pendingQuestions: [
+        {
+          requestId: 'ask-1',
+          questions: [
+            {
+              question: 'Which library?',
+              header: 'Library',
+              options: [
+                { label: 'date-fns', description: 'Small, functional' },
+                { label: 'moment', description: 'Time zones built in' },
+              ],
+              multiSelect: false,
+            },
+            {
+              question: 'Which checks?',
+              header: 'Checks',
+              options: [
+                { label: 'lint', description: '' },
+                { label: 'tests', description: '' },
+              ],
+              multiSelect: true,
+            },
+          ],
+          messageIds: ['m-1', 'm-2'],
+          answers,
+          askedAt: '2026-08-10T00:00:01Z',
+        },
+      ],
+    }),
+    answerQuestion: (requestId, r) => {
+      replies.push([requestId, r]);
+      return Promise.resolve(true);
+    },
+  });
+}
+
+test('a question call renders as a question card and sends every answer', async () => {
+  const replies: unknown[] = [];
+  render(<ChatWithDraft overseer={askingSession(replies)} />);
+
+  expect(screen.getByTestId('overseer-question')).toBeDefined();
+  expect(screen.queryByText(/Wants to run/)).toBeNull();
+  // Waiting on the human, so no "working" row under the card.
+  expect(screen.queryByText('The overseer is working…')).toBeNull();
+  const send = screen.getByRole('button', { name: 'Send answers' });
+  expect(send.hasAttribute('disabled')).toBe(true);
+
+  fireEvent.click(screen.getByRole('radio', { name: /^moment/ }));
+  fireEvent.click(screen.getByLabelText(/^lint/));
+  fireEvent.click(screen.getByRole('checkbox', { name: /^Other/ }));
+  // Other picked but blank: still no answer.
+  expect(send.hasAttribute('disabled')).toBe(true);
+  fireEvent.change(screen.getByLabelText('Your answer to: Which checks?'), {
+    target: { value: ' e2e ' },
+  });
+  await clickAndSettle(send);
+  expect(replies).toEqual([
+    [
+      'ask-1',
+      [
+        { index: 0, body: 'moment' },
+        { index: 1, body: 'lint, e2e' },
+      ],
+    ],
+  ]);
+});
+
+test('a question answered elsewhere shows its answer, and only the rest are sent', async () => {
+  const replies: unknown[] = [];
+  render(
+    <ChatWithDraft
+      overseer={askingSession(replies, { 'Which library?': 'moment' })}
+    />
+  );
+  expect(screen.getByText('Answered — moment')).toBeDefined();
+  expect(screen.queryByRole('radio', { name: /^date-fns/ })).toBeNull();
+  fireEvent.click(screen.getByLabelText(/^tests/));
+  await clickAndSettle(screen.getByRole('button', { name: 'Send answer' }));
+  expect(replies).toEqual([['ask-1', [{ index: 1, body: 'tests' }]]]);
 });

@@ -1,0 +1,28 @@
+/* An Overseer question call (OverseerQuestionCard.tsx): its questions stacked,
+   then one send row under them. */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* A several-answers question's checkboxes, one per line. */
+.checks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* A question already answered, here or under Needs you. */
+.answered {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+}
