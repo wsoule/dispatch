@@ -15,6 +15,21 @@ cd apps/mobile
 pnpm ios                                         # expo run:ios
 ```
 
+To check the app bundles without Xcode (CI runs this on every PR that touches
+the app or a package it uses):
+
+```sh
+moon run mobile:build                            # expo export for iOS into dist/
+```
+
+The colours come from the desktop's tokens. After changing
+`packages/ui/src/styles/tokens.css`, regenerate them (a test fails until you
+do):
+
+```sh
+moon run mobile:theme
+```
+
 Then on the Mac, in your project:
 
 ```sh

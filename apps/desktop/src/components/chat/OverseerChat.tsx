@@ -8,6 +8,16 @@ import type {
   RunMeta,
 } from '@dispatch/client';
 import {
+  buildOverseerThread,
+  doorLabel,
+  findInThread,
+  groupConfirmRows,
+  groupToolRows,
+  type OverseerDoor,
+  type OverseerStreamItem,
+  type ToolCallState,
+} from '@dispatch/client';
+import {
   Button,
   ChipButton,
   cx,
@@ -42,16 +52,6 @@ import {
   proposedTaskCard,
   type TaskCardModel,
 } from '../../lib/overseerTaskCard';
-import {
-  buildOverseerThread,
-  doorLabel,
-  findInThread,
-  groupConfirmRows,
-  groupToolRows,
-  type OverseerDoor,
-  type OverseerStreamItem,
-  type ToolCallState,
-} from '../../lib/overseerThread';
 import { slashSuggestions } from '../../lib/slashCommands';
 import { askAgentToFix, FailureNotice } from '../failure/FailureNotice';
 import { DecisionCard } from '../gates/DecisionCard';

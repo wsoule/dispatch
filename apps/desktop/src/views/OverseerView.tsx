@@ -1,4 +1,5 @@
 import type { MergeQueueEntry, RunMeta } from '@dispatch/client';
+import type { OverseerDoor } from '@dispatch/client';
 import {
   Button,
   ChipButton,
@@ -28,7 +29,6 @@ import type { OverseerSession } from '../hooks/useOverseerSession';
 import { revokedLocksComposer } from '../lib/agentPresence';
 import { useBrowserPane } from '../lib/browserPane';
 import { docked, restored, useOverseerDock } from '../lib/overseerDock';
-import type { OverseerDoor } from '../lib/overseerThread';
 import styles from './OverseerView.module.css';
 
 export interface OverseerViewProps {

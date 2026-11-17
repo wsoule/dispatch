@@ -3,13 +3,12 @@ import type {
   OverseerApproval,
   OverseerAttachment,
   OverseerFieldChange,
-  OverseerLive,
   OverseerMessage,
   OverseerRecord,
-} from '@dispatch/client';
-
-import { normalizeBrowserUrl } from './browserPane';
+} from './api';
+import { normalizeBrowserUrl } from './browserUrl';
 import { TASKS_PRESETS, type TasksPreset } from './tasksPresets';
+import type { OverseerLive } from './useOverseerSession';
 
 // One rendered row of a overseer conversation, flattened from the record's
 // transcript the same way planThread.ts flattens a plan's. Beyond the plan
