@@ -1,18 +1,25 @@
 import { Tabs } from 'expo-router';
 
-import { usePalette } from '../../src/ui';
+import { font, size, useColours } from '../../src/theme';
 
 export default function TabsLayout() {
-  const p = usePalette();
+  const c = useColours();
   return (
     <Tabs
       screenOptions={{
-        sceneStyle: { backgroundColor: p.bg },
-        headerStyle: { backgroundColor: p.bg },
-        headerTitleStyle: { color: p.text },
-        tabBarStyle: { backgroundColor: p.card, borderTopColor: p.border },
-        tabBarActiveTintColor: p.accent,
-        tabBarInactiveTintColor: p.muted,
+        sceneStyle: { backgroundColor: c.bg },
+        headerStyle: { backgroundColor: c.bg },
+        headerShadowVisible: false,
+        headerTitleAlign: 'left',
+        headerTitleStyle: {
+          color: c.text,
+          fontFamily: font.semibold,
+          fontSize: size.title,
+        },
+        tabBarStyle: { backgroundColor: c.surface, borderTopColor: c.border },
+        tabBarActiveTintColor: c.accentInk,
+        tabBarInactiveTintColor: c.text3,
+        tabBarLabelStyle: { fontFamily: font.medium },
       }}
     >
       <Tabs.Screen name="index" options={{ title: 'Needs you' }} />

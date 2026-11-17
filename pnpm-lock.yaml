@@ -211,6 +211,12 @@ catalogs:
       specifier: 4.4.3
       version: 4.4.3
   mobile:
+    '@expo-google-fonts/geist':
+      specifier: 0.4.2
+      version: 0.4.2
+    '@expo-google-fonts/geist-mono':
+      specifier: 0.4.3
+      version: 0.4.3
     '@expo/metro-runtime':
       specifier: 58.0.15
       version: 58.0.15
@@ -226,6 +232,9 @@ catalogs:
     expo-crypto:
       specifier: 58.0.7
       version: 58.0.7
+    expo-font:
+      specifier: 58.0.11
+      version: 58.0.11
     expo-haptics:
       specifier: 58.0.7
       version: 58.0.7
@@ -460,6 +469,12 @@ importers:
       '@dispatch/remote':
         specifier: workspace:*
         version: link:../../packages/remote
+      '@expo-google-fonts/geist':
+        specifier: catalog:mobile
+        version: 0.4.2
+      '@expo-google-fonts/geist-mono':
+        specifier: catalog:mobile
+        version: 0.4.3
       '@expo/metro-runtime':
         specifier: catalog:mobile
         version: 58.0.15(@expo/log-box@58.0.14)(expo@58.0.21)(react-dom@19.2.7(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7))(@types/react@19.2.17)(react@19.3.0))(react@19.3.0)
@@ -475,6 +490,9 @@ importers:
       expo-crypto:
         specifier: catalog:mobile
         version: 58.0.7(expo@58.0.21)
+      expo-font:
+        specifier: catalog:mobile
+        version: 58.0.11(expo@58.0.21)(react-native@0.88.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7))(@types/react@19.2.17)(react@19.3.0))(react@19.3.0)
       expo-haptics:
         specifier: catalog:mobile
         version: 58.0.7(expo@58.0.21)
@@ -2011,6 +2029,12 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
+
+  '@expo-google-fonts/geist-mono@0.4.3':
+    resolution: {integrity: sha512-gjnwv1QOG4meZpMhrLjTIPC/+lhyNu8EcXa2eJPVbPrYvguVjCfBq+Ezq6cWKWW8ung6fqb2TjvuTalE6lqlnw==}
+
+  '@expo-google-fonts/geist@0.4.2':
+    resolution: {integrity: sha512-cTsqJRQrvK5EniTVwH7UDK18RFf9Bc6yxciAuM936aViQ+eR6j3mLEI2rQkJXz5JP9kwtn8tHJviDyZ0ulH6oA==}
 
   '@expo/cli@58.1.18':
     resolution: {integrity: sha512-voZUcir9mEwvLKBNqQM6Jy2Yp67z8ONmcINXb6ZrLMayb7yxzwvEnN0eeH8ADzUABKL288pv1eJ1WRqtYxXQ/Q==}
@@ -8485,6 +8509,10 @@ snapshots:
 
   '@esbuild/win32-x64@0.28.2':
     optional: true
+
+  '@expo-google-fonts/geist-mono@0.4.3': {}
+
+  '@expo-google-fonts/geist@0.4.2': {}
 
   '@expo/cli@58.1.18(@expo/dom-webview@58.0.2)(@expo/metro-runtime@58.0.15)(expo-constants@58.0.14)(expo-font@58.0.11(expo@58.0.21)(react-native@0.88.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7))(@types/react@19.2.17)(react@19.3.0))(react@19.3.0))(expo-router@58.0.28)(expo@58.0.21)(react-dom@19.2.7(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7)(@react-native/metro-config@0.88.1(@babel/core@7.29.7))(@types/react@19.2.17)(react@19.3.0))(react@19.3.0)(typescript@5.9.2)':
     dependencies:

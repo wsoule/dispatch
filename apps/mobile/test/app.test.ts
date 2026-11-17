@@ -3,7 +3,13 @@ import { generateKeyPair, pairingUrl, parsePairingUrl } from '@dispatch/remote';
 import { describe, expect, test } from 'bun:test';
 
 import { urlFromParams } from '../src/pairing';
-import { awaitsReview, byRecency, isLive, stateText } from '../src/runs';
+import {
+  awaitsReview,
+  byRecency,
+  isLive,
+  runStatus,
+  stateText,
+} from '../src/runs';
 
 describe('a pairing link opened from the camera', () => {
   const offer = {
@@ -62,6 +68,21 @@ describe('runs', () => {
       )
     ).toBe(false);
     expect(awaitsReview(run({ state: 'failed' }))).toBe(false);
+  });
+
+  test('marks each state with the desktop status colour', () => {
+    expect(runStatus(run({ state: 'running' }))).toEqual({
+      label: 'Live',
+      tone: 'blue',
+    });
+    expect(runStatus(run({ state: 'awaiting-approval' })).tone).toBe('amber');
+    expect(runStatus(run({}))).toEqual({ label: 'Review', tone: 'green' });
+    expect(
+      runStatus(
+        run({ reviewedAt: '2026-11-06T11:00:00.000Z', reviewAction: 'merge' })
+      )
+    ).toEqual({ label: 'Merged', tone: 'gray' });
+    expect(runStatus(run({ state: 'failed' })).tone).toBe('red');
   });
 
   test('says what a run is doing in words', () => {
