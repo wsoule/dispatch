@@ -15,7 +15,15 @@ const page = async (path: string): Promise<string> => {
 };
 
 const html = await page('/index.html');
-const PAGES = ['download', 'docs', 'pricing', 'faq', 'changelog', 'privacy'];
+const PAGES = [
+  'download',
+  'docs',
+  'hub',
+  'pricing',
+  'faq',
+  'changelog',
+  'privacy',
+];
 
 test('the home page leads with the install line and the DMG', () => {
   expect(html).toContain(INSTALL);

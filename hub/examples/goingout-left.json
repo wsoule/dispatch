@@ -1,0 +1,53 @@
+{
+  "about": "The shipped default layout with the two columns swapped: Going out (runs landing, agents working) on the left of the Overseer and Coming in (what needs you, notifications) on the right.",
+  "root": {
+    "row": [
+      {
+        "mod": "sidebar",
+        "width": 252
+      },
+      {
+        "column": [
+          {
+            "mod": "topbar",
+            "height": 46
+          },
+          {
+            "row": [
+              {
+                "mod": "goingout",
+                "grow": 1,
+                "with": "overseer"
+              },
+              {
+                "grow": 1.2,
+                "stack": [
+                  "overseer",
+                  "task",
+                  "run",
+                  "board",
+                  "sessions",
+                  "terminal",
+                  "week",
+                  "allocation",
+                  "projects",
+                  "timeline",
+                  "graph",
+                  "threads",
+                  "docs",
+                  "settings"
+                ]
+              },
+              {
+                "mod": "comingin",
+                "grow": 1,
+                "with": "overseer"
+              }
+            ],
+            "plain": true
+          }
+        ]
+      }
+    ]
+  }
+}

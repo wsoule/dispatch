@@ -1,13 +1,19 @@
 ---
 import { INSTALL } from '../../lib/downloads';
 
-// The one-line macOS install with a copy button. The home hero, the closing
-// section and /download show it.
+// A one-line command with a copy button: by default the macOS install, which
+// the home hero, the closing section and /download show; /hub passes each
+// mod's install line.
+interface Props {
+  command?: string;
+  label?: string;
+}
+const { command = INSTALL, label = 'Copy the install command' } = Astro.props;
 ---
 
 <div class="install">
-  <code><span class="prompt" aria-hidden="true">$</span> {INSTALL}</code>
-  <button type="button" data-copy={INSTALL} aria-label="Copy the install command">Copy</button>
+  <code><span class="prompt" aria-hidden="true">$</span> {command}</code>
+  <button type="button" data-copy={command} aria-label={label}>Copy</button>
 </div>
 
 <style>

@@ -1,0 +1,319 @@
+---
+import InstallCommand from '../components/site/InstallCommand.astro';
+import { hubMods, installLine, KINDS, sourceUrl } from '../data/hub';
+import Landing from '../layouts/Landing.astro';
+
+// The app's hub commands, as `dispatch-app help` lists them.
+const commands = `dispatch-app hub list
+dispatch-app hub show <id>
+dispatch-app hub install <id>
+dispatch-app hub remove <id>`;
+
+const groups = KINDS.map((k) => ({
+  ...k,
+  mods: hubMods.filter((m) => m.kind === k.kind),
+})).filter((g) => g.mods.length > 0);
+---
+
+<Landing
+  title="Hub: panels, themes and layouts for Dispatch"
+  description="Mods for the Dispatch app: panels, themes and layouts, each installed from its author's GitHub repo at a pinned commit after you read its code."
+  path="/hub"
+>
+  <div class="page">
+    <div class="wrap">
+      <div class="page-head">
+        <h1>Hub</h1>
+        <p class="lede">
+          Panels, themes and layouts for the Dispatch app, made by the people who use it. Each one
+          installs from its author's GitHub repo at a pinned commit.
+        </p>
+        <nav class="jump" aria-label="Hub sections">
+          <a href="#install">Install a mod</a>
+          {groups.map((g) => <a href={`#${g.kind}`}>{g.title}</a>)}
+          <a href="#submit">Submit a mod</a>
+        </nav>
+      </div>
+
+      <div class="prose">
+        <h2 id="install">Install a mod</h2>
+        <p>
+          In the app, open <strong>Settings › Customize this app › Browse the hub</strong>. The app
+          shows every file's code before it installs, and installs that exact commit, so what you
+          read is what runs.
+        </p>
+        <p>
+          A mod runs with the same access as the app's own panels, including your projects and your
+          team's content. Read it before you install it, as you would a shell script.
+        </p>
+        <h3 id="terminal">From a terminal or an agent</h3>
+        <pre><code>{commands}</code></pre>
+        <p>
+          <code>hub show</code> prints every file and its code at the pinned commit, and{' '}
+          <code>hub remove</code> takes a mod back out. An agent asked to “add the Today mod” can
+          run these itself; it should run <code>hub show</code> and read the code before{' '}
+          <code>hub install</code>.
+        </p>
+        <p>
+          The same list is at <a href="/hub/index.json"><code>/hub/index.json</code></a> for programs:
+          each entry names its kind, its repo, the commit it is pinned to and the path of its files.
+        </p>
+      </div>
+
+      {
+        groups.map((g) => (
+          <section class="group" aria-labelledby={g.kind}>
+            <h2 id={g.kind}>{g.title}</h2>
+            <ul class="mods">
+              {g.mods.map((m) => (
+                <li class="mod" id={`mod-${m.id}`}>
+                  <div class="top">
+                    <h3>{m.name}</h3>
+                    <span class="kind">{m.kind}</span>
+                  </div>
+                  <p class="summary">{m.summary}</p>
+                  <p class="meta">
+                    By <a href={`https://github.com/${m.author}`}>{m.author}</a> ·{' '}
+                    <a href={sourceUrl(m)}>Source</a> · <span class="mono">{m.commit.slice(0, 7)}</span>
+                  </p>
+                  <InstallCommand command={installLine(m)} label={`Copy the install command for ${m.name}`} />
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))
+      }
+
+      <div class="prose">
+        <h2 id="submit">Submit a mod</h2>
+        <p>
+          Put your mod in a public GitHub repo. A panel is a folder holding <code>main.js</code> and,
+          if it draws its own icons, an <code>icons/</code> folder; it can import only files inside
+          that folder, so copy in <code>ui.js</code> if you use it. A theme or a layout is one JSON
+          file. How each is written is in <a href="/docs#change">Change the app</a> and in the{' '}
+          <code>AGENTS.md</code> in your app folder.
+        </p>
+        <p>
+          Each submission is reviewed before it is listed. A reviewer installs it at the commit you
+          give and checks that it loads, that it does what its summary says, and that its code holds
+          no surprises.
+        </p>
+
+        <form class="submit" id="submit-form">
+          <label>
+            <span>Name</span>
+            <input name="name" required maxlength="60" placeholder="Today" />
+          </label>
+          <label>
+            <span>Kind</span>
+            <select name="kind" required>
+              <option value="panel">Panel</option>
+              <option value="theme">Theme</option>
+              <option value="layout">Layout</option>
+            </select>
+          </label>
+          <label>
+            <span>GitHub repo</span>
+            <input
+              name="repo"
+              required
+              pattern="[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+"
+              placeholder="owner/name"
+              autocomplete="off"
+            />
+          </label>
+          <label>
+            <span>Commit</span>
+            <input
+              name="commit"
+              required
+              pattern="[0-9a-fA-F]{40}"
+              placeholder="the full 40-character SHA"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </label>
+          <label class="wide">
+            <span>Path in the repo</span>
+            <input
+              name="path"
+              required
+              pattern="[^/].*"
+              placeholder="mods/today, or themes/dusk.json"
+              autocomplete="off"
+            />
+          </label>
+          <label class="wide">
+            <span>Summary</span>
+            <input
+              name="summary"
+              required
+              maxlength="140"
+              placeholder="One sentence on what it does."
+            />
+          </label>
+          <div class="wide actions">
+            <button class="btn btn-primary" type="submit">Open the issue on GitHub</button>
+            <span class="hint">
+              This opens a new issue, filled in, for you to post. Nothing is sent from this page.
+            </span>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</Landing>
+
+<style>
+  .jump {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.25rem;
+    margin-top: 1.5rem;
+  }
+  .jump a {
+    color: var(--accent-ink);
+    text-underline-offset: 3px;
+  }
+  .group {
+    margin-top: 3rem;
+  }
+  .group h2 {
+    color: var(--ink);
+    font-size: 1.5rem;
+    letter-spacing: -0.02em;
+  }
+  .mods {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+    padding: 0;
+    list-style: none;
+  }
+  .mod {
+    display: grid;
+    gap: 0.6rem;
+    align-content: start;
+    padding: 1.1rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+  .top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  .top h3 {
+    color: var(--ink);
+    font-size: 1.05rem;
+  }
+  .kind {
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+  .summary {
+    color: var(--ink-soft);
+    text-wrap: pretty;
+  }
+  .meta {
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  .meta a {
+    color: var(--accent-ink);
+    text-underline-offset: 3px;
+  }
+  .mono {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+  }
+  .submit {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+    gap: 1rem;
+    margin-top: 1.5rem;
+  }
+  .submit label {
+    display: grid;
+    gap: 0.35rem;
+    color: var(--ink);
+    font-size: 0.93rem;
+    font-weight: 500;
+  }
+  .submit .wide {
+    grid-column: 1 / -1;
+  }
+  .submit input,
+  .submit select {
+    min-height: 2.5rem;
+    padding: 0 0.75rem;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+    font-weight: 400;
+  }
+  .submit input:focus-visible,
+  .submit select:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 1px;
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem 1rem;
+  }
+  .hint {
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+</style>
+
+<script>
+  // Turns the submit form into a prefilled new issue on GitHub, labelled hub,
+  // whose body carries the entry a reviewer would add to the index.
+  const form = document.querySelector<HTMLFormElement>('#submit-form');
+  form?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const field = (name: string) => String(new FormData(form).get(name) ?? '').trim();
+    const name = field('name');
+    const id = name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 40);
+    const entry = {
+      id,
+      name,
+      kind: field('kind'),
+      summary: field('summary'),
+      author: field('repo').split('/')[0] ?? '',
+      repo: field('repo'),
+      commit: field('commit').toLowerCase(),
+      path: field('path').replace(/\/$/, ''),
+      added: new Date().toISOString().slice(0, 10),
+    };
+    const body = [
+      `Please list ${name} in the Dispatch hub.`,
+      '',
+      `Source: https://github.com/${entry.repo}/${entry.kind === 'panel' ? 'tree' : 'blob'}/${entry.commit}/${entry.path}`,
+      '',
+      'The entry for hub/index.json:',
+      '',
+      '```json',
+      JSON.stringify(entry, null, 2),
+      '```',
+    ].join('\n');
+    const params = new URLSearchParams({ title: `Hub: ${name}`, body, labels: 'hub' });
+    window.open(
+      `https://github.com/wsoule/dispatch/issues/new?${params.toString()}`,
+      '_blank',
+      'noopener'
+    );
+  });
+</script>

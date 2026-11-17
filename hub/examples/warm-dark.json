@@ -1,0 +1,44 @@
+{
+  "about": "Warm dark: the shipped dark theme moved toward brown and ember, with a copper accent (never a status) and the same readable contrast. Install it as themes/warm-dark.json and set the theme to warm-dark.",
+  "tokens": {
+    "base": "#1c1814",
+    "panel": "#221d18",
+    "raised": "#2b251f",
+    "raisedHover": "#332c25",
+    "hairline": "#342d26",
+    "hairlineStrong": "#453b32",
+    "control": "#86796b",
+    "overlay": "#00000080",
+    "text": "#f0e8dd",
+    "textSoft": "#c2b6a7",
+    "muted": "#a89a8a",
+    "onAccent": "#1c1814",
+    "accent": "#e08a4f",
+    "accentInk": "#efa877",
+    "focus": "#efa877",
+    "signal": "#e0b04a",
+    "signalInk": "#e0b04a",
+    "working": "#7fa9e0",
+    "workingInk": "#7fa9e0",
+    "done": "#6dbb85",
+    "doneInk": "#6dbb85",
+    "failure": "#e7806f",
+    "failureInk": "#e7806f",
+    "idle": "#958a7d",
+    "terminalBg": "#1c1814",
+    "terminalFg": "#f0e8dd",
+    "terminalCursor": "#efa877"
+  },
+  "text": {
+    "small": 12,
+    "body": 13.5,
+    "title": 14.5,
+    "heading": 19
+  },
+  "radius": {
+    "control": 6,
+    "chip": 5,
+    "panel": 10
+  },
+  "space": 4
+}

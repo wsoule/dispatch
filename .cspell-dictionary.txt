@@ -92,6 +92,7 @@ codesigning
 colour
 colouring
 colours
+comingin
 comand
 commitish
 committerdate
@@ -223,6 +224,7 @@ glassmorphism
 globjoin
 glyphed
 gnueabihf
+goingout
 gopd
 gpgsign
 gpui

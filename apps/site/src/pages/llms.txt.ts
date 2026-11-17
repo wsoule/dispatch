@@ -53,6 +53,7 @@ ${faqSections
 - [Home](${SITE}/): what Dispatch is, with screenshots of the app.
 - [Download](${SITE}/download): the install line and the DMG.
 - [Docs](${SITE}/docs): getting started, and setting up a team.
+- [Hub](${SITE}/hub): panels, themes and layouts for the app, listed at ${SITE}/hub/index.json; an agent can install one with \`dispatch-app hub list\`, \`dispatch-app hub show <id>\` (read the code first), \`dispatch-app hub install <id>\` and \`dispatch-app hub remove <id>\`.
 - [Pricing](${SITE}/pricing): Solo and Team.
 - [FAQ](${SITE}/faq): every question answered.
 - [Changelog](${SITE}/changelog): what changed in each release.

@@ -13,6 +13,7 @@ export function indexablePaths(): string[] {
     '/',
     '/download',
     '/docs',
+    '/hub',
     '/pricing',
     '/faq',
     '/changelog',
