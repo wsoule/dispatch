@@ -1,6 +1,7 @@
 ---
 import InstallCommand from '../components/site/InstallCommand.astro';
 import { hubMods, installLine, KINDS, sourceUrl } from '../data/hub';
+import Shot from '../components/site/Shot.astro';
 import Landing from '../layouts/Landing.astro';
 
 // The app's hub commands, as `dispatch-app help` lists them.
@@ -35,6 +36,8 @@ const groups = KINDS.map((k) => ({
         </nav>
       </div>
 
+      <Shot name="hub" />
+
       <div class="prose">
         <h2 id="install">Install a mod</h2>
         <p>
@@ -46,6 +49,7 @@ const groups = KINDS.map((k) => ({
           A mod runs with the same access as the app's own panels, including your projects and your
           team's content. Read it before you install it, as you would a shell script.
         </p>
+        <Shot name="hubPreview" sizes="(min-width: 1060px) 42rem, 100vw" />
         <h3 id="terminal">From a terminal or an agent</h3>
         <pre><code>{commands}</code></pre>
         <p>
