@@ -179,6 +179,8 @@ export interface DecisionFeedContext {
    *  landed. Defaults to the built-in model. */
   statusModel?: () => StatusModel;
   /** The batch (the queuing turn) of an action an overseer conversation queued. */
+  /** The conversation a message is an open Overseer question of, if any. */
+  overseerQuestion?: (messageId: string) => string | undefined;
   overseerActionBatch?: (
     conversation: string,
     actionId: string
@@ -635,10 +637,14 @@ export class DecisionFeed {
       const run = runId === undefined ? undefined : runs.get(runId);
       const taskId = run?.taskId ?? gateTaskId(message, gate);
       const owner = runId === undefined ? systemGateOwner(message) : undefined;
+      // Only a question the Overseer itself has open, never a message's
+      // own say-so in its data.
+      const askedIn = this.ctx.overseerQuestion?.(message.id);
+      const asked = askedIn === undefined ? null : { conversation: askedIn };
       const conversation =
         gate?.type === 'overseer-action' || gate?.type === 'tool-approval'
           ? gate.conversation
-          : undefined;
+          : asked?.conversation;
       const taskTitle =
         run?.taskTitle ??
         (taskId === undefined ? undefined : this.taskTitle(taskId));
@@ -684,6 +690,10 @@ export class DecisionFeed {
           ...base,
           summary: `${taskTitle ?? 'A task'}: an agent proposes an edit to an accepted doc`,
         });
+      } else if (asked !== null) {
+        // The question is the body's first line; its options follow.
+        const question = message.body.split('\n', 1)[0] ?? message.body;
+        items.push({ ...base, summary: `Overseer asks: ${oneLine(question)}` });
       } else {
         items.push({ ...base, summary: oneLine(message.body) });
       }

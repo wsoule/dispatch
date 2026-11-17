@@ -5,6 +5,7 @@ import type {
   OverseerFieldChange,
   OverseerLive,
   OverseerMessage,
+  OverseerPendingQuestion,
   OverseerRecord,
 } from '@dispatch/client';
 
@@ -51,7 +52,7 @@ export type OverseerThreadItem =
   | {
       kind: 'outcome';
       key: string;
-      outcome: 'applied' | 'allowed' | 'denied' | 'failed';
+      outcome: 'applied' | 'allowed' | 'denied' | 'failed' | 'answered';
       text: string;
       at: string;
       /** An action's tool, for an `action` row. */
@@ -69,6 +70,8 @@ export type OverseerThreadItem =
       action: OverseerAction;
     }
   | { kind: 'approve'; key: string; approval: OverseerApproval }
+  /** An AskUserQuestion call the running turn waits on: answered in place. */
+  | { kind: 'ask'; key: string; pending: OverseerPendingQuestion }
   | { kind: 'pending'; key: string }
   | { kind: 'failed'; key: string; error: string }
   /** A line across the stream: Stop, a context rollover, a daemon restart. */
@@ -232,7 +235,11 @@ export function buildOverseerThread(
         text: segment.text,
       });
     }
-    if (writing.length === 0 && record.pendingApprovals.length === 0) {
+    if (
+      writing.length === 0 &&
+      record.pendingApprovals.length === 0 &&
+      (record.pendingQuestions ?? []).length === 0
+    ) {
       items.push({ kind: 'pending', key: `${record.id}-pending` });
     }
   } else if (record.state === 'failed') {
@@ -310,6 +317,33 @@ function buildRow(
       at: message.at,
       state: toolCallState(record, message),
     };
+  }
+
+  // `question` rows. A question still waiting renders as its answer card; a
+  // settled one keeps its outcome row ("Answered: …", or why it was not).
+  if (message.role === 'question') {
+    const asked = record.pendingQuestions?.find(
+      (q) => q.requestId === message.requestId
+    );
+    if (asked !== undefined) {
+      return message.outcome === 'pending'
+        ? {
+            kind: 'ask',
+            key: `${record.id}-ask-${asked.requestId}`,
+            pending: asked,
+          }
+        : null;
+    }
+    if (message.outcome === 'answered' || message.outcome === 'denied') {
+      return {
+        kind: 'outcome',
+        key,
+        outcome: message.outcome,
+        text: message.text,
+        at: message.at,
+      };
+    }
+    return null;
   }
 
   // `approval` rows. A parked call renders as its allow/deny card; a decided
@@ -393,7 +427,9 @@ function toolCallState(
   if (message.status === 'done') return 'done';
   if (message.status === 'running') {
     const working =
-      record.state === 'running' && record.pendingApprovals.length === 0;
+      record.state === 'running' &&
+      record.pendingApprovals.length === 0 &&
+      (record.pendingQuestions ?? []).length === 0;
     return working ? 'running' : 'done';
   }
   return message.text.startsWith('error:') ? 'failed' : 'done';
@@ -415,6 +451,8 @@ function searchableText(item: OverseerThreadItem): string | null {
       return item.action.summary;
     case 'approve':
       return item.approval.summary;
+    case 'ask':
+      return item.pending.questions.map((q) => q.question).join(' ');
     case 'failed':
       return item.error;
     case 'pending':

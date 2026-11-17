@@ -122,6 +122,10 @@ function floorHook(
 ): HookCallback {
   return async (input, toolUseId) => {
     if (input.hook_event_name !== 'PreToolUse') return {};
+    // A question runs nothing, though its text may spell out a floor command;
+    // deciding it here (allow or deny) would also skip the permission handler
+    // its answers come from.
+    if (input.tool_name === 'AskUserQuestion') return {};
     const refused = refusal();
     if (refused !== null) return decision('deny', refused);
     const check =
