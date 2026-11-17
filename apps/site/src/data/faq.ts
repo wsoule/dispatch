@@ -37,7 +37,11 @@ export const faqSections: FaqSection[] = [
     items: [
       [
         'What is Dispatch?',
-        'A Mac app where you talk to your own Overseer. It plans the work, creates tasks and sends coding agents to do them on your machine, then flags you down only when a task needs you. Finished work lands as a GitHub pull request.',
+        'A board, docs and an Overseer for your coding agents, on your Mac. In the Dispatch app you talk to your own Overseer: it plans the work, creates tasks and sends coding agents to do them on your machine, then flags you down only when a task needs you. Finished work lands as a GitHub pull request.',
+      ],
+      [
+        'Do I have to use the Dispatch app?',
+        'No. You can keep the agent you already use, such as Claude Desktop, Cursor, Claude Code, OpenCode, Codex or T3 Code, and connect it to the Dispatch core as an MCP server. It can then read the board, comment on tasks, message your Overseer and ask you for approvals. The app and connected agents use the same core, so you can use both.',
       ],
       [
         'Which coding agents does it run?',

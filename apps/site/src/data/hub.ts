@@ -9,7 +9,7 @@ export interface HubMod {
   kind: ModKind;
   // One sentence on what it does.
   summary: string;
-  // The author's GitHub login.
+  // The author's display name, shown on /hub and in the app; not a GitHub login.
   author: string;
   // A public GitHub repo, owner/name.
   repo: string;
@@ -38,7 +38,7 @@ export const hubMods: HubMod[] = [
     kind: 'panel',
     summary:
       'Lists the runs that landed or opened a pull request since midnight, newest first.',
-    author: 'wsoule',
+    author: 'turkey',
     repo: 'wsoule/dispatch',
     commit: EXAMPLES,
     path: 'hub/examples/today',
@@ -50,7 +50,7 @@ export const hubMods: HubMod[] = [
     kind: 'theme',
     summary:
       'The dark theme moved toward brown, with a copper accent and the same contrast.',
-    author: 'wsoule',
+    author: 'turkey',
     repo: 'wsoule/dispatch',
     commit: EXAMPLES,
     path: 'hub/examples/warm-dark.json',
@@ -62,7 +62,7 @@ export const hubMods: HubMod[] = [
     kind: 'layout',
     summary:
       'The default layout with Going out left of the Overseer and Coming in on the right.',
-    author: 'wsoule',
+    author: 'turkey',
     repo: 'wsoule/dispatch',
     commit: EXAMPLES,
     path: 'hub/examples/goingout-left.json',
@@ -76,6 +76,11 @@ export function sourceUrl(m: HubMod): string {
   const view = m.kind === 'panel' ? 'tree' : 'blob';
   return `https://github.com/${m.repo}/${view}/${m.commit}/${m.path}`;
 }
+
+// The GitHub profile an entry's author name links to: its repo's owner, since
+// the name itself is only for display.
+export const ownerUrl = (m: HubMod): string =>
+  `https://github.com/${m.repo.split('/')[0]}`;
 
 // The terminal line that installs an entry.
 export const installLine = (m: HubMod): string =>

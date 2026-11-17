@@ -40,12 +40,19 @@ import { DMG, RELEASES, VERSION } from '../lib/downloads';
         <h2 id="then">Then</h2>
         <ol>
           <li>
+            <strong>Pick a way in.</strong> Keep the agent you already use, such as Claude Desktop,
+            Cursor, Claude Code, Codex or OpenCode, and <a href="/docs#connect">connect it to
+            Dispatch</a> over MCP. Or open the Dispatch app and follow the steps below. Both use the
+            same core, and you can use both.
+          </li>
+          <li>
             <strong>Have an agent ready.</strong> Install Claude Code or Codex and sign in to it the
             way you normally do. Dispatch runs it as its own program, with your account or your key.
           </li>
           <li>
-            <strong>Open Dispatch and add a project.</strong> The welcome card has{' '}
-            <strong>Add a project</strong>: pick the folder of a git repository. The Dispatch core
+            <strong>Add a project.</strong> In the app, the welcome card has{' '}
+            <strong>Add a project</strong>: pick the folder of a git repository. From a terminal,
+            run <code>dispatch-core project add &lt;folder&gt;</code>. The Dispatch core
             that does the work comes inside the app and starts on its own.
           </li>
           <li>

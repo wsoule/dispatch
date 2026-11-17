@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 
-import { HUB_VERSION, hubMods } from '../src/data/hub';
+import { HUB_VERSION, hubMods, ownerUrl } from '../src/data/hub';
 
 const KINDS = ['panel', 'theme', 'layout'];
 const FIELDS = [
@@ -26,7 +26,7 @@ test('every hub entry matches the index format', () => {
       m.name.trim() === '' && 'name',
       !KINDS.includes(m.kind) && 'kind',
       m.summary.trim() === '' && 'summary',
-      !/^[A-Za-z0-9-]{1,39}$/.test(m.author) && 'author',
+      (m.author.trim() === '' || m.author.length > 40) && 'author',
       !/^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9_.-]{1,100}$/.test(m.repo) && 'repo',
       !/^[0-9a-f]{40}$/.test(m.commit) && 'commit',
       (m.path === '' ||
@@ -66,6 +66,12 @@ test('/hub lists every mod with its source and install line', async () => {
   for (const m of hubMods) {
     expect(hub).toContain(`dispatch-app hub install ${m.id}`);
     expect(hub).toContain(`/${m.commit}/${m.path}`);
+  }
+  for (const m of hubMods) {
+    expect(hub).toContain(`href="${ownerUrl(m)}"`);
+    // The author is a display name, so it never becomes a profile link itself.
+    if (m.author !== m.repo.split('/')[0])
+      expect(hub).not.toContain(`href="https://github.com/${m.author}"`);
   }
   expect(hub).toContain('href="/hub/index.json"');
   expect(hub).toContain('github.com/wsoule/dispatch/issues/new');
