@@ -3,7 +3,7 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": ["apps/**/*", "packages/**/*", "scripts/**/*"],
+  "include": ["apps/**/*", "hub/**/*", "packages/**/*", "scripts/**/*"],
   "exclude": [
     "**/node_modules/**",
     "**/dist/**",

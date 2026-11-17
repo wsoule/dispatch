@@ -30,11 +30,8 @@ export default class Today extends View {
     const midnight = new Date();
     midnight.setHours(0, 0, 0, 0);
     const today = runs({})
-      .filter(
-        (r) =>
-          DONE.includes(r.state) && (r.updatedAtMs ?? 0) >= midnight.getTime()
-      )
-      .sort((a, b) => (b.updatedAtMs ?? 0) - (a.updatedAtMs ?? 0));
+      .filter((r) => DONE.includes(r.state) && movedAt(r) >= midnight.getTime())
+      .sort((a, b) => movedAt(b) - movedAt(a));
 
     root.child(
       h_flex()
@@ -45,7 +42,7 @@ export default class Today extends View {
         .child(div().font_weight(500).text_color(tok.textSoft).child('Today'))
         .child(div().text_color(tok.muted).child(String(today.length)))
     );
-    if (!today.length)
+    if (today.length === 0)
       root.child(note('Nothing has landed or opened a pull request today.', t));
     for (const r of today) root.child(row(r, t));
     return root;
@@ -54,10 +51,12 @@ export default class Today extends View {
 
 // One run: its state as a dot and a word, its task's title, the pull request
 // number and the time it moved.
+/** @param {import('dispatch').Run} r @param {import('dispatch').Theme} t */
 function row(r, t) {
+  const pr = prNumber(r);
   const tok = t.tokens;
   const tone = t.tones[t.status[r.state] ?? 'idle'];
-  const title = task(r.project, r.task)?.fields?.title ?? r.task;
+  const title = task(r.project, r.task)?.fields.title;
   return h_flex()
     .id(`today-${r.id}`)
     .min_h(px(36))
@@ -73,7 +72,11 @@ function row(r, t) {
       v_flex()
         .flex_1()
         .min_w(0)
-        .child(div().truncate().child(title))
+        .child(
+          div()
+            .truncate()
+            .child(typeof title === 'string' ? title : r.task)
+        )
         .child(
           h_flex()
             .gap(px(8))
@@ -84,7 +87,7 @@ function row(r, t) {
                 .text_color(tone.ink)
                 .child(r.state === 'pr-open' ? 'pull request open' : r.state)
             )
-            .child(r.pr?.number ? div().child(`#${r.pr.number}`) : div())
+            .child(pr === null ? div() : div().child(`#${pr}`))
         )
     )
     .child(
@@ -93,11 +96,26 @@ function row(r, t) {
         .text_size(px(t.text.small))
         .text_color(tok.muted)
         .font_family(t.fonts.mono)
-        .child(clock(r.updatedAtMs))
+        .child(clock(movedAt(r)))
     );
 }
 
+// When a run last moved, in ms, or 0 when the core has not said.
+/** @param {import('dispatch').Run} r @returns {number} */
+function movedAt(r) {
+  return typeof r.updatedAtMs === 'number' ? r.updatedAtMs : 0;
+}
+
+// A run's pull request number, or null when it has none.
+/** @param {import('dispatch').Run} r @returns {number | null} */
+function prNumber(r) {
+  const pr = r.pr;
+  if (pr === null || typeof pr !== 'object' || Array.isArray(pr)) return null;
+  return typeof pr.number === 'number' ? pr.number : null;
+}
+
 // A quiet line of help text.
+/** @param {string} s @param {import('dispatch').Theme} t */
 function note(s, t) {
   return div()
     .py(px(4))
@@ -107,9 +125,10 @@ function note(s, t) {
     .child(s);
 }
 
-// A time of day, `14:05`.
+// A time of day, `14:05`, or nothing for 0.
+/** @param {number} ms @returns {string} */
 function clock(ms) {
-  if (!ms) return '';
+  if (ms === 0) return '';
   const d = new Date(ms);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
