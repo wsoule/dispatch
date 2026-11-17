@@ -24,53 +24,67 @@ export const shots = {
   run: {
     file: 'run',
     width: 1600,
-    height: 996,
-    alt: 'A run opened in the middle of Dispatch: what the agent did step by step, an approval you answered, the review, the changed files with their diff, and a Ready to merge box with Merge and Dismiss.',
+    height: 997,
+    alt: "A finished run in the middle of Dispatch: the agent's change to the forecast code and its new test as a diff, and a Ready to merge box with Merge and Dismiss.",
   },
   // The board, one of the panels people change.
   board: {
     file: 'board',
     width: 1600,
-    height: 979,
-    alt: 'The board in Dispatch: tasks listed by status, with Needs you on the left and Going out on the right.',
+    height: 997,
+    alt: 'Issues for the storefront project in Dispatch, with the sidebar on the left: tasks grouped by draft, ready, working, review and landed, each with its labels and status.',
   },
   // A teammate's window: their agents show under Sessions.
   team: {
     file: 'team',
     width: 1600,
-    height: 979,
-    alt: "Bob's Dispatch, with his teammate Ada's two agents listed under Sessions, Teammates: one blocked waiting on her, one working.",
+    height: 997,
+    alt: "Bob's Dispatch: under Runs, Sessions lists his teammate Ada's two agents, one blocked waiting on her and one working.",
     darkOnly: true,
   },
   week: {
     file: 'week',
     width: 1600,
-    height: 980,
-    alt: 'My week: one person’s open tasks this week and later, grouped by milestone, against their capacity in points.',
+    height: 997,
+    alt: 'My week: one person’s open tasks this week and later, grouped by milestone with due dates and progress, against their capacity in points.',
   },
   allocation: {
     file: 'allocation',
     width: 1600,
-    height: 980,
-    alt: 'Allocation: a preview of which unassigned tasks would go to whom, each person’s load against capacity, and an Allocate button.',
+    height: 997,
+    alt: 'Allocation: a preview of which unassigned tasks would go to whom in each project’s next milestone, and each person’s load against their capacity.',
   },
   projects: {
     file: 'projects',
     width: 1600,
-    height: 980,
-    alt: 'Projects: each project and milestone with its lead, dates, standing and progress, beside a list of warnings such as slipping milestones and missing leads.',
+    height: 997,
+    alt: 'Projects: each project and milestone under its initiative, with its lead, dates, standing and progress, beside warnings such as slipping milestones and people over capacity.',
   },
   timeline: {
     file: 'timeline',
     width: 1600,
-    height: 980,
-    alt: 'Timeline: projects and milestones as bars across the coming weeks, with a line for today and labels for what is at risk or overdue.',
+    height: 997,
+    alt: 'Timeline: six projects as lanes of milestone bars from November to January, with a line for today and labels for what is at risk or overdue.',
   },
   graph: {
     file: 'graph',
     width: 1600,
     height: 980,
     alt: 'Graph at the Projects level: a card for each project with its landed count and progress, a line where one waits on another, and a side panel with the longest open chain and what is ready to start.',
+  },
+  // The Projects menu at the top of the sidebar.
+  picker: {
+    file: 'picker',
+    width: 1600,
+    height: 1005,
+    alt: 'The Projects menu open from the top of the sidebar: api-gateway, docs-site, pocket-weather and storefront, each with its folder, storefront checked, and Add project… at the bottom.',
+  },
+  // Settings › Linear, before signing in.
+  linear: {
+    file: 'linear',
+    width: 1600,
+    height: 338,
+    alt: 'The Linear section of Settings: a line about two-way sync and choosing the workspace in your browser, and a Sign in to Linear button.',
   },
 } satisfies Record<string, Shot>;
 

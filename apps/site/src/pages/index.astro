@@ -34,6 +34,15 @@ export default class StatusBar extends View {
       .child(div().child(\`core \${core().version}\`));
   }
 }`;
+
+// The core from a terminal: the same calls the app makes.
+const cli = `$ dispatch-core project add ~/code/pocket-weather
+$ dispatch-core linear signIn
+Signed in to Linear as Ada (Acme).
+$ dispatch-core integrate connect --project pocket-weather --provider linear
+$ dispatch-core overseer say "add offline mode"
+$ dispatch-core overseer attention
+$ dispatch-core run list`;
 ---
 
 <Landing>
@@ -150,6 +159,50 @@ export default class StatusBar extends View {
     </div>
   </section>
 
+  <section class="section" id="core" aria-labelledby="core-title">
+    <div class="wrap split">
+      <div class="copy">
+        <h2 id="core-title">Under the window, the core does the work.</h2>
+        <p>
+          The Dispatch core is one background process on your Mac. It holds your projects and their
+          boards, starts each agent in its own worktree and terminal, and keeps Linear and your team
+          in step. The window is a view onto it: close the window and your agents keep working.
+        </p>
+        <p>
+          Everything the app does is a core command, about two hundred of them, so your terminal or
+          a script can do it too. The core ships inside the app, and the installer puts{' '}
+          <code>dispatch-core</code> on your path.
+        </p>
+      </div>
+      <pre class="code" aria-label="The core from a terminal"><code>{cli}</code></pre>
+    </div>
+    <div class="wrap">
+      <ul class="points">
+        <li>
+          <h3>Agents outlive the window</h3>
+          <p>
+            Runs, terminals and syncs belong to the core. Quit the app and they are where you left
+            them when you come back.
+          </p>
+        </li>
+        <li>
+          <h3>A command for everything</h3>
+          <p>
+            <code>dispatch-core help</code> lists them all. Each is one call to the core, with{' '}
+            <code>--json</code> for the raw answer.
+          </p>
+        </li>
+        <li>
+          <h3>Your agents can use it</h3>
+          <p>
+            <code>dispatch-core mcp</code> serves the core over MCP, so an agent can read the board
+            and docs, comment on its task and save a plan.
+          </p>
+        </li>
+      </ul>
+    </div>
+  </section>
+
   <section class="section" id="planning" aria-labelledby="planning-title">
     <div class="wrap">
       <div class="section-head">
@@ -188,7 +241,10 @@ export default class StatusBar extends View {
         </li>
         <li>
           <h3>Works with Linear</h3>
-          <p>Sign in with Linear, and keep a project in two-way sync with a Linear team.</p>
+          <p>
+            Sign in to Linear from Settings, no API key, and keep each project in two-way sync with
+            a Linear team. <a href="/docs#linear">How it works</a>
+          </p>
         </li>
       </ul>
       <p class="aside">

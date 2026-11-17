@@ -24,7 +24,8 @@ Current version: ${VERSION}. Platform: macOS (one universal build for Apple sili
 - Landing: the project's own checks run, a pull request opens on GitHub with a description, GitHub merges it, and review comments on it go back to the agent. A reviewer agent is optional and never blocks. There is no merge queue.
 - The app: native (GPUI). Every panel is a small JavaScript mod and every theme is a file, so a person or their agent can change any panel. Views: Overseer and Needs you, board, sessions, run view, task page, terminal, Going out, and planning (My week, Allocation, Projects, Timeline, Graph). Light and dark.
 - Teams: a hosted team server at ${TEAM_SERVER}. Teammates share projects, boards sync, you see teammates' agents, and one core is named lead per project. The server stores only sealed (end-to-end encrypted) bytes and cannot read task titles or code. Sign in with Linear; GitHub sign-in is coming.
-- Two-way Linear sync.
+- Two-way Linear sync: sign in to Linear from Settings (OAuth in the browser, no API key), connect each project to a Linear team, and import its existing issues, projects and milestones.
+- The core: one background process per Mac (\`dispatch-core\`) that holds projects, boards, agent runs, terminals and syncs. The app is a view onto it; closing the window stops nothing. Every app action is a core command (\`dispatch-core help\` lists about 200), and \`dispatch-core mcp\` serves it over MCP to agents. It ships inside the app; the installer links \`dispatch-core\` into ~/.local/bin.
 
 ## Install
 
