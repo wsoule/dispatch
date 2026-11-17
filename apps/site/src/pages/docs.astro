@@ -1,4 +1,5 @@
 ---
+import Shot from '../components/site/Shot.astro';
 import Landing from '../layouts/Landing.astro';
 import { DMG, INSTALL, TEAM_SERVER } from '../lib/downloads';
 
@@ -80,6 +81,7 @@ dispatch-core project link --machine team --project <project> \\
           your Overseer what you want in the box under the conversation. From a terminal, the same
           steps are:
         </p>
+        <Shot name="picker" sizes="(min-width: 1060px) 42rem, 100vw" />
         <pre><code>{solo}</code></pre>
         <p>
           The Overseer plans the work into tasks on the board and sends an agent to each one it
@@ -102,6 +104,7 @@ dispatch-core project link --machine team --project <project> \\
           opens Linear’s approval page. Linear approves the workspace open in that browser, so
           switch to the workspace you want before you click Authorize. There is no API key to make.
         </p>
+        <Shot name="linear" sizes="(min-width: 1060px) 42rem, 100vw" />
         <p>
           Back in Settings, each project shows <strong>Connect</strong>. The first sync only links
           what is already on both sides and copies nothing. <strong>Import issues</strong> brings the
