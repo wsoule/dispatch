@@ -7,6 +7,11 @@ const solo = `dispatch-core project add ~/code/pocket-weather
 dispatch-core overseer say "add offline mode"
 dispatch-core overseer attention`;
 
+const linear = `dispatch-core linear signIn
+dispatch-core linear teams
+dispatch-core integrate connect --project pocket-weather --provider linear --team ENG
+dispatch-core linear import --project pocket-weather`;
+
 const found = `dispatch-core server login ${TEAM_SERVER}
 dispatch-core machine add team --server ${TEAM_SERVER}
 dispatch-core team found --machine team --name laptop`;
@@ -24,7 +29,7 @@ dispatch-core project link --machine team --project <project> \\
 
 <Landing
   title="Docs: get started with Dispatch"
-  description="Install Dispatch, add a project, talk to your Overseer and land your first pull request. Then set up a team."
+  description="Install Dispatch, add a project, connect Linear, talk to your Overseer and land your first pull request. Then set up a team."
   path="/docs"
 >
   <div class="page">
@@ -32,8 +37,8 @@ dispatch-core project link --machine team --project <project> \\
       <div class="page-head">
         <h1>Getting started</h1>
         <p class="lede">
-          From install to your first merged pull request, then how to bring a team. Every command
-          here is the Dispatch core’s; <code>dispatch-core help</code> lists the rest.
+          From install to your first merged pull request, then how to bring a team. Everything here
+          works from the app; the commands are the Dispatch core’s, for your terminal or a script.
         </p>
       </div>
 
@@ -42,10 +47,11 @@ dispatch-core project link --machine team --project <project> \\
           <li><a href="#install">Install</a></li>
           <li><a href="#agent">Your agent</a></li>
           <li><a href="#first-task">Your first task</a></li>
+          <li><a href="#linear">Linear</a></li>
           <li><a href="#landing">Landing</a></li>
           <li><a href="#change">Change the app</a></li>
           <li><a href="#team">A team</a></li>
-          <li><a href="#linear">Linear</a></li>
+          <li><a href="#core">The core</a></li>
         </ol>
       </nav>
 
@@ -54,10 +60,10 @@ dispatch-core project link --machine team --project <project> \\
         <p>On a Mac, paste this into Terminal:</p>
         <pre><code>{INSTALL}</code></pre>
         <p>
-          Or <a href={DMG}>download the DMG</a> and drag Dispatch into Applications. The app talks
-          to the Dispatch core, one background process per machine that holds your projects, runs
-          and terminals. If the app finds no core, its status bar shows the command that installs
-          one.
+          Or <a href={DMG}>download the DMG</a> and drag Dispatch into Applications. Either way you
+          get the app and the Dispatch core inside it; the installer also puts{' '}
+          <code>dispatch-core</code> in <code>~/.local/bin</code> for your terminal. There is nothing
+          else to install.
         </p>
 
         <h2 id="agent">Your agent</h2>
@@ -69,8 +75,10 @@ dispatch-core project link --machine team --project <project> \\
 
         <h2 id="first-task">Your first task</h2>
         <p>
-          Add a project folder, then tell your Overseer what you want, in the app’s box under the
-          conversation or from the terminal:
+          Click the project name at the top of the sidebar and choose <strong>Add project…</strong>,
+          or use the button on the welcome card, and pick the folder of a git repository. Then tell
+          your Overseer what you want in the box under the conversation. From a terminal, the same
+          steps are:
         </p>
         <pre><code>{solo}</code></pre>
         <p>
@@ -82,6 +90,30 @@ dispatch-core project link --machine team --project <project> \\
         <p>
           A task can name the files it expects to change. That only warns other Overseers about
           likely merge conflicts; nothing is denied for cost or for declared files.
+        </p>
+
+        <h2 id="linear">Linear</h2>
+        <p>
+          A project can stay in two-way sync with a Linear team: tasks you make become issues, and
+          changes on either side reach the other within a couple of minutes.
+        </p>
+        <p>
+          Open <strong>Settings</strong> and choose <strong>Sign in to Linear</strong>. Your browser
+          opens Linear’s approval page. Linear approves the workspace open in that browser, so
+          switch to the workspace you want before you click Authorize. There is no API key to make.
+        </p>
+        <p>
+          Back in Settings, each project shows <strong>Connect</strong>. The first sync only links
+          what is already on both sides and copies nothing. <strong>Import issues</strong> brings the
+          team’s existing issues, projects and milestones onto the board. A status Linear has no
+          state for is listed under the project, with a suggested mapping to apply.
+        </p>
+        <p>From a terminal:</p>
+        <pre><code>{linear}</code></pre>
+        <p>
+          Edits you make on the board go to Linear under your name while you are signed in. On
+          Linear’s Free plan a workspace holds 250 open issues; <code>dispatch-core linear capacity</code>{' '}
+          shows how much room is left.
         </p>
 
         <h2 id="landing">Landing</h2>
@@ -137,15 +169,21 @@ dispatch-core project link --machine team --project <project> \\
           is named lead for each project; <code>dispatch-core overseer leads</code> shows which.
         </p>
 
-        <h2 id="linear">Linear</h2>
+        <h2 id="core">The core</h2>
         <p>
-          A project can sync both ways with a Linear team. Connect it with a Linear API key:
+          The Dispatch core is one background process on your Mac. It holds your projects and their
+          boards, the agents’ runs and terminals, and the syncs with Linear and your team. The
+          window is a view onto it, so closing the window stops nothing.
         </p>
-        <pre><code>dispatch-core integrate connect --provider linear --token &lt;key&gt; --team &lt;team-id&gt;</code></pre>
         <p>
-          The first pass only links what is already on both sides; it copies nothing.{' '}
-          <code>dispatch-core linear signIn</code> signs you in as yourself, so your edits show in
-          Linear under your name.
+          Every action in the app is a core command. <code>dispatch-core help</code> lists them,{' '}
+          <code>dispatch-core help &lt;command&gt;</code> explains one, and <code>--json</code>{' '}
+          prints the raw answer. Any command starts the core if it is not running;{' '}
+          <code>dispatch-core core status</code> shows what it is doing.
+        </p>
+        <p>
+          Agents reach it too: <code>dispatch-core mcp</code> serves the core over MCP, so the agents
+          it runs can read the board and docs, comment on their tasks and save a plan.
         </p>
       </div>
     </div>
