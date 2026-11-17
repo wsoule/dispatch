@@ -29,7 +29,7 @@ export const KINDS: { kind: ModKind; title: string }[] = [
   { kind: 'layout', title: 'Layouts' },
 ];
 
-const EXAMPLES = '7a1bbe43befd4a7914aa745a68e8a783033342a1';
+const EXAMPLES = '5a67680e61b198a18fefead6b1ac94eebb1821e3';
 
 export const hubMods: HubMod[] = [
   {
