@@ -17,8 +17,8 @@ export const shots = {
   hero: {
     file: 'overseer',
     width: 1600,
-    height: 980,
-    alt: 'Dispatch with its sidebar of Overseer, Issues, Needs you, My week, Timeline, Graph, Threads, Landing, Docs and Runs. Coming in shows two questions from agents, each with answer buttons and Reply. In the middle, the Overseer asks what to work on next, and Going out lists two runs still working.',
+    height: 997,
+    alt: 'Dispatch with its sidebar and the Overseer in the middle: you asked it to add offline mode, it planned a milestone and sent an agent, and it flags a tool approval. Coming in lists that approval with Approve, Approve session and Deny; Going out lists two agents still working.',
   },
   // A finished run: its log, the reviewer's note, the diff and Merge.
   run: {
@@ -69,8 +69,8 @@ export const shots = {
   graph: {
     file: 'graph',
     width: 1600,
-    height: 980,
-    alt: 'Graph at the Projects level: a card for each project with its landed count and progress, a line where one waits on another, and a side panel with the longest open chain and what is ready to start.',
+    height: 997,
+    alt: 'Graph at the Projects level: a card for each project with its landed count and progress, beside the longest open chain and the tasks ready to start.',
   },
   // The Projects menu at the top of the sidebar.
   picker: {
@@ -85,6 +85,20 @@ export const shots = {
     width: 1600,
     height: 338,
     alt: 'The Linear section of Settings: a line about two-way sync and choosing the workspace in your browser, and a Sign in to Linear button.',
+  },
+  // The Hub panel in the app, listing mods from dispatch.foo/hub.
+  hub: {
+    file: 'hub',
+    width: 1600,
+    height: 997,
+    alt: 'The Hub in Dispatch: panels, themes and layouts other people made, each with its kind, a one-line summary, its author and a Preview button.',
+  },
+  // A mod's preview before it installs: where it comes from and its code.
+  hubPreview: {
+    file: 'hub-preview',
+    width: 1600,
+    height: 997,
+    alt: 'The Hub previewing the Today panel: where it comes from and the commit it is pinned to, a warning to read the code first, Install Today, View on GitHub, and the panel’s main.js in full.',
   },
 } satisfies Record<string, Shot>;
 
