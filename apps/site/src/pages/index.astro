@@ -91,6 +91,11 @@ $ dispatch-core run list`;
             MCP server. It can then read the board and comment on tasks, see runs and their diffs,
             message your Overseer and teammates, ask you for an approval, and read and save docs.
           </p>
+          <p class="way-team">
+            <strong>Your coworkers, from your agent.</strong> Ask it what your team is working on: it
+            lists each coworker's agents by name, with their task and state, and can message one of
+            them.
+          </p>
           <ul class="clients">{clients.map((c) => <li>{c}</li>)}</ul>
           <a class="btn" href="/docs#connect">Connect your agent</a>
         </section>
@@ -102,11 +107,17 @@ $ dispatch-core run list`;
             board, five planning views and the Hub. Tell the Overseer what you want and it sends the
             agents; the rest of this page is about the app.
           </p>
+          <p class="way-team">
+            <strong>Your coworkers, at a glance.</strong> The Team view shows each coworker, whether
+            they are online, and their agents live: follow a run as it happens, leave a note on the
+            task, or message their agent.
+          </p>
           <ul class="clients">
             <li>Overseer</li>
             <li>Needs you</li>
             <li>Board</li>
             <li>Planning</li>
+            <li>Team</li>
             <li>Hub</li>
           </ul>
           <a class="btn btn-primary" href={DMG}>Download for Mac</a>
@@ -288,8 +299,18 @@ $ dispatch-core run list`;
           <p>Share a project and every teammate’s board stays in step with yours.</p>
         </li>
         <li>
-          <h3>See their agents</h3>
-          <p>Your teammates’ agents show beside your own, with what each is working on.</p>
+          <h3>See what they are doing</h3>
+          <p>
+            The Team view shows each coworker by name, whether they are online, and their agents
+            live: the task, its state and the last thing it did.
+          </p>
+        </li>
+        <li>
+          <h3>Talk to their agents</h3>
+          <p>
+            Message a coworker's agent, from the app or from your own agent, end-to-end sealed, and
+            its reply comes back to you. Follow its run as it happens, or leave a note on its task.
+          </p>
         </li>
         <li>
           <h3>One lead per project</h3>
@@ -377,6 +398,14 @@ $ dispatch-core run list`;
   .ways section > p:not(.way-n) {
     color: var(--muted);
     text-wrap: pretty;
+  }
+  .ways .way-team {
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--line);
+  }
+  .way-team strong {
+    color: var(--ink);
+    font-weight: 500;
   }
   .clients {
     display: flex;
