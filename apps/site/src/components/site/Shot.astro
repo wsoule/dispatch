@@ -1,6 +1,6 @@
 ---
 import { shots, WIDTHS } from '../../data/shots';
-import type { ShotName } from '../../data/shots';
+import type { Shot, ShotName } from '../../data/shots';
 
 // One app screenshot in a window frame. Both the light and the dark picture
 // are in the page; CSS shows the one matching the page's theme, and a hidden
@@ -11,8 +11,8 @@ interface Props {
   sizes?: string;
 }
 const { name, eager = false, sizes = '(min-width: 1200px) 1152px, 100vw' } = Astro.props;
-const shot = shots[name];
-const themes: ('light' | 'dark')[] = 'darkOnly' in shot && shot.darkOnly ? ['dark'] : ['light', 'dark'];
+const shot: Shot = shots[name];
+const themes: ('light' | 'dark')[] = shot.darkOnly === true ? ['dark'] : ['light', 'dark'];
 const srcset = (theme: string) =>
   WIDTHS.map((w) => `/shots/${shot.file}-${theme}-${w}.webp ${w}w`).join(', ');
 ---

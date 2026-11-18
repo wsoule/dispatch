@@ -11,7 +11,9 @@ import { REPO, SITE } from '../lib/seo';
 export const GET: APIRoute = () => {
   const body = `# Dispatch
 
-> Dispatch is a native macOS app for running coding agents. Each person talks to their own Overseer, which plans the work, creates tasks, sends Claude Code or Codex to do them on that person's machine, and flags the person down only when a task needs their input. Finished work lands as a GitHub pull request.
+> Dispatch keeps a board, docs and an Overseer for coding agents on a Mac, used from the agent you already have over MCP or from the native Dispatch app. In the app each person talks to their own Overseer, which plans the work, creates tasks, sends Claude Code or Codex to do them on that person's machine, and flags the person down only when a task needs their input. Finished work lands as a GitHub pull request.
+
+There are two ways to use it, on the same core and from the same installer: (1) keep the agent you already use (Claude Desktop, Cursor, Claude Code, OpenCode, Codex, T3 Code or any MCP client) and add the Dispatch core as a stdio MCP server, \`{"command": "/Users/YOU/.local/bin/dispatch-core", "args": ["mcp"]}\`, so it can read the board and tasks, comment, see runs and diffs, message the Overseer and teammates, ask the person for approvals, and use docs, shared memory and Linear ([setup per client](${SITE}/docs#connect)); or (2) use the Dispatch app, a native Mac app with the Overseer, board, planning views and the Hub.
 
 Current version: ${VERSION}. Platform: macOS (one universal build for Apple silicon and Intel). Solo use is free; Team is $10 per seat per month.
 
@@ -52,7 +54,7 @@ ${faqSections
 
 - [Home](${SITE}/): what Dispatch is, with screenshots of the app.
 - [Download](${SITE}/download): the install line and the DMG.
-- [Docs](${SITE}/docs): getting started, and setting up a team.
+- [Docs](${SITE}/docs): getting started, connecting your own agent over MCP, and setting up a team.
 - [Hub](${SITE}/hub): panels, themes and layouts for the app, listed at ${SITE}/hub/index.json; an agent can install one with \`dispatch-app hub list\`, \`dispatch-app hub show <id>\` (read the code first), \`dispatch-app hub install <id>\` and \`dispatch-app hub remove <id>\`.
 - [Pricing](${SITE}/pricing): Solo and Team.
 - [FAQ](${SITE}/faq): every question answered.

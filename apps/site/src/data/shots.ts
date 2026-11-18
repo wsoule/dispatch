@@ -38,9 +38,8 @@ export const shots = {
   team: {
     file: 'team',
     width: 1600,
-    height: 997,
-    alt: "Bob's Dispatch: under Runs, Sessions lists his teammate Ada's two agents, one blocked waiting on her and one working.",
-    darkOnly: true,
+    height: 980,
+    alt: "Bob's Team view: his teammate Ada, online, with her two agents at work, a message she sent him with Reply and Mark handled, and a message box open under one of her agents.",
   },
   week: {
     file: 'week',
@@ -99,6 +98,13 @@ export const shots = {
     width: 1600,
     height: 997,
     alt: 'The Hub previewing the Today panel: where it comes from and the commit it is pinned to, a warning to read the code first, Install Today, View on GitHub, and the panel’s main.js in full.',
+  },
+  // A teammate's message waiting under Coming in.
+  teamComingin: {
+    file: 'team-comingin',
+    width: 1600,
+    height: 980,
+    alt: "Bob's Overseer screen: under Coming in, Teammates waiting on you holds Ada's question with Reply and Mark handled, and the Overseer sums up what Ada's agents are doing.",
   },
 } satisfies Record<string, Shot>;
 

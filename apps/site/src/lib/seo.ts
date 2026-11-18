@@ -81,6 +81,7 @@ export function softwareApplication() {
     featureList: [
       'An Overseer per person that plans work, creates tasks and sends coding agents',
       'Runs Claude Code and Codex as their own CLIs, with your own sign-in',
+      'Connects to the agent you already use, such as Claude Desktop, Cursor, Claude Code, Codex or OpenCode, over MCP',
       'Flags you only for questions, tool approvals, failed checks and pull requests to merge',
       'Finished work lands as a GitHub pull request',
       'A native macOS app whose panels are JavaScript mods and whose themes are files',

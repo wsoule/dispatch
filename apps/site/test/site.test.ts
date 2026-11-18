@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 
 import { shots, WIDTHS } from '../src/data/shots';
+import type { Shot } from '../src/data/shots';
 import { DMG, INSTALL, VERSION } from '../src/lib/downloads';
 
 const page = async (path: string): Promise<string> => {
@@ -67,9 +68,8 @@ test('no em-dashes anywhere on the marketing pages', async () => {
 });
 
 test('every screenshot slot ships every file it names', async () => {
-  for (const [slot, shot] of Object.entries(shots)) {
-    const themes =
-      'darkOnly' in shot && shot.darkOnly ? ['dark'] : ['light', 'dark'];
+  for (const [slot, shot] of Object.entries(shots) as [string, Shot][]) {
+    const themes = shot.darkOnly === true ? ['dark'] : ['light', 'dark'];
     for (const theme of themes)
       for (const w of WIDTHS) {
         const name = `${shot.file}-${theme}-${w}.webp`;

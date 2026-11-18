@@ -3,6 +3,18 @@ import GetIt from '../components/site/GetIt.astro';
 import PlanningTabs from '../components/site/PlanningTabs.astro';
 import Shot from '../components/site/Shot.astro';
 import Landing from '../layouts/Landing.astro';
+import { DMG } from '../lib/downloads';
+
+// The agents that can use Dispatch over MCP, for the first of the two ways.
+const clients = [
+  'Claude Desktop',
+  'Cursor',
+  'Claude Code',
+  'OpenCode',
+  'Codex',
+  'T3 Code',
+  'Anything else that speaks MCP',
+];
 
 // What brings the Overseer to you. Everything else keeps going without you.
 const flags: [string, string][] = [
@@ -50,13 +62,67 @@ $ dispatch-core run list`;
     <div class="wrap">
       <h1 id="hero-title">Tell your Overseer what you want. It sends the agents.</h1>
       <p class="lede">
-        Dispatch is a Mac app for running coding agents. Your Overseer plans the work, starts
-        Claude Code or Codex on your machine, and only flags you down when a task needs you.
+        Dispatch keeps a board, docs and an Overseer for your coding agents, on your Mac. Use it
+        from the agent you already have, or in the Dispatch app, where your Overseer plans the
+        work, starts Claude Code or Codex, and only flags you down when a task needs you.
       </p>
       <GetIt />
     </div>
     <div class="wrap stage">
       <Shot name="hero" eager />
+    </div>
+  </section>
+
+  <section class="section" id="two-ways" aria-labelledby="ways-title">
+    <div class="wrap">
+      <div class="section-head">
+        <h2 id="ways-title">Two ways to use it.</h2>
+        <p>
+          Both use the same Dispatch core, installed by the same one line. It runs in the
+          background either way, and the app is a view onto it.
+        </p>
+      </div>
+      <div class="ways">
+        <section aria-labelledby="way-agent-title">
+          <p class="way-n">1</p>
+          <h3 id="way-agent-title">From the agent you already use</h3>
+          <p>
+            For you if your setup works and you want to keep it. Add Dispatch to your agent as an
+            MCP server. It can then read the board and comment on tasks, see runs and their diffs,
+            message your Overseer and teammates, ask you for an approval, and read and save docs.
+          </p>
+          <p class="way-team">
+            <strong>Your coworkers, from your agent.</strong> Ask it what your team is working on: it
+            lists each coworker's agents by name, with their task and state, and can message one of
+            them.
+          </p>
+          <ul class="clients">{clients.map((c) => <li>{c}</li>)}</ul>
+          <a class="btn" href="/docs#connect">Connect your agent</a>
+        </section>
+        <section aria-labelledby="way-app-title">
+          <p class="way-n">2</p>
+          <h3 id="way-app-title">In the Dispatch app</h3>
+          <p>
+            For you if you want one place for all of it. A native Mac app with your Overseer, the
+            board, five planning views and the Hub. Tell the Overseer what you want and it sends the
+            agents; the rest of this page is about the app.
+          </p>
+          <p class="way-team">
+            <strong>Your coworkers, at a glance.</strong> The Team view shows each coworker, whether
+            they are online, and their agents live: follow a run as it happens, leave a note on the
+            task, or message their agent.
+          </p>
+          <ul class="clients">
+            <li>Overseer</li>
+            <li>Needs you</li>
+            <li>Board</li>
+            <li>Planning</li>
+            <li>Team</li>
+            <li>Hub</li>
+          </ul>
+          <a class="btn btn-primary" href={DMG}>Download for Mac</a>
+        </section>
+      </div>
     </div>
   </section>
 
@@ -142,7 +208,7 @@ $ dispatch-core run list`;
       <div class="copy">
         <h2 id="yours-title">The app is yours to change.</h2>
         <p>
-          Dispatch is a native Mac app, and every panel in it is a small JavaScript file in your app
+          The Dispatch app is native to the Mac, and every panel in it is a small JavaScript file in your app
           folder. Themes are files too. Edit one yourself, or ask Claude to change a panel for you,
           and the window picks up the change as soon as it is saved.
         </p>
@@ -195,8 +261,9 @@ $ dispatch-core run list`;
         <li>
           <h3>Your agents can use it</h3>
           <p>
-            <code>dispatch-core mcp</code> serves the core over MCP, so an agent can read the board
-            and docs, comment on its task and save a plan.
+            <code>dispatch-core mcp</code> serves the core over MCP, so any agent can read the board
+            and docs, comment on a task and message the Overseer.{' '}
+            <a href="/docs#connect">Connect yours</a>
           </p>
         </li>
       </ul>
@@ -232,8 +299,18 @@ $ dispatch-core run list`;
           <p>Share a project and every teammate’s board stays in step with yours.</p>
         </li>
         <li>
-          <h3>See their agents</h3>
-          <p>Your teammates’ agents show beside your own, with what each is working on.</p>
+          <h3>See what they are doing</h3>
+          <p>
+            The Team view shows each coworker by name, whether they are online, and their agents
+            live: the task, its state and the last thing it did.
+          </p>
+        </li>
+        <li>
+          <h3>Talk to their agents</h3>
+          <p>
+            Message a coworker's agent, from the app or from your own agent, end-to-end sealed, and
+            its reply comes back to you. Follow its run as it happens, or leave a note on its task.
+          </p>
         </li>
         <li>
           <h3>One lead per project</h3>
@@ -256,7 +333,10 @@ $ dispatch-core run list`;
   <section class="section closing" id="install" aria-labelledby="install-title">
     <div class="wrap">
       <h2 id="install-title">Install Dispatch.</h2>
-      <p class="lede">Bring a project and an agent you already use. The Overseer does the rest.</p>
+      <p class="lede">
+        Bring a project and an agent you already use. Connect the agent to Dispatch, or open the
+        app and let the Overseer do the rest.
+      </p>
       <GetIt />
     </div>
   </section>
@@ -288,6 +368,61 @@ $ dispatch-core run list`;
   }
   .plain h3 {
     font-size: 1.2rem;
+  }
+
+  /* The two ways in, side by side, numbered because the page refers to them. */
+  .ways {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+    gap: 1.25rem;
+  }
+  .ways section {
+    display: grid;
+    align-content: start;
+    justify-items: start;
+    gap: 0.9rem;
+    padding: 1.6rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+  .way-n {
+    color: var(--accent-ink);
+    font-family: var(--mono);
+    font-weight: 500;
+  }
+  .ways h3 {
+    font-size: 1.25rem;
+    letter-spacing: -0.02em;
+  }
+  .ways section > p:not(.way-n) {
+    color: var(--muted);
+    text-wrap: pretty;
+  }
+  .ways .way-team {
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--line);
+  }
+  .way-team strong {
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .clients {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    padding: 0;
+    list-style: none;
+  }
+  .clients li {
+    padding: 0.2rem 0.6rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--ink-soft);
+    font-size: 0.88rem;
+  }
+  .ways .btn {
+    margin-top: 0.4rem;
   }
 
   /* The page's one orange device: the app's flag rule, for what needs you. */

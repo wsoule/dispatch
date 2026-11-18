@@ -3,6 +3,54 @@ import Shot from '../components/site/Shot.astro';
 import Landing from '../layouts/Landing.astro';
 import { DMG, INSTALL, TEAM_SERVER } from '../lib/downloads';
 
+// One MCP server for every client: the core over stdio. Desktop apps don't read
+// the shell's PATH, so their configs name the installer's absolute path.
+const BIN = '/Users/YOU/.local/bin/dispatch-core';
+
+const mcpJson = `{
+  "mcpServers": {
+    "dispatch": {
+      "command": "${BIN}",
+      "args": ["mcp"]
+    }
+  }
+}`;
+
+const claudeCode = `claude mcp add --transport stdio --scope user dispatch -- ~/.local/bin/dispatch-core mcp`;
+
+const codexAdd = `codex mcp add dispatch -- ~/.local/bin/dispatch-core mcp`;
+
+const codexToml = `[mcp_servers.dispatch]
+command = "${BIN}"
+args = ["mcp"]`;
+
+const opencode1 = `{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "dispatch": {
+      "type": "local",
+      "command": ["${BIN}", "mcp"],
+      "enabled": true
+    }
+  }
+}`;
+
+const opencode2 = `{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "dispatch": {
+        "type": "local",
+        "command": ["${BIN}", "mcp"]
+      }
+    }
+  }
+}`;
+
+const generic = `{"command": "${BIN}", "args": ["mcp"]}`;
+
+const tryIt = `dispatch-core project add ~/code/pocket-weather`;
+
 // The core's command line, as `dispatch-core help` lists it.
 const solo = `dispatch-core project add ~/code/pocket-weather
 dispatch-core overseer say "add offline mode"
@@ -30,7 +78,7 @@ dispatch-core project link --machine team --project <project> \\
 
 <Landing
   title="Docs: get started with Dispatch"
-  description="Install Dispatch, add a project, connect Linear, talk to your Overseer and land your first pull request. Then set up a team."
+  description="Install Dispatch, connect the agent you already use over MCP or open the app, add a project, connect Linear and land your first pull request. Then set up a team."
   path="/docs"
 >
   <div class="page">
@@ -38,14 +86,16 @@ dispatch-core project link --machine team --project <project> \\
       <div class="page-head">
         <h1>Getting started</h1>
         <p class="lede">
-          From install to your first merged pull request, then how to bring a team. Everything here
-          works from the app; the commands are the Dispatch core’s, for your terminal or a script.
+          From install to your first merged pull request, then how to bring a team. Use Dispatch from
+          the agent you already have, or from the app; the commands are the Dispatch core’s, for
+          your terminal or a script.
         </p>
       </div>
 
       <nav class="toc" aria-label="On this page">
         <ol>
           <li><a href="#install">Install</a></li>
+          <li><a href="#connect">Use it from your agent</a></li>
           <li><a href="#agent">Your agent</a></li>
           <li><a href="#first-task">Your first task</a></li>
           <li><a href="#linear">Linear</a></li>
@@ -66,6 +116,102 @@ dispatch-core project link --machine team --project <project> \\
           <code>dispatch-core</code> in <code>~/.local/bin</code> for your terminal. There is nothing
           else to install.
         </p>
+        <p>
+          Then pick a way in, or use both. To keep the agent you already use, connect it to the
+          core: <a href="#connect">Use it from your agent</a>. To work in the Dispatch app, open it
+          from Applications and start with <a href="#first-task">your first task</a>. The core runs
+          in the background either way, and the app is a view onto it.
+        </p>
+
+        <h2 id="connect">Use it from your agent</h2>
+        <p>
+          Any agent that speaks MCP can work from the Dispatch board: Claude Desktop, Cursor, Claude
+          Code, OpenCode, Codex, T3 Code and the rest. Add one MCP server, <code>dispatch-core mcp</code>,
+          which talks over stdio. Each agent that connects shows in Dispatch as a session, named from
+          its own session id.
+        </p>
+        <p>
+          Desktop apps don’t read your shell’s <code>PATH</code>, so their configs name the full
+          path the installer made: <code>{BIN}</code>, with your user name in place of{' '}
+          <code>YOU</code>. Restart the client after you change its config.
+        </p>
+
+        <h3>Claude Desktop</h3>
+        <p>
+          In Claude’s <strong>Settings › Developer</strong>, choose <strong>Edit Config</strong>. It
+          opens <code>~/Library/Application Support/Claude/claude_desktop_config.json</code>. Add
+          Dispatch under <code>mcpServers</code>, then quit Claude and open it again:
+        </p>
+        <pre><code>{mcpJson}</code></pre>
+
+        <h3>Cursor</h3>
+        <p>
+          Put the same block in <code>~/.cursor/mcp.json</code> for every project, or in{' '}
+          <code>.cursor/mcp.json</code> inside one project:
+        </p>
+        <pre><code>{mcpJson}</code></pre>
+
+        <h3>Claude Code</h3>
+        <p>In a terminal. User scope makes it available in every project:</p>
+        <pre><code>{claudeCode}</code></pre>
+
+        <h3>Codex</h3>
+        <p>In a terminal:</p>
+        <pre><code>{codexAdd}</code></pre>
+        <p>
+          Or add it to <code>~/.codex/config.toml</code> yourself. The Codex CLI, its IDE extension
+          and the ChatGPT desktop app share this file:
+        </p>
+        <pre><code>{codexToml}</code></pre>
+
+        <h3>OpenCode</h3>
+        <p>
+          In <code>~/.config/opencode/opencode.json</code> for every project, or{' '}
+          <code>opencode.json</code> in one project. OpenCode 1.x takes servers by name under{' '}
+          <code>mcp</code>:
+        </p>
+        <pre><code>{opencode1}</code></pre>
+        <p>OpenCode 2 puts them under <code>mcp.servers</code> instead:</p>
+        <pre><code>{opencode2}</code></pre>
+
+        <h3>T3 Code</h3>
+        <p>
+          T3 Code runs agents such as Claude Code and Codex with their own sign-in and configuration.
+          Add Dispatch to the agent you pick there, as above, and its threads in T3 Code use that
+          agent’s setup.
+        </p>
+
+        <h3>Anything else that speaks MCP</h3>
+        <p>Add a stdio server with this command and arguments:</p>
+        <pre><code>{generic}</code></pre>
+
+        <h3>What your agent can do</h3>
+        <ul>
+          <li>Read the board and its tasks, and comment on them.</li>
+          <li>See runs and their diffs.</li>
+          <li>Message your Overseer and your teammates, and reply in a thread.</li>
+          <li>
+            See what your coworkers are doing: <code>agent_list</code> lists their agents by name,
+            with each one's task and state, and your agent can message one of them.
+          </li>
+          <li>
+            Ask you a question or for an approval. It waits under <strong>Needs you</strong> until
+            you answer.
+          </li>
+          <li>Read, search and save team docs, and read and save shared memory.</li>
+          <li>Work the Linear issues of connected projects: search, comment, change state, watch.</li>
+        </ul>
+        <p>
+          Sending other agents and making plans stay with the Overseer, which has its own tools for
+          them.
+        </p>
+
+        <h3>Try it</h3>
+        <p>
+          Add a project, from the app or a terminal, then ask your agent “What’s on the Dispatch
+          board?”
+        </p>
+        <pre><code>{tryIt}</code></pre>
 
         <h2 id="agent">Your agent</h2>
         <p>
@@ -177,7 +323,25 @@ dispatch-core project link --machine team --project <project> \\
           is named lead for each project; <code>dispatch-core overseer leads</code> shows which.
         </p>
 
-        <h2 id="core">The core</h2>
+                <h3 id="coworkers">See what your team is doing</h3>
+        <p>
+          In the app, <strong>Team</strong> in the sidebar shows each coworker by name, whether they
+          are online, and their agents as they work: the task, its state, how long it has run and the
+          last thing it did. <strong>Follow</strong> opens a run to watch it live,{' '}
+          <strong>Message</strong> writes to that agent, and <strong>Note on task</strong> leaves a
+          comment on the shared board. Their core runs their agents, so you can follow and write but
+          not take one over.
+        </p>
+        <Shot name="teamComingin" sizes="(min-width: 1060px) 42rem, 100vw" />
+        <p>
+          From your own agent, ask “What is my team working on?”: it lists your coworkers' agents
+          with <code>agent_list</code> and can message one with <code>msg_send</code>. Messages
+          between teammates are sealed end to end, and each one names who sent it from the team's
+          signed device list, so nobody can write as someone else. Replies come back to whoever
+          wrote.
+        </p>
+
+<h2 id="core">The core</h2>
         <p>
           The Dispatch core is one background process on your Mac. It holds your projects and their
           boards, the agents’ runs and terminals, and the syncs with Linear and your team. The
@@ -190,8 +354,8 @@ dispatch-core project link --machine team --project <project> \\
           <code>dispatch-core core status</code> shows what it is doing.
         </p>
         <p>
-          Agents reach it too: <code>dispatch-core mcp</code> serves the core over MCP, so the agents
-          it runs can read the board and docs, comment on their tasks and save a plan.
+          Agents reach it too: <code>dispatch-core mcp</code> serves the core over MCP, to the agents
+          it runs and to any agent you <a href="#connect">connect yourself</a>.
         </p>
       </div>
     </div>

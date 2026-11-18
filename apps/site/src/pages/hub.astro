@@ -1,6 +1,6 @@
 ---
 import InstallCommand from '../components/site/InstallCommand.astro';
-import { hubMods, installLine, KINDS, sourceUrl } from '../data/hub';
+import { hubMods, installLine, KINDS, ownerUrl, sourceUrl } from '../data/hub';
 import Shot from '../components/site/Shot.astro';
 import Landing from '../layouts/Landing.astro';
 
@@ -77,7 +77,7 @@ const groups = KINDS.map((k) => ({
                   </div>
                   <p class="summary">{m.summary}</p>
                   <p class="meta">
-                    By <a href={`https://github.com/${m.author}`}>{m.author}</a> ·{' '}
+                    By <a href={ownerUrl(m)}>{m.author}</a> ·{' '}
                     <a href={sourceUrl(m)}>Source</a> · <span class="mono">{m.commit.slice(0, 7)}</span>
                   </p>
                   <InstallCommand command={installLine(m)} label={`Copy the install command for ${m.name}`} />
@@ -115,6 +115,10 @@ const groups = KINDS.map((k) => ({
               <option value="theme">Theme</option>
               <option value="layout">Layout</option>
             </select>
+          </label>
+          <label>
+            <span>Author</span>
+            <input name="author" maxlength="40" placeholder="the repo owner, if empty" />
           </label>
           <label>
             <span>GitHub repo</span>
@@ -296,7 +300,7 @@ const groups = KINDS.map((k) => ({
       name,
       kind: field('kind'),
       summary: field('summary'),
-      author: field('repo').split('/')[0] ?? '',
+      author: field('author') || (field('repo').split('/')[0] ?? ''),
       repo: field('repo'),
       commit: field('commit').toLowerCase(),
       path: field('path').replace(/\/$/, ''),
