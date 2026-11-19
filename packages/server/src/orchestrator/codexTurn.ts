@@ -3,7 +3,6 @@ import {
   CODEX_SIGNED_OUT_MESSAGE,
   CORE_VERSION,
 } from '@dispatch-foo/core';
-import type { EffortLevel } from '@dispatch-foo/core';
 
 import { CodexAppServer } from './codexAppServer.js';
 import type {
@@ -23,6 +22,8 @@ import type {
   CodexPermission,
   CodexTokenTotal,
 } from './executors/codex.js';
+
+export { codexEffort } from './executors/codex.js';
 
 const DEFAULT_TURN_TIMEOUT_MS = 10 * 60_000;
 
@@ -170,14 +171,6 @@ function describeDuration(ms: number): string {
   if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
   const minutes = Math.round(ms / 60_000);
   return minutes === 1 ? '1 minute' : `${minutes} minutes`;
-}
-
-// Dispatch effort to Codex effort: Codex has no `max`, so it gets `xhigh`.
-export function codexEffort(
-  effort: EffortLevel | undefined
-): string | undefined {
-  if (effort === undefined) return undefined;
-  return effort === 'max' ? 'xhigh' : effort;
 }
 
 // The `mcp_servers` table for a planner or Overseer thread: ours on, every

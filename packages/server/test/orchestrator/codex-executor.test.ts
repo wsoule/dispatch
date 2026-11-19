@@ -24,6 +24,7 @@ import {
 } from '../../src/orchestrator/executors/codex.js';
 import type {
   ExecutorEvents,
+  ExecutorStartOptions,
   NormalizedEntry,
 } from '../../src/orchestrator/types.js';
 import { MAX_TOOL_RESULT_TEXT } from '../../src/orchestrator/types.js';
@@ -165,6 +166,7 @@ function startHarness(
       | undefined;
     permissionMode?: string;
     cwd?: string;
+    effort?: ExecutorStartOptions['effort'];
     /** Gives the run onDelta, which only a streaming run gets. */
     live?: boolean;
   } = {}
@@ -196,6 +198,7 @@ function startHarness(
       permissionMode: options.permissionMode ?? 'default',
       resumeSessionId,
       model,
+      effort: options.effort,
     },
     {
       onEntry: (entry) => entries.push(entry),
@@ -891,6 +894,7 @@ describe('CodexExecutor', () => {
           },
         },
       });
+      expect(process.requests[3]?.params).not.toHaveProperty('effort');
       expect(process.requests[3]?.params).toEqual({
         threadId: 'thread-new',
         input: [{ type: 'text', text: 'make the change', text_elements: [] }],
@@ -919,6 +923,30 @@ describe('CodexExecutor', () => {
     }
   });
 
+  it.each([
+    ['high', 'high'],
+    ['max', 'xhigh'],
+  ] as const)(
+    'sends %s effort as %s on a fresh turn',
+    async (effort, expected) => {
+      const process = scriptedProcess({
+        afterTurn(fake) {
+          fake.notify('turn/completed', {
+            threadId: 'thread-new',
+            turn: { id: 'turn-1', status: 'completed', error: null },
+          });
+        },
+      });
+      const harness = startHarness(process, undefined, undefined, { effort });
+      await waitFor(() => harness.finishes.length === 1);
+
+      const turnStart = process.requests.find(
+        (request) => request.method === 'turn/start'
+      );
+      expect(turnStart?.params?.effort).toBe(expected);
+    }
+  );
+
   it('resumes the exact stored sessionId and re-supplies thread config', async () => {
     const process = scriptedProcess({
       threadId: 'thread-existing',
@@ -929,7 +957,9 @@ describe('CodexExecutor', () => {
         });
       },
     });
-    const harness = startHarness(process, 'thread-existing', 'gpt-5.6-codex');
+    const harness = startHarness(process, 'thread-existing', 'gpt-5.6-codex', {
+      effort: 'medium',
+    });
     await waitFor(() => harness.finishes.length === 1);
     const resume = process.requests.find(
       (request) => request.method === 'thread/resume'
@@ -961,6 +991,7 @@ describe('CodexExecutor', () => {
     expect(turnStart?.params).toEqual({
       threadId: 'thread-existing',
       input: [{ type: 'text', text: 'make the change', text_elements: [] }],
+      effort: 'medium',
     });
     expect(JSON.stringify(process.requests.slice(2))).not.toContain(
       'writableRoots'

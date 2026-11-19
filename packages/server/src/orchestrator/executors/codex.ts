@@ -1,4 +1,4 @@
-import type { ExecutorPricing } from '@dispatch-foo/core';
+import type { EffortLevel, ExecutorPricing } from '@dispatch-foo/core';
 import {
   CORE_VERSION,
   DISPATCH_MCP_TOOLS,
@@ -76,6 +76,14 @@ export interface CodexItem {
   aggregatedOutput?: unknown;
   exitCode?: unknown;
   error?: unknown;
+}
+
+// Dispatch effort to Codex effort: Codex has no `max`, so it gets `xhigh`.
+export function codexEffort(
+  effort: EffortLevel | undefined
+): string | undefined {
+  if (effort === undefined) return undefined;
+  return effort === 'max' ? 'xhigh' : effort;
 }
 
 // Codex's `mcp_servers` table entry for one provider-neutral spec.
@@ -905,6 +913,7 @@ export class CodexExecutor implements Executor {
         const turn = await server.request<CodexTurnResponse>('turn/start', {
           threadId,
           input: textInput(opts.prompt),
+          effort: codexEffort(opts.effort),
         });
         if (interrupted || terminal) return;
         const returnedTurnId = turn.turn?.id;
