@@ -2574,6 +2574,37 @@ export interface PairingOffer {
   origins: string[];
 }
 
+/** GET /api/remote: the iPhone app's link through the hosted relay, and the
+ *  phones paired over it. Mirrors RemoteAccessStatus in
+ *  packages/server/src/remoteAccess/service.ts. */
+export interface RemoteAccessStatus {
+  /** False with DISPATCH_REMOTE=off: nothing dials out, pairing refuses. */
+  enabled: boolean;
+  relay: string;
+  link:
+    | { kind: 'stopped' }
+    | { kind: 'connecting' }
+    | { kind: 'connected'; daemonId: string; sessions: number }
+    | { kind: 'error'; message: string };
+  devices: RemotePhone[];
+  /** When the live pairing code expires, or null when none is live. */
+  offerExpiresAt: string | null;
+}
+
+/** A phone paired through the relay. */
+export interface RemotePhone {
+  id: string;
+  name: string;
+  pairedAt: string;
+  lastSeenAt: string | null;
+}
+
+/** POST /api/remote/pair: the link a QR code carries for the iPhone app. */
+export interface PhonePairingOffer {
+  url: string;
+  expiresAt: string;
+}
+
 /** A device's new credential, from POST /api/pair: the only response that
  *  carries one. */
 export interface PairedCredential {
@@ -4108,6 +4139,13 @@ export interface ApiClient {
   fetchDevices(): Promise<PairedDevice[]>;
   /** The operator only: unpairs a device; its token stops at once. */
   revokeDevice(id: string): Promise<void>;
+  /** The operator only: the iPhone app's relay link and paired phones. */
+  fetchRemoteAccess(): Promise<RemoteAccessStatus>;
+  /** The operator only: a 10-minute pairing link for the iPhone app's QR
+   *  scanner. A new one replaces any live one. */
+  offerPhonePairing(): Promise<PhonePairingOffer>;
+  /** The operator only: unpairs a phone; its relay sessions stop at once. */
+  unpairPhone(id: string): Promise<void>;
   /** Board sync between replicas' databases (boardSync/ on the server);
    *  `{ enabled: false }` when it is off. Not `fetchSyncStatus`, which is the
    *  file backend's board syncer. */
@@ -5221,6 +5259,14 @@ export function createApiClient(
         .devices,
     revokeDevice: async (id) => {
       await request(target, `/api/devices/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+    },
+    fetchRemoteAccess: () => request(target, '/api/remote'),
+    offerPhonePairing: () =>
+      request(target, '/api/remote/pair', { method: 'POST', ...jsonBody({}) }),
+    unpairPhone: async (id) => {
+      await request(target, `/api/remote/devices/${encodeURIComponent(id)}`, {
         method: 'DELETE',
       });
     },

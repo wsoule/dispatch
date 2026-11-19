@@ -4,63 +4,52 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  useColorScheme,
   View,
 } from 'react-native';
 
 import { statusText, useRemote } from './remote';
+import {
+  font,
+  radius,
+  size,
+  type Tone,
+  toneColours,
+  useColours,
+} from './theme';
 
-export interface Palette {
-  bg: string;
-  card: string;
-  text: string;
-  muted: string;
-  border: string;
-  accent: string;
-  danger: string;
-  good: string;
-}
+// The app's building blocks, drawn with the desktop's tokens (src/theme.ts):
+// warm neutral surfaces, soft hairlines, the purple accent for actions only,
+// and status tones for what a thing is waiting on.
 
-const LIGHT: Palette = {
-  bg: '#f2f2f7',
-  card: '#ffffff',
-  text: '#111114',
-  muted: '#6b6b74',
-  border: '#d9d9de',
-  accent: '#3a5bd9',
-  danger: '#c8312f',
-  good: '#2f8a4a',
-};
-
-const DARK: Palette = {
-  bg: '#000000',
-  card: '#1c1c1f',
-  text: '#f4f4f6',
-  muted: '#9a9aa3',
-  border: '#2e2e33',
-  accent: '#7d95ff',
-  danger: '#ff6b66',
-  good: '#5fcf7f',
-};
-
-export function usePalette(): Palette {
-  return useColorScheme() === 'dark' ? DARK : LIGHT;
-}
-
-export function Card({ children }: { children: ReactNode }) {
-  const p = usePalette();
+/** A card. A tone tints it, the way desktop marks something waiting on you
+ *  in amber; untoned cards sit on the plain surface. */
+export function Card({ children, tone }: { children: ReactNode; tone?: Tone }) {
+  const c = useColours();
+  const t = tone === undefined ? null : toneColours(c, tone);
   return (
     <View
-      style={[styles.card, { backgroundColor: p.card, borderColor: p.border }]}
+      style={[
+        styles.card,
+        {
+          backgroundColor: c.surface,
+          borderColor: t?.line ?? c.border,
+        },
+      ]}
     >
+      {t === null ? null : (
+        <View
+          pointerEvents="none"
+          style={[StyleSheet.absoluteFill, { backgroundColor: t.soft }]}
+        />
+      )}
       {children}
     </View>
   );
 }
 
 export function Title({ children }: { children: ReactNode }) {
-  const p = usePalette();
-  return <Text style={[styles.title, { color: p.text }]}>{children}</Text>;
+  const c = useColours();
+  return <Text style={[styles.title, { color: c.text }]}>{children}</Text>;
 }
 
 export function Body({
@@ -74,14 +63,14 @@ export function Body({
   mono?: boolean;
   lines?: number;
 }) {
-  const p = usePalette();
+  const c = useColours();
   return (
     <Text
       {...(lines === undefined ? {} : { numberOfLines: lines })}
       style={[
-        styles.body,
-        { color: muted ? p.muted : p.text },
-        mono ? styles.mono : null,
+        mono ? styles.mono : styles.body,
+        { color: muted ? c.text3 : mono ? c.text2 : c.text },
+        mono ? { backgroundColor: c.surface2 } : null,
       ]}
     >
       {children}
@@ -89,7 +78,25 @@ export function Body({
   );
 }
 
-type Tone = 'primary' | 'plain' | 'danger';
+/** Small grey text under a title: when, where from, which run. */
+export function Meta({ children }: { children: ReactNode }) {
+  const c = useColours();
+  return <Text style={[styles.meta, { color: c.text3 }]}>{children}</Text>;
+}
+
+/** A status pill: a dot and a word, tinted by tone. */
+export function Chip({ label, tone }: { label: string; tone: Tone }) {
+  const c = useColours();
+  const t = toneColours(c, tone);
+  return (
+    <View style={[styles.chip, { backgroundColor: t.soft }]}>
+      <View style={[styles.dot, { backgroundColor: t.ink }]} />
+      <Text style={[styles.chipText, { color: t.ink }]}>{label}</Text>
+    </View>
+  );
+}
+
+type ButtonTone = 'primary' | 'plain' | 'danger';
 
 export function Button({
   label,
@@ -99,29 +106,48 @@ export function Button({
 }: {
   label: string;
   onPress: () => void;
-  tone?: Tone;
+  tone?: ButtonTone;
   disabled?: boolean;
 }) {
-  const p = usePalette();
-  const fill = tone === 'primary' ? p.accent : 'transparent';
+  const c = useColours();
+  const fill = tone === 'primary' ? c.accent : c.surface;
   const color =
-    tone === 'primary' ? '#ffffff' : tone === 'danger' ? p.danger : p.accent;
+    tone === 'primary' ? c.onAccent : tone === 'danger' ? c.red : c.text;
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
         styles.button,
         {
           backgroundColor: fill,
-          borderColor: tone === 'primary' ? p.accent : p.border,
-          opacity: disabled ? 0.4 : pressed ? 0.7 : 1,
+          borderColor: tone === 'primary' ? c.accent : c.borderStrong,
+          opacity: disabled ? 0.45 : pressed ? 0.75 : 1,
         },
       ]}
     >
       <Text style={[styles.buttonText, { color }]}>{label}</Text>
     </Pressable>
+  );
+}
+
+/** A title with something on its right: a chip, a time. */
+export function TitleRow({
+  title,
+  right,
+}: {
+  title: ReactNode;
+  right: ReactNode;
+}) {
+  return (
+    <View style={styles.titleRow}>
+      <View style={{ flex: 1 }}>
+        <Title>{title}</Title>
+      </View>
+      {right}
+    </View>
   );
 }
 
@@ -132,17 +158,17 @@ export function Row({ children }: { children: ReactNode }) {
 /** What to show while the link is not ready, or null once it is. */
 export function ConnectionNotice() {
   const { status, retry } = useRemote();
-  const p = usePalette();
+  const c = useColours();
   if (status.kind === 'ready') return null;
+  const t = toneColours(c, status.kind === 'connecting' ? 'blue' : 'amber');
   return (
     <View
-      style={[
-        styles.notice,
-        { backgroundColor: p.card, borderColor: p.border },
-      ]}
+      style={[styles.notice, { backgroundColor: t.soft, borderColor: t.line }]}
     >
-      {status.kind === 'connecting' ? <ActivityIndicator /> : null}
-      <Text style={[styles.body, { color: p.muted, flex: 1 }]}>
+      {status.kind === 'connecting' ? (
+        <ActivityIndicator color={t.ink} />
+      ) : null}
+      <Text style={[styles.body, { color: t.ink, flex: 1 }]}>
         {statusText(status)}
       </Text>
       {status.kind === 'connecting' ? null : (
@@ -153,9 +179,9 @@ export function ConnectionNotice() {
 }
 
 export function Empty({ children }: { children: ReactNode }) {
-  const p = usePalette();
+  const c = useColours();
   return (
-    <Text style={[styles.body, styles.empty, { color: p.muted }]}>
+    <Text style={[styles.body, styles.empty, { color: c.text3 }]}>
       {children}
     </Text>
   );
@@ -174,24 +200,50 @@ export function ago(iso: string, now = Date.now()): string {
 
 export const styles = StyleSheet.create({
   card: {
-    borderRadius: 12,
+    borderRadius: radius.xl,
     borderWidth: StyleSheet.hairlineWidth,
     padding: 14,
     marginHorizontal: 16,
     marginTop: 12,
     gap: 8,
+    overflow: 'hidden',
   },
-  title: { fontSize: 16, fontWeight: '600' },
-  body: { fontSize: 15, lineHeight: 20 },
-  mono: { fontFamily: 'Menlo', fontSize: 12, lineHeight: 16 },
+  title: {
+    fontFamily: font.semibold,
+    fontSize: size.heading - 1,
+    letterSpacing: -0.1,
+  },
+  body: { fontFamily: font.regular, fontSize: size.body, lineHeight: 21 },
+  meta: { fontFamily: font.regular, fontSize: size.small },
+  mono: {
+    fontFamily: font.mono,
+    fontSize: size.mono,
+    lineHeight: 18,
+    borderRadius: radius.sm,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    overflow: 'hidden',
+  },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 },
+  titleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   button: {
-    borderRadius: 8,
+    borderRadius: radius.lg,
     borderWidth: 1,
     paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingVertical: 9,
   },
-  buttonText: { fontSize: 15, fontWeight: '600' },
+  buttonText: { fontFamily: font.medium, fontSize: size.body },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 6,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  dot: { width: 6, height: 6, borderRadius: 3 },
+  chipText: { fontFamily: font.medium, fontSize: size.caption },
   notice: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -199,7 +251,7 @@ export const styles = StyleSheet.create({
     margin: 16,
     marginBottom: 0,
     padding: 12,
-    borderRadius: 12,
+    borderRadius: radius.xl,
     borderWidth: StyleSheet.hairlineWidth,
   },
   empty: { textAlign: 'center', marginTop: 48, marginHorizontal: 32 },

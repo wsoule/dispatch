@@ -1089,6 +1089,15 @@ export interface SearchFieldProps extends DataAttributes {
  * recessed code well, with a Copy button that says Copied for COPIED_MS,
  * or "Select it" when the clipboard is refused.
  */
+export interface QrCodeProps extends DataAttributes {
+  /** The text the code carries (a pairing link). */
+  value: string;
+  /** What it is, as the image's accessible name: "Pairing code for your iPhone". */
+  label: string;
+  /** The tile's width and height in px, quiet zone included. Default 192. */
+  size?: number;
+}
+
 export interface CopyValueProps extends DataAttributes {
   /** The text shown and copied. */
   value: string;

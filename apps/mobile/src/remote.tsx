@@ -26,35 +26,46 @@ import {
   useState,
 } from 'react';
 
+import {
+  activeMac,
+  addMac,
+  EMPTY,
+  type MacList,
+  type Paired,
+  parseMacList,
+  removeMac,
+  selectMac,
+} from './macs';
+
 // The one link to the paired Mac. Every request and the event stream go
 // through a RemoteConnection: end-to-end encrypted, through the relay, with
 // no token on the phone. What is kept is this phone's X25519 key and the
 // daemon's, in the keychain, readable only on this device while unlocked.
 
+// Every paired Mac's keys and which one is in use (src/macs.ts). Builds
+// that knew one Mac wrote it under v1; parseMacList still reads that.
 const STORE_KEY = 'dispatch.pairing.v1';
 /** Requests name the daemon by path only; the tunnel ignores the origin. */
 const DAEMON = 'dispatch-remote://daemon';
 
-interface Paired {
-  relay: string;
-  daemonId: string;
-  daemonKey: string;
-  daemonName: string;
-  phoneSecret: string;
-}
-
 interface RemoteValue {
   /** False until the keychain has been read. */
   loaded: boolean;
+  /** The Mac in use, or null before the first pairing. */
   paired: Paired | null;
+  /** Every Mac this phone is paired with, the one in use among them. */
+  macs: Paired[];
   status: RemoteStatus;
   client: ApiClient | null;
   /** Every ServerEvent the daemon sends while connected. */
   subscribe(listener: (event: ServerEvent) => void): () => void;
   /** Pairs with the offer a QR code carried; resolves once the Mac accepted. */
   pair(offer: PairingOffer, deviceName: string): Promise<void>;
-  /** Forgets the Mac on this phone. Unpair it on the Mac too. */
-  forget(): Promise<void>;
+  /** Talks to another paired Mac from now on. */
+  switchTo(daemonId: string): Promise<void>;
+  /** Forgets a Mac on this phone (the one in use by default). Unpair it on
+   *  the Mac too. */
+  forget(daemonId?: string): Promise<void>;
   retry(): void;
 }
 
@@ -63,30 +74,13 @@ const RemoteContext = createContext<RemoteValue | null>(null);
 const random = (length: number) => getRandomBytes(length);
 const socket = (url: string) => new WebSocket(url) as unknown as RelaySocket;
 
-async function readPaired(): Promise<Paired | null> {
-  const text = await SecureStore.getItemAsync(STORE_KEY);
-  if (text === null) return null;
-  try {
-    const value = JSON.parse(text) as Partial<Paired>;
-    return typeof value.relay === 'string' &&
-      typeof value.daemonId === 'string' &&
-      typeof value.daemonKey === 'string' &&
-      typeof value.phoneSecret === 'string'
-      ? {
-          relay: value.relay,
-          daemonId: value.daemonId,
-          daemonKey: value.daemonKey,
-          daemonName: value.daemonName ?? 'Your Mac',
-          phoneSecret: value.phoneSecret,
-        }
-      : null;
-  } catch {
-    return null;
-  }
+async function readMacs(): Promise<MacList> {
+  return parseMacList(await SecureStore.getItemAsync(STORE_KEY));
 }
 
-function writePaired(paired: Paired): Promise<void> {
-  return SecureStore.setItemAsync(STORE_KEY, JSON.stringify(paired), {
+function writeMacs(list: MacList): Promise<void> {
+  if (list.macs.length === 0) return SecureStore.deleteItemAsync(STORE_KEY);
+  return SecureStore.setItemAsync(STORE_KEY, JSON.stringify(list), {
     keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
   });
 }
@@ -109,15 +103,20 @@ function connectionFor(
 
 export function RemoteProvider({ children }: { children: ReactNode }) {
   const [loaded, setLoaded] = useState(false);
-  const [paired, setPaired] = useState<Paired | null>(null);
+  const [list, setList] = useState<MacList>(EMPTY);
+  const paired = activeMac(list);
   const [status, setStatus] = useState<RemoteStatus>({ kind: 'stopped' });
   const [connection, setConnection] = useState<RemoteConnection | null>(null);
   const listeners = useRef(new Set<(event: ServerEvent) => void>());
+  // The latest list for callbacks that must not change identity.
+  const listRef = useRef(list);
+  listRef.current = list;
 
   useEffect(() => {
-    void readPaired().then((value) => {
-      setPaired(value);
-      if (value !== null) setConnection(connectionFor(value));
+    void readMacs().then((stored) => {
+      setList(stored);
+      const mac = activeMac(stored);
+      if (mac !== null) setConnection(connectionFor(mac));
       setLoaded(true);
     });
   }, []);
@@ -199,19 +198,38 @@ export function RemoteProvider({ children }: { children: ReactNode }) {
         });
         trial.start();
       });
-      // Paired: keep the keys, and keep this very connection.
-      await writePaired(next);
-      setPaired(next);
+      // Paired: keep the keys beside any other Mac's, and keep this very
+      // connection.
+      const updated = addMac(listRef.current, next);
+      await writeMacs(updated);
+      setList(updated);
       setConnection(trial);
     },
     []
   );
 
-  const forget = useCallback(async () => {
-    await SecureStore.deleteItemAsync(STORE_KEY);
-    setConnection(null);
-    setPaired(null);
+  const switchTo = useCallback(async (daemonId: string) => {
+    const updated = selectMac(listRef.current, daemonId);
+    const mac = activeMac(updated);
+    if (mac === null || updated.active === listRef.current.active) return;
+    await writeMacs(updated);
+    setList(updated);
     setStatus({ kind: 'stopped' });
+    setConnection(connectionFor(mac));
+  }, []);
+
+  const forget = useCallback(async (daemonId?: string) => {
+    const current = listRef.current;
+    const id = daemonId ?? current.active;
+    if (id === null) return;
+    const updated = removeMac(current, id);
+    await writeMacs(updated);
+    setList(updated);
+    if (updated.active !== current.active) {
+      const mac = activeMac(updated);
+      setStatus({ kind: 'stopped' });
+      setConnection(mac === null ? null : connectionFor(mac));
+    }
   }, []);
 
   const retry = useCallback(() => connection?.retryNow(), [connection]);
@@ -220,14 +238,27 @@ export function RemoteProvider({ children }: { children: ReactNode }) {
     () => ({
       loaded,
       paired,
+      macs: list.macs,
       status,
       client,
       subscribe,
       pair,
+      switchTo,
       forget,
       retry,
     }),
-    [loaded, paired, status, client, subscribe, pair, forget, retry]
+    [
+      loaded,
+      paired,
+      list.macs,
+      status,
+      client,
+      subscribe,
+      pair,
+      switchTo,
+      forget,
+      retry,
+    ]
   );
   return (
     <RemoteContext.Provider value={value}>{children}</RemoteContext.Provider>
@@ -243,7 +274,7 @@ export function useRemote(): RemoteValue {
 function refusalText(reason: string): string {
   switch (reason) {
     case 'pairing-expired':
-      return 'That code has expired or was already used. Run `dispatch phone pair` for a new one.';
+      return 'That code has expired or was already used. Show a new one in Settings › Devices on your Mac.';
     case 'unknown-device':
       return 'Your Mac no longer knows this phone. Pair it again.';
     case 'wrong-daemon':

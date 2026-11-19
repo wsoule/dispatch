@@ -722,6 +722,16 @@ whole; `truncate` keeps one line with an ellipsis and the whole value in the
 `title`. The host's `data-*` hooks land on the `<code>` element, whose text is
 exactly the value.
 
+### QrCode
+
+`QrCode` draws `value` as a QR code for a phone's camera (the iPhone app's
+pairing link): one SVG path of `--qr-ink` modules on a `--qr-paper` tile with
+`--s-3` of quiet zone, `--r` corners and a 1px `--border` ring. Both tokens stay
+dark-on-light in the dark theme, since cameras read an inverted code poorly.
+`size` sets the tile's width and height (192px by default). It is an image named
+by `label`; the value is not announced, so pair it with a `CopyValue` of the
+same link. The host's `data-*` hooks land on the tile.
+
 ### CodeBlock
 
 `CodeBlock` shows `code` (the only required prop) as a `<pre><code>` on a

@@ -1,23 +1,26 @@
-import { type PairingOffer, parsePairingUrl } from '@dispatch/remote';
+import { type PairingOffer, toBase64Url } from '@dispatch/remote';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
 
-import { urlFromParams } from '../src/pairing';
+import { offerKind } from '../src/macs';
+import { readPairingText, urlFromParams } from '../src/pairing';
 import { useRemote } from '../src/remote';
-import { Body, Button, Card, Row, Title, usePalette } from '../src/ui';
+import { font, radius, useColours } from '../src/theme';
+import { Body, Button, Card, Row, Title } from '../src/ui';
 
-// Pairing: the Mac shows a QR code (`dispatch phone pair`), the phone reads
+// Pairing: the Mac shows a QR code (Settings › Devices, or `dispatch phone
+// pair`), the phone reads
 // it, and nothing is trusted until the person taps Pair. A link opened from
 // the system camera lands here too, with the same confirm step, so a link
 // sent by someone else can never pair this phone on its own.
 
 export default function PairScreen() {
-  const { pair, paired } = useRemote();
+  const { pair, macs } = useRemote();
   const params = useLocalSearchParams();
-  const p = usePalette();
+  const c = useColours();
   const [permission, requestPermission] = useCameraPermissions();
   const [offer, setOffer] = useState<PairingOffer | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -27,7 +30,7 @@ export default function PairScreen() {
   const scanned = useRef(false);
 
   const read = (text: string) => {
-    const parsed = parsePairingUrl(text.trim());
+    const parsed = readPairingText(text);
     if (!parsed.ok) {
       setError(parsed.error);
       return;
@@ -62,10 +65,18 @@ export default function PairScreen() {
 
   const inputStyle = [
     styles.input,
-    { color: p.text, borderColor: p.border, backgroundColor: p.card },
+    { color: c.text, borderColor: c.controlBorder, backgroundColor: c.surface },
   ];
 
   if (offer !== null) {
+    const kind = offerKind(
+      { active: null, macs },
+      {
+        daemonId: offer.daemonId,
+        daemonKey: toBase64Url(offer.daemonKey),
+        relay: offer.relay,
+      }
+    );
     return (
       <ScrollView>
         <Card>
@@ -74,8 +85,26 @@ export default function PairScreen() {
             Only pair with a Mac you own. This phone will be able to answer
             agents, cancel runs and merge work there.
           </Body>
-          {paired === null ? null : (
-            <Body muted>This replaces {paired.daemonName} on this phone.</Body>
+          {kind === 'key-changed' ? (
+            <Card tone="red">
+              <Title>This Mac's keys have changed</Title>
+              <Body>
+                The code says it is a Mac this phone already knows, but with
+                different keys. That happens when Dispatch was reset on that
+                Mac, or when someone shows a code made to pass as it. Pair only
+                if you just reset it yourself; pairing replaces the old keys.
+              </Body>
+            </Card>
+          ) : kind === 'same' ? (
+            <Body muted>
+              This phone already knows this Mac. Pairing again renews its
+              pairing.
+            </Body>
+          ) : macs.length === 0 ? null : (
+            <Body muted>
+              It joins the {macs.length === 1 ? 'Mac' : 'Macs'} this phone
+              already knows; switch between them in the Mac tab.
+            </Body>
           )}
           <Body muted>Name this phone</Body>
           <TextInput
@@ -112,8 +141,9 @@ export default function PairScreen() {
       <Card>
         <Title>Scan the code on your Mac</Title>
         <Body muted>
-          Run `dispatch phone pair` in your project and point the camera at the
-          code.
+          On your Mac, open Dispatch › Settings › Devices and choose Show code
+          under iPhone (or run `dispatch phone pair`), then point the camera at
+          the code.
         </Body>
         {permission?.granted === true ? (
           <View style={styles.camera}>
@@ -124,7 +154,7 @@ export default function PairScreen() {
                 if (scanned.current) return;
                 scanned.current = true;
                 read(result.data);
-                if (!parsePairingUrl(result.data.trim()).ok)
+                if (!readPairingText(result.data).ok)
                   setTimeout(() => (scanned.current = false), 1500);
               }}
             />
@@ -148,7 +178,7 @@ export default function PairScreen() {
           value={pasted}
           onChangeText={setPasted}
           placeholder="dispatch-remote://pair?…"
-          placeholderTextColor={p.muted}
+          placeholderTextColor={c.text4}
           style={inputStyle}
           autoCapitalize="none"
           autoCorrect={false}
@@ -165,15 +195,16 @@ export default function PairScreen() {
 const styles = StyleSheet.create({
   camera: {
     height: 280,
-    borderRadius: 12,
+    borderRadius: radius.xl,
     overflow: 'hidden',
     marginTop: 4,
   },
   input: {
     borderWidth: 1,
-    borderRadius: 8,
+    borderRadius: radius.lg,
     paddingHorizontal: 12,
     paddingVertical: 10,
+    fontFamily: font.regular,
     fontSize: 15,
   },
 });
