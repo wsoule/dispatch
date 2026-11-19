@@ -422,6 +422,12 @@ fn daemon_args(root: &str, init: bool, port: Option<u16>) -> Vec<String> {
     args
 }
 
+/// Windows child processes use the inherited PATH as-is, including its semicolon separators.
+#[cfg(windows)]
+pub(crate) fn enriched_child_path() -> std::ffi::OsString {
+    std::env::var_os("PATH").unwrap_or_default()
+}
+
 /// PATH for the spawned dispatchd child: the app's own PATH plus the standard
 /// tool-install directories a Finder/Spotlight launch omits. The daemon shells
 /// out to `gh` (PR capability/reviews/merge-queue) and `git`; with the
@@ -429,6 +435,7 @@ fn daemon_args(root: &str, init: bool, port: Option<u16>) -> Vec<String> {
 /// `gh` is invisible, so a packaged app loses PR features that work fine from
 /// a terminal launch. Appending (not prepending) keeps an explicitly
 /// configured PATH's own ordering authoritative.
+#[cfg(not(windows))]
 pub(crate) fn enriched_child_path() -> std::ffi::OsString {
     let current = std::env::var("PATH").unwrap_or_default();
     let home = std::env::var("HOME").ok();
@@ -438,6 +445,7 @@ pub(crate) fn enriched_child_path() -> std::ffi::OsString {
 /// Pure core of `enriched_child_path`, split out so tests can drive it with
 /// explicit inputs instead of mutating process-global env vars (the same
 /// parallel-safety convention as the registry/needs_init tests).
+#[cfg(not(windows))]
 fn enrich_path(current: &str, home: Option<&str>) -> String {
     let mut parts: Vec<String> = current
         .split(':')
@@ -1331,6 +1339,7 @@ mod tests {
     use super::*;
     use std::fs;
 
+    #[cfg(not(windows))]
     #[test]
     fn enrich_path_appends_missing_tool_dirs_without_reordering() {
         let result = enrich_path("/usr/bin:/bin", Some("/Users/x"));
@@ -1340,16 +1349,80 @@ mod tests {
         );
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn enrich_path_never_duplicates_an_already_present_dir() {
         let result = enrich_path("/opt/homebrew/bin:/usr/bin", None);
         assert_eq!(result, "/opt/homebrew/bin:/usr/bin:/usr/local/bin");
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn enrich_path_tolerates_an_empty_path() {
         let result = enrich_path("", None);
         assert_eq!(result, "/opt/homebrew/bin:/usr/local/bin");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn child_path_preserves_windows_entries_and_supports_lookup() {
+        const PROBE: &str = "DISPATCH_CHILD_PATH_TEST_PROBE";
+        let where_exe = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+            .join("System32")
+            .join("where.exe");
+        if let Ok(probe) = std::env::var(PROBE) {
+            let inherited = std::env::var_os("PATH").unwrap();
+            let actual = enriched_child_path();
+            // Search the supplied PATH only, so a fallback search cannot mask corruption.
+            let status = Command::new(where_exe)
+                .arg("/q")
+                .arg(format!("$PATH:{probe}"))
+                .env("PATH", &actual)
+                .status()
+                .unwrap();
+            assert!(status.success(), "lookup failed with PATH {actual:?}");
+            assert_eq!(actual, inherited);
+            return;
+        }
+
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(3)
+            .unwrap()
+            .join(".agents/ignore/child-path-tests")
+            .join(format!("tools with spaces {}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let probe = format!("dispatch-child-path-probe-{}.exe", std::process::id());
+        let test_exe = std::env::current_exe().unwrap();
+        fs::copy(&where_exe, dir.join(&probe)).unwrap();
+
+        let paths = [
+            dir.as_os_str().to_owned(),
+            std::env::join_paths([dir.join("missing").as_path(), dir.as_path()]).unwrap(),
+        ];
+        let outputs = paths.map(|path| {
+            // Give each subprocess its own inherited PATH without changing other tests' environment.
+            let output = Command::new(&test_exe)
+                .args([
+                    "--exact",
+                    "sidecar::tests::child_path_preserves_windows_entries_and_supports_lookup",
+                ])
+                .env(PROBE, &probe)
+                .env("PATH", &path)
+                .output()
+                .unwrap();
+            (path, output)
+        });
+        fs::remove_dir_all(dir).unwrap();
+        for (path, output) in outputs {
+            assert!(
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+                "PATH {path:?}\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
     }
 
     #[test]
