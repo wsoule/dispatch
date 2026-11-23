@@ -19,7 +19,8 @@
     "typecheck-host": "tsc -p tsconfig.host.json --noEmit --pretty"
   },
   "dependencies": {
-    "lucide-react": "catalog:"
+    "lucide-react": "catalog:",
+    "uqr": "catalog:"
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "catalog:",

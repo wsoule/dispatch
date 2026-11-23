@@ -1,6 +1,5 @@
 import type { MergeQueueEntry, RunMeta } from '@dispatch/client';
-
-import type { OverseerDoor } from './overseerThread';
+import type { OverseerDoor } from '@dispatch/client';
 
 /** One line the narrator says: deterministic, free, and never stored in the transcript. */
 export interface NarratorLine {

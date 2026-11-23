@@ -38,6 +38,9 @@ export type {
   PairedCredential,
   PairedDevice,
   PairingOffer,
+  PhonePairingOffer,
+  RemoteAccessStatus,
+  RemotePhone,
   A2AClientSummary,
   A2AListenerSettings,
   A2AListenerStatus,
@@ -368,3 +371,19 @@ export type {
   OverseerSession,
   OverseerSessionOptions,
 } from './useOverseerSession';
+export { normalizeBrowserUrl } from './browserUrl';
+export {
+  buildOverseerThread,
+  doorLabel,
+  findInThread,
+  groupConfirmRows,
+  groupToolRows,
+} from './overseerThread';
+export type {
+  OverseerDoor,
+  OverseerStreamItem,
+  OverseerThreadItem,
+  ToolCallState,
+} from './overseerThread';
+export { TASKS_PRESETS } from './tasksPresets';
+export type { TasksPreset } from './tasksPresets';

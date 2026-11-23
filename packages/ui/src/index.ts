@@ -70,6 +70,7 @@ export {
   writeCollapsed,
 } from './tasks/collapsed-groups';
 export { CopyValue } from './tasks/copy-value';
+export { QrCode } from './tasks/qr-code';
 export { DeadlineList } from './tasks/deadline-list';
 export { Disclosure } from './tasks/disclosure';
 export { ListItem } from './tasks/list-item';
@@ -132,6 +133,7 @@ export type {
   CodeBlockProps,
   CodeBlockToken,
   CopyValueProps,
+  QrCodeProps,
   DeadlineGroup,
   DeadlineItem,
   DeadlineListProps,

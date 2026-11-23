@@ -119,6 +119,12 @@
   --on-blue: #ffffff;
   --on-danger: var(--on-red);
 
+  /* A QR code's tile and modules: dark on light in BOTH themes (the dark
+     blocks leave them alone), since phone cameras read an inverted code
+     poorly. QrCode only. */
+  --qr-paper: #ffffff;
+  --qr-ink: #1d1c1a;
+
   /* categorical hues for dots, swatches and avatars only (not text) */
   --violet: #7652c2;
   --teal: #1e8580;

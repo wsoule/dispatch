@@ -558,3 +558,24 @@ describe('Linear sign-in methods', () => {
     }
   });
 });
+
+describe('pairing the iPhone app through the relay', () => {
+  it('reads the status, asks for a link, and unpairs a phone', async () => {
+    const { calls, restore } = stubFetch({ ok: true });
+    try {
+      const client = createApiClient('http://127.0.0.1:4771');
+      await client.fetchRemoteAccess();
+      await client.offerPhonePairing();
+      await client.unpairPhone('p/1');
+      expect(
+        calls.map((c) => [c.init?.method ?? 'GET', new URL(c.url).pathname])
+      ).toEqual([
+        ['GET', '/api/remote'],
+        ['POST', '/api/remote/pair'],
+        ['DELETE', '/api/remote/devices/p%2F1'],
+      ]);
+    } finally {
+      restore();
+    }
+  });
+});

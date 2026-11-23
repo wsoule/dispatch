@@ -1,9 +1,9 @@
+import { doorLabel, type OverseerDoor } from '@dispatch/client';
 import { Button, cx, Panel, PanelRow, type UiTone } from '@dispatch/ui';
 import { useCallback, useState } from 'react';
 
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import type { NarratorLine } from '../../lib/narrator';
-import { doorLabel, type OverseerDoor } from '../../lib/overseerThread';
 import styles from './posts.module.css';
 
 const SEEN_PREFIX = 'dispatch:narrator-seen:';

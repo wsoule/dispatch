@@ -4,7 +4,17 @@ import { FlatList, Pressable, RefreshControl } from 'react-native';
 
 import { useLive } from '../../src/live';
 import { awaitsReview } from '../../src/runs';
-import { ago, Body, Card, ConnectionNotice, Empty, Title } from '../../src/ui';
+import type { Tone } from '../../src/theme';
+import {
+  ago,
+  Body,
+  Card,
+  Chip,
+  ConnectionNotice,
+  Empty,
+  Meta,
+  TitleRow,
+} from '../../src/ui';
 
 // The finished runs waiting on a review, and what the merge queue is doing.
 // Opening one shows its diff with Merge and Discard.
@@ -31,6 +41,20 @@ const load = async (client: ApiClient): Promise<ReviewData> => {
 type Item =
   | { kind: 'run'; run: RunMeta }
   | { kind: 'queued'; entry: MergeQueueEntry };
+
+/** Where a queued merge stands, as a chip: amber when it is stuck on
+ *  something, blue while it moves, green or red once it lands. */
+const QUEUE_TONE: Record<MergeQueueEntry['state'], Tone> = {
+  queued: 'blue',
+  'waiting-blockers': 'amber',
+  'blocked-environment': 'amber',
+  'waiting-github': 'blue',
+  rebasing: 'blue',
+  verifying: 'blue',
+  merging: 'blue',
+  merged: 'green',
+  failed: 'red',
+};
 
 const QUEUE_TEXT: Record<MergeQueueEntry['state'], string> = {
   queued: 'Queued to merge',
@@ -69,13 +93,22 @@ export default function Review() {
             }
           >
             <Card>
-              <Title>
-                {item.kind === 'run'
-                  ? item.run.taskTitle
-                  : item.entry.taskTitle}
-              </Title>
+              <TitleRow
+                title={
+                  item.kind === 'run'
+                    ? item.run.taskTitle
+                    : item.entry.taskTitle
+                }
+                right={
+                  item.kind === 'run' ? (
+                    <Chip label="Review" tone="green" />
+                  ) : (
+                    <Chip label="Queue" tone={QUEUE_TONE[item.entry.state]} />
+                  )
+                }
+              />
               {item.kind === 'run' ? (
-                <Body muted>Finished {ago(item.run.updatedAt)}</Body>
+                <Meta>Finished {ago(item.run.updatedAt)}</Meta>
               ) : (
                 <Body muted lines={3}>
                   {item.entry.reason === undefined
