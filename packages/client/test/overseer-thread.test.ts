@@ -1,17 +1,17 @@
+import { describe, expect, test } from 'bun:test';
+
 import type {
   OverseerAction,
   OverseerMessage,
   OverseerRecord,
-} from '@dispatch/client';
-import { describe, expect, test } from 'bun:test';
-
+} from '../src/api';
 import {
   buildOverseerThread,
   doorLabel,
   findInThread,
   groupConfirmRows,
   groupToolRows,
-} from './overseerThread';
+} from '../src/overseerThread';
 
 function makeAction(overrides: Partial<OverseerAction> = {}): OverseerAction {
   return {

@@ -1,3 +1,4 @@
+import type { OverseerDoor } from '@dispatch/client';
 import {
   act,
   fireEvent,
@@ -7,7 +8,6 @@ import {
 } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
-import type { OverseerDoor } from '../../lib/overseerThread';
 import { AwayDigest, useNarratorSince } from './AwayDigest';
 
 test('renders each line with its door and dismisses on Got it', () => {

@@ -1,35 +1,12 @@
 import type { TaskListItem } from '@dispatch-foo/core/browser';
 import { isCompletedStatus } from '@dispatch-foo/core/browser';
+import { TASKS_PRESETS, type TasksPreset } from '@dispatch/client';
 
 import { personOf } from './cockpit';
 import { activeStatusModel } from './statusModel';
 import type { TaskBucket } from './taskStatus';
 
-/** The Tasks view's presets: one question each about the work. */
-export type TasksPreset =
-  | 'all'
-  | 'mine'
-  | 'needs-you'
-  | 'failed'
-  | 'moving'
-  | 'review'
-  | 'ready'
-  | 'landing'
-  | 'landed'
-  | 'starred';
-
-export const TASKS_PRESETS: readonly { id: TasksPreset; label: string }[] = [
-  { id: 'all', label: 'All' },
-  { id: 'mine', label: 'Mine' },
-  { id: 'needs-you', label: 'Needs you' },
-  { id: 'failed', label: 'Failed' },
-  { id: 'moving', label: 'Moving' },
-  { id: 'review', label: 'Review' },
-  { id: 'ready', label: 'Ready' },
-  { id: 'landing', label: 'Landing' },
-  { id: 'landed', label: 'Landed' },
-  { id: 'starred', label: 'Starred' },
-];
+export { TASKS_PRESETS, type TasksPreset };
 
 const BUCKET_PRESET: Partial<Record<TaskBucket, TasksPreset>> = {
   'need-you': 'needs-you',

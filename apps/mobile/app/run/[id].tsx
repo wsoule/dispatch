@@ -11,8 +11,17 @@ import { Alert, RefreshControl, ScrollView } from 'react-native';
 
 import { useLive } from '../../src/live';
 import { useRemote } from '../../src/remote';
-import { awaitsReview, isLive, stateText } from '../../src/runs';
-import { Body, Button, Card, ConnectionNotice, Row, Title } from '../../src/ui';
+import { awaitsReview, isLive, runStatus, stateText } from '../../src/runs';
+import {
+  Body,
+  Button,
+  Card,
+  Chip,
+  ConnectionNotice,
+  Row,
+  Title,
+  TitleRow,
+} from '../../src/ui';
 
 // One run: where it stands, its log as it happens, and the actions a phone
 // can take on it: cancel while live, merge or discard once finished.
@@ -114,7 +123,10 @@ export default function RunScreen() {
       ) : (
         <>
           <Card>
-            <Title>{stateText(meta)}</Title>
+            <TitleRow
+              title={stateText(meta)}
+              right={<Chip {...runStatus(meta)} />}
+            />
             {meta.error === undefined ? null : <Body>{meta.error}</Body>}
             {meta.prUrl === undefined ? null : <Body muted>{meta.prUrl}</Body>}
             {error === null ? null : <Body>{error}</Body>}

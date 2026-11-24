@@ -5,6 +5,7 @@ import {
   type TaskListItem,
 } from '@dispatch-foo/core/browser';
 import type { DraftRecord } from '@dispatch/client';
+import type { OverseerDoor } from '@dispatch/client';
 import {
   BlockBar,
   Button,
@@ -183,7 +184,6 @@ import { resolveExecuteModel } from './lib/models';
 import { awayDigest } from './lib/narrator';
 import { needsYou } from './lib/needsYou';
 import { isAskNotification } from './lib/notificationEdges';
-import type { OverseerDoor } from './lib/overseerThread';
 import {
   addressEntries,
   buildPaletteEntries,
