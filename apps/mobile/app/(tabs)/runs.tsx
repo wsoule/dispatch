@@ -3,8 +3,17 @@ import { router } from 'expo-router';
 import { FlatList, Pressable, RefreshControl } from 'react-native';
 
 import { useLive } from '../../src/live';
-import { byRecency, isLive, stateText } from '../../src/runs';
-import { ago, Body, Card, ConnectionNotice, Empty, Title } from '../../src/ui';
+import { byRecency, isLive, runStatus, stateText } from '../../src/runs';
+import {
+  ago,
+  Body,
+  Card,
+  Chip,
+  ConnectionNotice,
+  Empty,
+  Meta,
+  TitleRow,
+} from '../../src/ui';
 
 const load = async (client: ApiClient) =>
   (await client.fetchRuns()).slice().sort(byRecency).slice(0, 50);
@@ -17,11 +26,11 @@ function RunRow({ run }: { run: RunMeta }) {
       }
     >
       <Card>
-        <Title>{run.taskTitle}</Title>
+        <TitleRow title={run.taskTitle} right={<Chip {...runStatus(run)} />} />
         <Body muted={!isLive(run)} lines={2}>
           {stateText(run)}
         </Body>
-        <Body muted>{ago(run.updatedAt)}</Body>
+        <Meta>{ago(run.updatedAt)}</Meta>
       </Card>
     </Pressable>
   );

@@ -7,7 +7,8 @@ import { ScrollView, StyleSheet, TextInput, View } from 'react-native';
 
 import { urlFromParams } from '../src/pairing';
 import { useRemote } from '../src/remote';
-import { Body, Button, Card, Row, Title, usePalette } from '../src/ui';
+import { font, radius, useColours } from '../src/theme';
+import { Body, Button, Card, Row, Title } from '../src/ui';
 
 // Pairing: the Mac shows a QR code (`dispatch phone pair`), the phone reads
 // it, and nothing is trusted until the person taps Pair. A link opened from
@@ -17,7 +18,7 @@ import { Body, Button, Card, Row, Title, usePalette } from '../src/ui';
 export default function PairScreen() {
   const { pair, paired } = useRemote();
   const params = useLocalSearchParams();
-  const p = usePalette();
+  const c = useColours();
   const [permission, requestPermission] = useCameraPermissions();
   const [offer, setOffer] = useState<PairingOffer | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -62,7 +63,7 @@ export default function PairScreen() {
 
   const inputStyle = [
     styles.input,
-    { color: p.text, borderColor: p.border, backgroundColor: p.card },
+    { color: c.text, borderColor: c.controlBorder, backgroundColor: c.surface },
   ];
 
   if (offer !== null) {
@@ -148,7 +149,7 @@ export default function PairScreen() {
           value={pasted}
           onChangeText={setPasted}
           placeholder="dispatch-remote://pair?…"
-          placeholderTextColor={p.muted}
+          placeholderTextColor={c.text4}
           style={inputStyle}
           autoCapitalize="none"
           autoCorrect={false}
@@ -165,15 +166,16 @@ export default function PairScreen() {
 const styles = StyleSheet.create({
   camera: {
     height: 280,
-    borderRadius: 12,
+    borderRadius: radius.xl,
     overflow: 'hidden',
     marginTop: 4,
   },
   input: {
     borderWidth: 1,
-    borderRadius: 8,
+    borderRadius: radius.lg,
     paddingHorizontal: 12,
     paddingVertical: 10,
+    fontFamily: font.regular,
     fontSize: 15,
   },
 });

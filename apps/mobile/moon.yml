@@ -4,11 +4,40 @@ language: 'typescript'
 layer: 'application'
 
 tasks:
-  # The iOS build itself needs Xcode, so CI typechecks the app and bundles
-  # its JavaScript for iOS, which is where a Hermes or Metro problem shows.
-  export:
+  # The iOS build itself needs Xcode, so CI bundles the app's JavaScript for
+  # iOS instead, which is where a broken import, a Hermes or a Metro problem
+  # shows. Named `build` so `moon ci :build` and the merge queue's
+  # `moon run :build` both run it whenever the app or a package it uses
+  # changes.
+  build:
     command: 'expo export --platform ios --output-dir dist'
     deps:
       - '^:build'
+    inputs:
+      - 'app/**/*'
+      - 'src/**/*'
+      - 'app.json'
+      - 'metro.config.js'
+    outputs:
+      - 'dist'
+
+  # Rewrites src/theme.gen.ts from packages/ui's tokens.css. test/theme.test.ts
+  # fails CI when the two drift apart.
+  theme:
+    command: 'bun scripts/theme.ts'
+    inputs:
+      - '/packages/ui/src/styles/tokens.css'
+      - 'scripts/theme.ts'
+    outputs:
+      - 'src/theme.gen.ts'
     options:
-      runInCI: 'skip'
+      runInCI: 'always'
+
+  # Inherited from bun-common; widened so a desktop token change re-runs the
+  # theme drift test here.
+  test:
+    inputs:
+      - '**/*'
+      - '!node_modules/**'
+      - '!dist/**'
+      - '/packages/ui/src/styles/tokens.css'
