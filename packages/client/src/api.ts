@@ -1685,6 +1685,7 @@ export interface OverseerMessage {
     | 'tool'
     | 'action'
     | 'approval'
+    | 'question'
     | 'notice';
   text: string;
   at: string;
@@ -1715,9 +1716,16 @@ export interface OverseerMessage {
   /**
    * `action` and `approval` entries only. `failed` means the human approved
    * an action but the effect itself threw — the action stays pending so it
-   * can be retried. `allowed` is an approval's yes; `applied` an action's.
+   * can be retried. `allowed` is an approval's yes; `applied` an action's;
+   * `answered` a question's (`denied` there: its turn ended unanswered).
    */
-  outcome?: 'pending' | 'applied' | 'allowed' | 'denied' | 'failed';
+  outcome?:
+    | 'pending'
+    | 'applied'
+    | 'allowed'
+    | 'denied'
+    | 'failed'
+    | 'answered';
   /** `user` and `assistant` entries posted to the bus: the message there. */
   messageId?: string;
   /** `assistant` entries: what the turn that produced it cost. */
@@ -1821,6 +1829,30 @@ export interface OverseerApproval {
   held?: boolean;
 }
 
+// Mirrors OverseerQuestion in packages/server/src/orchestrator/overseerBackend.ts —
+// one question of an AskUserQuestion call the overseer asked its human.
+export interface OverseerQuestion {
+  question: string;
+  /** A short chip label for the question. */
+  header: string;
+  options: { label: string; description: string }[];
+  /** True when more than one option may be picked. */
+  multiSelect: boolean;
+}
+
+// Mirrors OverseerPendingQuestion in packages/server/src/orchestrator/overseer.ts —
+// an AskUserQuestion call the running turn waits on. Each question is also a
+// blocking bus question (`messageIds`, by index, null until raised); an answer
+// to that message settles the question.
+export interface OverseerPendingQuestion {
+  requestId: string;
+  questions: OverseerQuestion[];
+  messageIds: (string | null)[];
+  /** The answers given so far, keyed by question text. */
+  answers: Record<string, string>;
+  askedAt: string;
+}
+
 // Mirrors OverseerAction in packages/server/src/orchestrator/overseerTools.ts —
 // one queued mutating tool call awaiting (or past) its human decision.
 export interface OverseerAction {
@@ -1882,6 +1914,11 @@ export interface OverseerRecord {
    * non-empty while `state` is `running`.
    */
   pendingApprovals: OverseerApproval[];
+  /**
+   * AskUserQuestion calls the running turn waits on, oldest first. Absent from
+   * daemons older than questions.
+   */
+  pendingQuestions?: OverseerPendingQuestion[];
   /**
    * Decisions the human has made since the last turn, not yet shown to the
    * model; drained into the next `sendOverseerMessage` turn server-side.

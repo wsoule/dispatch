@@ -2592,6 +2592,8 @@ async function bootServer(
       overseerManager
         .find(conversation)
         ?.pendingActions.find((a) => a.id === actionId)?.batch,
+    overseerQuestion: (messageId) =>
+      overseerManager.questionConversation(messageId),
     // The policy engine's classifier: a gate the project's rung auto-decides
     // shows up as `recorded` rather than `blocking`.
     policy: policyDecisionClassifier(rootDir, {

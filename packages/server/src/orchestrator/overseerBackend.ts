@@ -90,6 +90,37 @@ export interface OverseerToolRequest {
   check?: string;
 }
 
+/** One option of an OverseerQuestion: its label and what choosing it means. */
+export interface OverseerQuestionOption {
+  label: string;
+  description: string;
+}
+
+/** One question the session asks the human (Claude Code's AskUserQuestion). */
+export interface OverseerQuestion {
+  question: string;
+  /** A short chip label for the question. */
+  header: string;
+  options: OverseerQuestionOption[];
+  /** True when the human may pick more than one option. */
+  multiSelect: boolean;
+}
+
+/**
+ * The session asks the human one or more questions and waits for the answers.
+ * Never a permission: asking is always allowed, and the answers come back as
+ * the tool's result. `requestId` is the backend's handle, unique per turn.
+ */
+export interface OverseerQuestionRequest {
+  requestId: string;
+  questions: OverseerQuestion[];
+}
+
+/** How a question ended: every question answered (keyed by its text), or not. */
+export type OverseerQuestionAnswer =
+  | { answered: true; answers: Record<string, string> }
+  | { answered: false; reason: string };
+
 /** Per-turn knobs the manager resolves from config and hands to a backend. */
 export interface OverseerTurnOptions {
   /** The model id to run the turn on; the backend's own default when absent. */
@@ -114,6 +145,16 @@ export interface OverseerTurnOptions {
    * built-in call is refused.
    */
   authorizeTool?: (request: OverseerToolRequest) => Promise<ApprovalDecision>;
+  /**
+   * Asks the human the session's questions and resolves with their answers.
+   * A backend routes its ask-the-user tool here instead of `authorizeTool`:
+   * asking is never a permission. The promise stays pending while the turn
+   * runs and no one has answered. Absent, the question is refused with a
+   * reason the model reads.
+   */
+  askHuman?: (
+    request: OverseerQuestionRequest
+  ) => Promise<OverseerQuestionAnswer>;
   /**
    * Reports a tool call the model made mid-turn, built-in tools included, so
    * the transcript can show what the reply was derived from. Registry tools

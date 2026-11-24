@@ -46,7 +46,9 @@ export function DockedConversation({
   if (record === undefined) return null;
 
   const waiting =
-    record.pendingApprovals.length > 0 || record.pendingActions.length > 0;
+    record.pendingApprovals.length > 0 ||
+    record.pendingActions.length > 0 ||
+    (record.pendingQuestions ?? []).length > 0;
   // Waiting on you is a missing input (amber), failed is red; the words beside
   // the glyph say it too, so the colour is never the only cue.
   const glyph = waiting ? (

@@ -61,6 +61,7 @@ import { CardErrorBoundary } from '../shell/CardErrorBoundary';
 import { StreamingText } from '../transcript/StreamingText';
 import { ToolChip, ToolChipGroup } from '../transcript/ToolChip';
 import styles from './OverseerChat.module.css';
+import { OverseerQuestionCard } from './OverseerQuestionCard';
 import { OverseerTaskCard } from './OverseerTaskCard';
 import { PromptBar } from './PromptBar';
 
@@ -699,6 +700,7 @@ const OUTCOME_TONE = {
   allowed: 'success',
   denied: 'muted',
   failed: 'danger',
+  answered: 'success',
 } as const;
 
 /** A decided action's audit line — kept in the transcript so "what actually
@@ -713,7 +715,7 @@ function OverseerOutcomeRow({
   changes,
   onOpenTask,
 }: {
-  outcome: 'applied' | 'allowed' | 'denied' | 'failed';
+  outcome: 'applied' | 'allowed' | 'denied' | 'failed' | 'answered';
   text: string;
   at: string;
   /** The action ran with no card: this row is its receipt. */
@@ -724,7 +726,7 @@ function OverseerOutcomeRow({
   onOpenTask?: () => void;
 }) {
   const Mark =
-    outcome === 'applied' || outcome === 'allowed'
+    outcome === 'applied' || outcome === 'allowed' || outcome === 'answered'
       ? Check
       : outcome === 'denied'
         ? X
@@ -1165,6 +1167,17 @@ export function OverseerChat({
             locked={decidingRequestId !== null}
             onDecide={(decision) =>
               decideApproval(item.approval.requestId, decision)
+            }
+          />
+        );
+      case 'ask':
+        return (
+          <OverseerQuestionCard
+            key={item.key}
+            pending={item.pending}
+            locked={decidingRequestId !== null}
+            onAnswer={(replies) =>
+              overseer.answerQuestion(item.pending.requestId, replies)
             }
           />
         );
